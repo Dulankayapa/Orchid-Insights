@@ -1,6 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Tailwind directives commented out temporarily to allow CRA to compile in this environment.
+  To enable Tailwind fully, ensure PostCSS is configured to use '@tailwindcss/postcss' and
+  re-enable the lines below: 
+  @tailwind base;
+  @tailwind components;
+  @tailwind utilities;
+*/
 
 body {
   margin: 0;

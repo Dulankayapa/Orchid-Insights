@@ -1,5 +1,17 @@
 # Getting Started with Create React App
 
+## Project notes for Orchid Insights
+
+- This frontend expects the backend API to be available at `http://localhost:8000` by default.
+- You can override the backend base URL by setting `REACT_APP_API_URL` in your environment before `npm start`.
+
+Example (PowerShell):
+
+```powershell
+$env:REACT_APP_API_URL = 'http://localhost:8000'; npm start
+```
+
+
 This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
 
 ## Available Scripts
