@@ -1,22 +1,105 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import joblib
 import pandas as pd
+import numpy as np
 from datetime import datetime
+from pathlib import Path
+from collections import Counter
 
 app = FastAPI()
+
+# Enable CORS for the frontend (adjust origins as needed)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # swap to your frontend URL for tighter security
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Load model + metadata
 model = joblib.load("orchid_growth_rf_model.joblib")
 metadata = joblib.load("orchid_growth_metadata.joblib")
 
-# ========= Helper functions =========
+# ========= Dataset-driven expected ranges =========
+BASE_DIR = Path(__file__).resolve().parent
+# Try multiple locations for the dataset (backend dir, backend parent, repo root)
+POSSIBLE_DATASET_PATHS = [
+    BASE_DIR / "orchid_growth_agar_biweekly_weekly_2025-10-21.xlsx",
+    BASE_DIR.parent / "orchid_growth_agar_biweekly_weekly_2025-10-21.xlsx",
+    BASE_DIR.parent.parent / "orchid_growth_agar_biweekly_weekly_2025-10-21.xlsx",
+]
+DATASET_PATH = next((p for p in POSSIBLE_DATASET_PATHS if p.exists()), None)
+age_range_lookup = None  # (sorted list of (age_day, (min,max)) drawn from dataset, or None on failure)
 
-def compute_age_days(planting_date_str, current_date_str, date_format="%Y-%m-%d"):
-    planting_date = datetime.strptime(planting_date_str, date_format)
-    current_date = datetime.strptime(current_date_str, date_format)
-    return (current_date - planting_date).days
 
+def parse_range_to_min_max(s):
+    """Parse strings like '3–10 mm' into numeric min/max, tolerant to odd dashes/characters."""
+    s = str(s)
+    nums = "".join(ch if (ch.isdigit() or ch == "." or ch == "-") else " " for ch in s)
+    parts = [p for p in nums.split() if p]
+    if len(parts) >= 2:
+        return float(parts[0]), float(parts[1])
+    return None, None
+
+
+def build_age_lookup_from_dataset():
+    """
+    Load the dataset (if present) and build an age->(min,max) mapping using the modal range
+    observed for each age_day in the dataset. This is intentionally hardcoded to the dataset ranges
+    (not predicted by the model).
+    """
+    if not DATASET_PATH or not DATASET_PATH.exists():
+        return None
+
+    df = pd.read_excel(DATASET_PATH)
+    if "expected_height_range" not in df.columns or "age_days" not in df.columns:
+        return None
+
+    df["h_min"], df["h_max"] = zip(*df["expected_height_range"].map(parse_range_to_min_max))
+    age_lookup = []
+    for age, sub in df.groupby("age_days"):
+        # Choose the most common (min,max) tuple for this age
+        cnt = Counter(zip(sub["h_min"], sub["h_max"]))
+        (h_min, h_max), _ = cnt.most_common(1)[0]
+        age_lookup.append((int(age), (float(h_min), float(h_max))))
+
+    age_lookup.sort(key=lambda x: x[0])
+    return age_lookup
+
+
+def expected_range_from_lookup(age_days):
+    """
+    Choose the expected range based on the nearest age bucket from the dataset-driven lookup.
+    Falls back to heuristic if lookup is unavailable.
+    """
+    global age_range_lookup
+    if age_range_lookup is None:
+        age_range_lookup = build_age_lookup_from_dataset()
+
+    if not age_range_lookup:
+        # Legacy heuristic buckets
+        return get_expected_height_range(age_days)
+
+    ages = [a for a, _ in age_range_lookup]
+    ranges = [r for _, r in age_range_lookup]
+
+    if age_days <= ages[0]:
+        return ranges[0]
+    if age_days >= ages[-1]:
+        return ranges[-1]
+
+    # Nearest-neighbor using midpoints between sorted ages
+    for i in range(len(ages) - 1):
+        midpoint = (ages[i] + ages[i + 1]) / 2
+        if age_days <= midpoint:
+            return ranges[i]
+    return ranges[-1]
+
+
+# Legacy heuristic used if dataset lookup unavailable
 def get_expected_height_range(age_days):
     if age_days <= 40:
         return (3, 10)
@@ -31,6 +114,13 @@ def get_expected_height_range(age_days):
     else:
         return (30, 50)
 
+# ========= Helper functions =========
+
+def compute_age_days(planting_date_str, current_date_str, date_format="%Y-%m-%d"):
+    planting_date = datetime.strptime(planting_date_str, date_format)
+    current_date = datetime.strptime(current_date_str, date_format)
+    return (current_date - planting_date).days
+
 def classify_growth(planting_date, current_date, height_mm):
     age_days = compute_age_days(planting_date, current_date)
 
@@ -44,13 +134,32 @@ def classify_growth(planting_date, current_date, height_mm):
     probs = model.predict_proba(X_new)[0]
     probs = {cls: float(p) for cls, p in zip(model.classes_, probs)}
 
-    expected_range = get_expected_height_range(age_days)
+    expected_range = expected_range_from_lookup(age_days)
+
+    # Heuristic guardrail: override model if measured height is outside heuristic range
+    min_expected, max_expected = expected_range
+    heuristic_override = None
+
+    if height_mm < min_expected:
+        heuristic_override = "below_expected"
+    elif height_mm > max_expected:
+        heuristic_override = "above_expected"
+
+    final_label = pred
+    final_probs = probs
+
+    if heuristic_override:
+        final_label = f"{heuristic_override} (heuristic)"
+        # Force probability mass to the heuristic label for clarity
+        final_probs = {cls: 0.0 for cls in model.classes_}
+        final_probs[heuristic_override] = 1.0
 
     return {
-        "predicted_label": pred,
-        "probabilities": probs,
+        "predicted_label": final_label,
+        "probabilities": final_probs,
         "age_days": age_days,
-        "expected_height_range": expected_range
+        "expected_height_range": expected_range,
+        "heuristic_override": heuristic_override,
     }
 
 # ========= API Request Model =========
