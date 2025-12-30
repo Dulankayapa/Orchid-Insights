@@ -14,6 +14,9 @@ function GrowthTracker() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [manualAgeDays, setManualAgeDays] = useState('');// Add manual age days
+  const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+
 
   const backendBase = useMemo(() => {
     const base = process.env.REACT_APP_API_URL || 'http://localhost:8000';
@@ -39,10 +42,16 @@ function GrowthTracker() {
       return;
     }
 
+    // const payload = {
+    //   planting_date: plantingDate,
+    //   current_height_mm: Number(currentHeight),
+    // };
+
     const payload = {
-      planting_date: plantingDate,
-      current_height_mm: Number(currentHeight),
-    };
+       planting_date: plantingDate,
+       current_height_mm: Number(currentHeight),
+       age_days: manualAgeDays ? Number(manualAgeDays) : undefined,
+      };
 
     setLoading(true);
     try {
@@ -63,7 +72,7 @@ function GrowthTracker() {
     <div className="space-y-10">
       <Hero />
       <div className="grid lg:grid-cols-5 gap-6 items-start">
-        <FormCard
+        {/* <FormCard
           onSubmit={submit}
           jarId={jarId}
           setJarId={setJarId}
@@ -73,7 +82,23 @@ function GrowthTracker() {
           setCurrentHeight={setCurrentHeight}
           loading={loading}
           error={error}
+          
+        /> */}
+        <FormCard
+           onSubmit={submit}
+           jarId={jarId}
+           setJarId={setJarId}
+          plantingDate={plantingDate}
+          setPlantingDate={setPlantingDate}
+          today={today}
+          currentHeight={currentHeight}
+          setCurrentHeight={setCurrentHeight}
+          manualAgeDays={manualAgeDays}          // ✅ add
+          setManualAgeDays={setManualAgeDays}    // ✅ add
+          loading={loading}
+           error={error}
         />
+
         <ResultCard
           result={result}
           jarId={jarId}
@@ -106,8 +131,23 @@ function Hero() {
   );
 }
 
-function FormCard({ onSubmit, jarId, setJarId, plantingDate, setPlantingDate, currentHeight, setCurrentHeight, loading, error }) {
-  return (
+// function FormCard({ onSubmit, jarId, setJarId, plantingDate, setPlantingDate, currentHeight, setCurrentHeight, loading, error }) {
+function FormCard({
+  onSubmit,
+  jarId,
+  setJarId,
+  plantingDate,
+  setPlantingDate,
+  today,
+  currentHeight,
+  setCurrentHeight,
+  manualAgeDays,          // ✅ add
+  setManualAgeDays,       // ✅ add
+  loading,
+  error,
+}) {
+  
+return (
     <motion.form
       onSubmit={onSubmit}
       initial={{ opacity: 0, y: 10 }}
@@ -154,9 +194,6 @@ function FormCard({ onSubmit, jarId, setJarId, plantingDate, setPlantingDate, cu
     />
   </Field>
 
-
-
-
       <Field label="Current height (mm) *">
         <input
           type="number"
@@ -169,6 +206,17 @@ function FormCard({ onSubmit, jarId, setJarId, plantingDate, setPlantingDate, cu
           min="0"
         />
       </Field>
+      <Field label="Age (days) - optional (testing)">
+        <input
+          type="number"
+          value={manualAgeDays}
+          onChange={(e) => setManualAgeDays(e.target.value)}
+         placeholder="e.g. 45"
+         className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
+         min="0"
+       />
+      </Field>
+
 
       <div className="flex flex-wrap gap-3 text-xs text-slate-400">
         <p>Tip: current date defaults to today automatically.</p>

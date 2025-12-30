@@ -1,4 +1,4 @@
-# 🌱 Orchid Growth Analyzer — Backend Model Documentation
+<!-- # 🌱 Orchid Growth Analyzer — Backend Model Documentation
 
 This document explains how the Orchid Growth Analyzer backend works, including
 the machine learning model inputs, outputs, preprocessing steps, endpoints, and
@@ -46,4 +46,4 @@ The backend receives input through the `/analyze-growth` API in JSON format:
   "planting_date": "YYYY-MM-DD",
   "current_height_mm": 7.5,
   "current_date": "YYYY-MM-DD"   <-- optional, defaults to today
-}
+} -->
