@@ -194,6 +194,7 @@ from datetime import datetime
 from pathlib import Path
 from collections import Counter
 
+# FastAPI app initialization
 app = FastAPI()
 
 app.add_middleware(
@@ -203,17 +204,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# Load trained ML model and metadata
 
 model = joblib.load("orchid_growth_rf_model.joblib")
 metadata = joblib.load("orchid_growth_metadata.joblib")
 
+# Dataset paths for expected ranges
 BASE_DIR = Path(__file__).resolve().parent
+
+# Try multiple locations for the dataset
 POSSIBLE_DATASET_PATHS = [
     BASE_DIR / "orchid_growth_agar_biweekly_weekly_2025-10-21.xlsx",
     BASE_DIR.parent / "orchid_growth_agar_biweekly_weekly_2025-10-21.xlsx",
     BASE_DIR.parent.parent / "orchid_growth_agar_biweekly_weekly_2025-10-21.xlsx",
 ]
 DATASET_PATH = next((p for p in POSSIBLE_DATASET_PATHS if p.exists()), None)
+# Initialize age range lookup
 age_range_lookup = None
 
 def parse_range_to_min_max(s):
@@ -224,6 +230,7 @@ def parse_range_to_min_max(s):
         return float(parts[0]), float(parts[1])
     return None, None
 
+# Build age range lookup
 def build_age_lookup_from_dataset():
     if not DATASET_PATH or not DATASET_PATH.exists():
         return None
@@ -241,7 +248,7 @@ def build_age_lookup_from_dataset():
 
     age_lookup.sort(key=lambda x: x[0])
     return age_lookup
-
+# Build age range for an age
 def expected_range_from_lookup(age_days):
     global age_range_lookup
     if age_range_lookup is None:
@@ -264,6 +271,7 @@ def expected_range_from_lookup(age_days):
             return ranges[i]
     return ranges[-1]
 
+#fallback ranges for age
 def get_expected_height_range(age_days):
     if age_days <= 40:
         return (3, 10)
