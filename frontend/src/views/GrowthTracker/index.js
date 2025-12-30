@@ -131,7 +131,7 @@ function FormCard({ onSubmit, jarId, setJarId, plantingDate, setPlantingDate, cu
           className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
         />
       </Field>
-
+{/* 
       <Field label="Planting date *">
         <input
           type="date"
@@ -140,7 +140,22 @@ function FormCard({ onSubmit, jarId, setJarId, plantingDate, setPlantingDate, cu
           className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
           required
         />
-      </Field>
+      </Field> */}
+      
+  <Field label="Planting date *">
+    <input
+      type="date"
+      value={plantingDate}
+      onChange={(e) => setPlantingDate(e.target.value)}
+      min={new Date().toISOString().split('T')[0]}
+      max={new Date().toISOString().split('T')[0]}
+      className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
+      required
+    />
+  </Field>
+
+
+
 
       <Field label="Current height (mm) *">
         <input
