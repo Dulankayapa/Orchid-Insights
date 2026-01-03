@@ -43,7 +43,7 @@ Network & Infrastructure Dependencies
 Reliable internet connectivity for real-time data synchronization
 Secure communication protocols (e.g., MQTT or HTTP)
 
-Architectural Diagram
+Architectural Diagram.
 
 <img width="953" height="591" alt="image" src="https://github.com/user-attachments/assets/41b638c4-8e04-467e-ae54-79808e0fff07" />
 https://drive.google.com/file/d/1Wfd6BE3RLCPCPoDBXJHYTj01D0qL4JNM/view?usp=drive_link
