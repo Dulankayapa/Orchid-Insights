@@ -1,0 +1,297 @@
+<div class="app" id="appRoot">
+  <!-- TOP BAR -->
+  <div class="topbar panel-3d">
+    <div class="topbar-left">
+      <span class="brand-dot" aria-hidden="true"></span>
+      <div class="titleblock">
+        <h1>Orchid Environmental Monitor</h1>
+        <div class="subline">
+          <span id="connPill" class="pill neutral">Connecting…</span>
+          <span class="muted">Last update: <strong id="lastUpdated">—</strong></span>
+          <span class="muted">Mode: <strong id="modeLabel">Live</strong></span>
+        </div>
+        <!-- Overall status summary -->
+        <div class="statusBanner" role="status" aria-live="polite">
+          <div class="icon" id="overallIcon">🌿</div>
+          <div class="txt">
+            <p class="ttl" id="overallTitle">Waiting for data…</p>
+            <p class="msg" id="overallMsg">Connect your device to start live monitoring.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <div class="segment" role="tablist" aria-label="Time range">
+        <button class="segbtn active" data-range="1h" aria-label="Show last 1 hour">1h</button>
+        <button class="segbtn" data-range="6h" aria-label="Show last 6 hours">6h</button>
+        <button class="segbtn" data-range="24h" aria-label="Show last 24 hours">24h</button>
+        <button class="segbtn" data-range="all" aria-label="Show all data">All</button>
+      </div>
+      <button id="pauseBtn" class="btn" aria-label="Pause or resume live updates">⏸ Pause</button>
+      <button id="soundBtn" class="btn" title="Enable/disable alert sound" aria-label="Toggle sound alerts">🔈 Sound: Off</button>
+      <button id="showAllBtn" class="btn" aria-label="Show all cards">🧩 Show all</button>
+      <button id="hideChartsBtn" class="btn" aria-label="Hide or show charts">📉 Hide charts</button>
+      <button id="resetLayoutBtn" class="btn" aria-label="Reset layout and open all cards">↩ Reset layout</button>
+      <button id="exportBtn" class="btn" aria-label="Export readings to CSV">⬇ Export CSV</button>
+      <button id="pdfBtn" class="btn" title="Download a PDF report (includes charts + AI analysis)" aria-label="Download PDF report">📄 Download PDF</button>
+      <button id="themeBtn" class="btn" aria-label="Toggle theme">🌙 Theme</button>
+    </div>
+  </div>
+  <!-- LEFT -->
+  <div class="left-panel panel-3d lift">
+    <div class="leaf-area">
+      <div class="leaf-visual">
+        <div class="leaf-frame">
+          <img
+            src="https://m.media-amazon.com/images/I/717fTnvVWCL._AC_UF894,1000_QL80_.jpg"
+            alt="Orchid"
+          />
+        </div>
+      </div>
+      <div class="mini lift" id="rangesCard">
+        <h3>
+          <span>Safe Ranges</span>
+          <button class="accBtn" id="rangesToggle" aria-expanded="true">Collapse</button>
+        </h3>
+        <div class="accBody" id="rangesBody">
+          <div class="grid2">
+            <div class="field">
+              <label>Temp min</label>
+              <div class="inwrap"><input id="tMin" type="number" step="0.5"><span class="suffix">°C</span></div>
+            </div>
+            <div class="field">
+              <label>Temp max</label>
+              <div class="inwrap"><input id="tMax" type="number" step="0.5"><span class="suffix">°C</span></div>
+            </div>
+            <div class="field">
+              <label>Hum min</label>
+              <div class="inwrap"><input id="hMin" type="number" step="1"><span class="suffix">%</span></div>
+            </div>
+            <div class="field">
+              <label>Hum max</label>
+              <div class="inwrap"><input id="hMax" type="number" step="1"><span class="suffix">%</span></div>
+            </div>
+            <div class="field">
+              <label>Lux min</label>
+              <div class="inwrap"><input id="lMin" type="number" step="1"><span class="suffix">lx</span></div>
+            </div>
+            <div class="field">
+              <label>Lux max</label>
+              <div class="inwrap"><input id="lMax" type="number" step="1"><span class="suffix">lx</span></div>
+            </div>
+            <div class="field">
+              <label>MQ warn (&gt;)</label>
+              <div class="inwrap"><input id="mqWarn" type="number" step="10"><span class="suffix">—</span></div>
+            </div>
+            <div class="field">
+              <label>Stale after</label>
+              <div class="inwrap"><input id="staleSec" type="number" step="5"><span class="suffix">sec</span></div>
+            </div>
+          </div>
+          <div class="divider"></div>
+          <div class="settings-footer">
+            <div class="settings-actions">
+              <button id="saveSettings" class="btn" aria-label="Save safe ranges">💾 Save</button>
+              <button id="resetSettings" class="btn" aria-label="Reset safe ranges to defaults">↩ Reset</button>
+            </div>
+            <span class="muted" id="settingsHint">Saved locally (per browser)</span>
+          </div>
+          <div class="subhint">
+            Tip: these ranges drive <strong>badges</strong>, <strong>alerts</strong>, and the <strong>safe band</strong> on charts.
+          </div>
+        </div>
+      </div>
+      <div class="mini lift" id="alertsCard">
+        <h3>
+          <span>Alert Center</span>
+          <button class="accBtn" id="alertsToggle" aria-expanded="true">Collapse</button>
+        </h3>
+        <div class="accBody" id="alertsBody">
+          <div class="alerts" id="alertsBox"></div>
+          <div class="subhint">Alerts include quick actions like <strong>Snooze</strong> and <strong>Show tip</strong>.</div>
+        </div>
+      </div>
+      <div class="mini lift" id="aiCard">
+        <h3>
+          <span>Orchid Care Tips</span>
+          <button class="accBtn" id="aiToggle" aria-expanded="true">Collapse</button>
+        </h3>
+        <div class="accBody" id="aiBody">
+          <div class="aiTips">
+            <div class="aiQuote" id="aiQuoteCard">
+              <div class="kicker"><span class="spark">✨</span><span id="aiKicker">Smart guidance based on your sensors</span></div>
+              <div class="text" id="aiQuoteText">—</div>
+              <div class="aiReason" id="aiReason">Reason: waiting for data…</div>
+            </div>
+            <div class="aiTipFooter">
+              <span class="aiTag" id="aiTag">Waiting for data…</span>
+              <div class="aiBtnRow">
+                <button id="newTipBtn" class="btn" aria-label="Get a new tip">🔄 New tip</button>
+                <button id="copyTipBtn" class="btn" aria-label="Copy tip to clipboard">📋 Copy tip</button>
+              </div>
+            </div>
+            <div class="muted" style="line-height:1.35">
+              Practical suggestions to improve growth and protect the orchid by stabilizing temperature, humidity, light, and air quality.
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- ———— NEW: GROWTH TRACKER CARD ———— -->
+      <div class="mini lift" id="growthCard">
+        <h3>
+          <span>Growth Tracker</span>
+          <button class="accBtn" id="growthToggle" aria-expanded="true">Collapse</button>
+        </h3>
+        <div class="accBody" id="growthBody">
+          <div class="field">
+            <label>Height (cm)</label>
+            <div class="inwrap">
+              <input id="heightInput" type="number" step="0.1" placeholder="e.g. 24.5" min="0">
+              <span class="suffix">cm</span>
+            </div>
+          </div>
+          <div class="field" style="margin-top:8px;">
+            <label>Note (optional)</label>
+            <input id="growthNote" type="text" placeholder="e.g. new leaf, repotted">
+          </div>
+          <button id="logGrowthBtn" class="btn" style="margin-top:12px;" aria-label="Log growth entry">✅ Log Growth</button>
+          <div class="divider" style="margin:12px 0;"></div>
+          <div class="growth-list" id="growthLogList"></div>
+          <div class="subhint" style="margin-top:8px;">
+            Track physical progress alongside environmental data.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- RIGHT -->
+  <div class="right-col">
+    <div class="card panel-3d status-row" id="kpiRow">
+      <div class="tile kpi temp lift" id="tempTile">
+        <div class="card-header"><h3>Temperature</h3><button class="btn card-toggle" data-card="tempTile">Hide</button></div>
+        <div class="card-body">
+          <div class="value"><span id="temp">—</span><span id="tempPill" class="pill neutral">—</span></div>
+          <div class="meta"><span id="tempDot" class="dot"></span><span id="tempAlert">Waiting for data…</span></div>
+          <div class="hintLine" id="tempHint">Tip: avoid direct AC/heater airflow.</div>
+        </div>
+      </div>
+      <div class="tile kpi hum lift" id="humTile">
+        <div class="card-header"><h3>Humidity</h3><button class="btn card-toggle" data-card="humTile">Hide</button></div>
+        <div class="card-body">
+          <div class="value"><span id="hum">—</span><span id="humPill" class="pill neutral">—</span></div>
+          <div class="meta"><span id="humDot" class="dot"></span><span id="humAlert">Waiting for data…</span></div>
+          <div class="hintLine" id="humHint">Tip: humidity + airflow prevents fungus.</div>
+        </div>
+      </div>
+      <div class="tile kpi lux lift" id="luxTile">
+        <div class="card-header"><h3>Light</h3><button class="btn card-toggle" data-card="luxTile">Hide</button></div>
+        <div class="card-body">
+          <div class="value"><span id="lux">—</span><span id="luxPill" class="pill neutral">—</span></div>
+          <div class="meta"><span id="luxDot" class="dot"></span><span id="luxAlert">Waiting for data…</span></div>
+          <div class="hintLine" id="luxHint">Tip: increase light gradually over 2–3 days.</div>
+        </div>
+      </div>
+      <div class="tile kpi aq lift" id="mqTile">
+        <div class="card-header"><h3>Air Quality (MQ135)</h3><button class="btn card-toggle" data-card="mqTile">Hide</button></div>
+        <div class="card-body">
+          <div class="value"><span id="mq">—</span><span id="mqPill" class="pill neutral">—</span></div>
+          <div class="meta"><span id="mqDot" class="dot"></span><span id="aqAlert">Waiting for data…</span></div>
+          <div class="hintLine" id="mqHint">Tip: keep aerosols/chemicals away; ventilate gently.</div>
+        </div>
+      </div>
+      <!-- ✨ NEW GROWTH KPI TILE -->
+      <div class="tile kpi growth lift" id="growthTile">
+        <div class="card-header"><h3>Growth</h3><button class="btn card-toggle" data-card="growthTile">Hide</button></div>
+        <div class="card-body">
+          <div class="value"><span id="latestGrowth">—</span><span id="growthPill" class="pill neutral">—</span></div>
+          <div class="meta"><span id="growthDot" class="dot"></span><span id="growthAlert">Waiting for growth entry…</span></div>
+          <div class="hintLine" id="growthHint">Tip: log weekly to track trends.</div>
+        </div>
+      </div>
+    </div>
+    <div class="card panel-3d lift" id="healthCard">
+      <div class="card-header">
+        <h3 style="margin:0;font-weight:1000">System Health</h3>
+        <button class="btn card-toggle" data-card="healthCard">Hide</button>
+      </div>
+      <div class="card-body">
+        <div class="healthGrid">
+          <div class="healthItem">
+            <div class="healthLbl">Sensor freshness</div>
+            <div class="healthVal"><span id="healthFresh">—</span></div>
+          </div>
+          <div class="healthItem">
+            <div class="healthLbl">Firebase connected</div>
+            <div class="healthVal"><span id="healthFb">—</span></div>
+          </div>
+          <div class="healthItem">
+            <div class="healthLbl">Samples/min (last 10 min)</div>
+            <div class="healthVal"><span id="healthRate">—</span></div>
+          </div>
+          <div class="healthItem">
+            <div class="healthLbl">Missing fields (latest)</div>
+            <div class="healthVal"><span id="healthMissing">—</span></div>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:10px">
+          Tip: for perfect freshness accuracy, store a sensor timestamp in Firebase.
+        </div>
+      </div>
+    </div>
+    <div class="card panel-3d charts lift" id="chartsCard">
+      <div class="card-header">
+        <h3 style="margin:0;font-weight:1000">Environmental Charts</h3>
+        <div class="muted">Visible readings: <strong id="pointsCount">0</strong></div>
+      </div>
+      <div class="chart-row card-body" id="chartsBody">
+        <div class="chart-card lift" id="tempChartCard">
+          <div class="card-header">
+            <div class="chart-title"><span class="legend-dot temp"></span> Temperature <span id="tempLive" class="live-chip">Live: —</span></div>
+            <button class="btn card-toggle" data-card="tempChartCard">Hide</button>
+          </div>
+          <div class="statsRow" id="tempStats"></div>
+          <div class="card-body"><div class="canvas-wrap"><canvas id="tempChart"></canvas></div></div>
+        </div>
+        <div class="chart-card lift" id="humChartCard">
+          <div class="card-header">
+            <div class="chart-title"><span class="legend-dot hum"></span> Humidity <span id="humLive" class="live-chip">Live: —</span></div>
+            <button class="btn card-toggle" data-card="humChartCard">Hide</button>
+          </div>
+          <div class="statsRow" id="humStats"></div>
+          <div class="card-body"><div class="canvas-wrap"><canvas id="humChart"></canvas></div></div>
+        </div>
+        <div class="chart-card lift" id="luxChartCard">
+          <div class="card-header">
+            <div class="chart-title"><span class="legend-dot lux"></span> Light (lux) <span id="luxLive" class="live-chip">Live: —</span></div>
+            <button class="btn card-toggle" data-card="luxChartCard">Hide</button>
+          </div>
+          <div class="statsRow" id="luxStats"></div>
+          <div class="card-body"><div class="canvas-wrap"><canvas id="luxChart"></canvas></div></div>
+        </div>
+        <div class="chart-card lift" id="mqChartCard">
+          <div class="card-header">
+            <div class="chart-title"><span class="legend-dot mq"></span> MQ135 <span id="mqLive" class="live-chip">Live: —</span></div>
+            <button class="btn card-toggle" data-card="mqChartCard">Hide</button>
+          </div>
+          <div class="statsRow" id="mqStats"></div>
+          <div class="card-body"><div class="canvas-wrap"><canvas id="mqChart"></canvas></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="card panel-3d log-card lift" id="logCard">
+      <div class="log-controls">
+        <div style="display:flex;align-items:center;gap:8px">
+          <h3 style="margin:0;font-weight:1000">Activity Log</h3>
+          <div class="muted">latest updates</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="copyLatest" class="btn" aria-label="Copy latest log entry">📋 Copy latest</button>
+          <button id="toggleLog" class="btn" aria-label="Hide or show activity log">Hide</button>
+          <button id="clearLog" class="btn" aria-label="Clear activity log">Clear</button>
+        </div>
+      </div>
+      <div id="logContainer" class="log-list"></div>
+    </div>
+  </div>
+</div>
+<div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="true"></div>
