@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 // Axios for HTTP requests to backend API
 import axios from 'axios';
 import { motion, AnimatePresence } from 'framer-motion';
+import { mockPlants } from '../../data/mockPlants';
 
 /**
  * Main GrowthTracker component
@@ -16,6 +17,32 @@ function GrowthTracker() {
   const [error, setError] = useState(null);
   const [manualAgeDays, setManualAgeDays] = useState('');// Add manual age days
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const plantRecord = useMemo(() => {
+    if (!jarId) return null;
+    const id = jarId.trim().toLowerCase();
+    return mockPlants.find((p) => p.id.toLowerCase() === id) || null;
+  }, [jarId]);
+  const derivedAgeDays = useMemo(() => {
+    if (!plantingDate) return null;
+    const planted = new Date(plantingDate);
+    if (Number.isNaN(planted.getTime())) return null;
+    const diffMs = new Date().setHours(0, 0, 0, 0) - planted.setHours(0, 0, 0, 0);
+    return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+  }, [plantingDate]);
+  useEffect(() => {
+    if (plantRecord) {
+      setPlantingDate(plantRecord.planting_date);
+      const latestHeight = plantRecord.heights?.[0]?.height_mm;
+      if (latestHeight) setCurrentHeight(String(latestHeight));
+    }
+  }, [plantRecord]);
+  useEffect(() => {
+    if (derivedAgeDays === null) {
+      setManualAgeDays('');
+      return;
+    }
+    setManualAgeDays(String(derivedAgeDays));
+  }, [derivedAgeDays]);
 
 
   const backendBase = useMemo(() => {
@@ -23,14 +50,34 @@ function GrowthTracker() {
     return base.endsWith('/') ? base.slice(0, -1) : base;
   }, []);
 
+  const displayOverride = useMemo(() => {
+    // Ensure the UI shows a single, deterministic classification based on expected range vs height
+    if (!result?.expected_height_range) return null;
+    const heightVal = Number(currentHeight) || Number(result?.plant_height_mm);
+    if (!Number.isFinite(heightVal)) return null;
+    const [minExpected, maxExpected] = result.expected_height_range;
+    if (heightVal < minExpected) return { label: 'below_expected', probabilities: { below_expected: 1 } };
+    if (heightVal > maxExpected) return { label: 'above_expected', probabilities: { above_expected: 1 } };
+    return { label: 'within_expected', probabilities: { within_expected: 1 } };
+  }, [result, currentHeight]);
+
+  const displayLabel = displayOverride?.label || result?.predicted_label;
+  const displayProbabilities = displayOverride?.probabilities || result?.probabilities;
+  const normalizedProbabilities = useMemo(() => {
+    const base = displayProbabilities || {};
+    const labels = ['below_expected', 'within_expected', 'above_expected'];
+    const entries = labels.map((label) => [label, Number(base[label]) || 0]);
+    return Object.fromEntries(entries);
+  }, [displayProbabilities]);
+
   const predictedPillClass = useMemo(() => {
-    if (!result?.predicted_label) return 'border-slate-700 bg-slate-800/60 text-slate-100';
-    const label = String(result.predicted_label).toLowerCase();
+    if (!displayLabel) return 'border-slate-700 bg-slate-800/60 text-slate-100';
+    const label = String(displayLabel).toLowerCase();
     if (label.includes('below')) return 'border-amber-400/50 bg-amber-500/10 text-amber-100';
     if (label.includes('within') || label.includes('normal')) return 'border-emerald-400/60 bg-emerald-500/10 text-emerald-100';
     if (label.includes('above')) return 'border-sky-400/60 bg-sky-500/10 text-sky-100';
     return 'border-slate-600 bg-slate-800/70 text-slate-100';
-  }, [result]);
+  }, [displayLabel]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -72,38 +119,34 @@ function GrowthTracker() {
     <div className="space-y-10">
       <Hero />
       <div className="grid lg:grid-cols-5 gap-6 items-start">
-        {/* <FormCard
-          onSubmit={submit}
-          jarId={jarId}
-          setJarId={setJarId}
-          plantingDate={plantingDate}
-          setPlantingDate={setPlantingDate}
-          currentHeight={currentHeight}
-          setCurrentHeight={setCurrentHeight}
-          loading={loading}
-          error={error}
-          
-        /> */}
-        <FormCard
-           onSubmit={submit}
-           jarId={jarId}
-           setJarId={setJarId}
-          plantingDate={plantingDate}
-          setPlantingDate={setPlantingDate}
-          today={today}
-          currentHeight={currentHeight}
-          setCurrentHeight={setCurrentHeight}
-          manualAgeDays={manualAgeDays}          // ✅ add
-          setManualAgeDays={setManualAgeDays}    // ✅ add
-          loading={loading}
-           error={error}
-        />
+        <div className="lg:col-span-2 space-y-4">
+          <FormCard
+            onSubmit={submit}
+            jarId={jarId}
+            setJarId={setJarId}
+            plantingDate={plantingDate}
+            setPlantingDate={setPlantingDate}
+            currentHeight={currentHeight}
+            setCurrentHeight={setCurrentHeight}
+            derivedAgeDays={derivedAgeDays}
+            today={today}
+            manualAgeDays={manualAgeDays}
+            setManualAgeDays={setManualAgeDays}
+            loading={loading}
+            error={error}
+            plantRecord={plantRecord}
+          />
+
+          <MockHistoryCard plantRecord={plantRecord} />
+        </div>
 
         <ResultCard
           result={result}
           jarId={jarId}
           currentHeight={currentHeight}
           predictedPillClass={predictedPillClass}
+          displayLabel={displayLabel}
+          displayProbabilities={normalizedProbabilities}
         />
       </div>
     </div>
@@ -138,13 +181,15 @@ function FormCard({
   setJarId,
   plantingDate,
   setPlantingDate,
-  today,
   currentHeight,
   setCurrentHeight,
+  derivedAgeDays,
+  today,
   manualAgeDays,          // ✅ add
   setManualAgeDays,       // ✅ add
   loading,
   error,
+  plantRecord,
 }) {
   
 return (
@@ -171,6 +216,11 @@ return (
           className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
         />
       </Field>
+      {!plantRecord && jarId && (
+        <p className="text-xs text-amber-200/90 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2">
+          No mock record for "{jarId}". Try Jar-12, Jar-07, Jar-19, or Jar-03.
+        </p>
+      )}
 {/* 
       <Field label="Planting date *">
         <input
@@ -187,12 +237,16 @@ return (
       type="date"
       value={plantingDate}
       onChange={(e) => setPlantingDate(e.target.value)}
-      min={new Date().toISOString().split('T')[0]}
-      max={new Date().toISOString().split('T')[0]}
       className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
       required
     />
   </Field>
+      <p className="text-xs text-slate-400">Today: {today}</p>
+      {plantRecord && (
+        <p className="text-xs text-emerald-200/80 rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-2">
+          Auto-filled from mock DB for {plantRecord.id}.
+        </p>
+      )}
 
       <Field label="Current height (mm) *">
         <input
@@ -211,7 +265,7 @@ return (
           type="number"
           value={manualAgeDays}
           onChange={(e) => setManualAgeDays(e.target.value)}
-         placeholder="e.g. 45"
+         placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : 'e.g. 45'}
          className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
          min="0"
        />
@@ -253,7 +307,7 @@ return (
   );
 }
 
-function ResultCard({ result, jarId, currentHeight, predictedPillClass }) {
+function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities }) {
   return (
     <div className="lg:col-span-3 space-y-6">
       <motion.div
@@ -292,7 +346,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass }) {
               <div className="flex flex-wrap items-center gap-3">
                 <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm ${predictedPillClass}`}>
                   <span className="h-2 w-2 rounded-full bg-current opacity-80" />
-                  {result.predicted_label || '-'}
+                  {displayLabel || '-'}
                 </div>
                 {jarId && (
                   <div className="text-xs text-slate-400 px-3 py-1 rounded-full border border-slate-800 bg-slate-800/60">
@@ -314,11 +368,11 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass }) {
                 <StatCard title="Current height (mm)" value={Number(currentHeight) || result?.plant_height_mm || '-'} hint="Value you provided" />
               </div>
 
-              {result.probabilities && (
+              {displayProbabilities && (
                 <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
                   <p className="text-sm text-slate-300 font-semibold">Probability breakdown</p>
                   <div className="grid gap-4">
-                    {Object.entries(result.probabilities).map(([label, prob]) => (
+                    {Object.entries(displayProbabilities).map(([label, prob]) => (
                       <ProbabilityBar key={label} label={label} value={prob} />
                     ))}
                   </div>
@@ -334,6 +388,49 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass }) {
         </AnimatePresence>
       </motion.div>
     </div>
+  );
+}
+
+function MockHistoryCard({ plantRecord }) {
+  const knownIds = mockPlants.map((p) => p.id).join(', ');
+  const heights = plantRecord?.heights || [];
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.05 }}
+      className="rounded-3xl border border-slate-800/80 bg-slate-900/60 backdrop-blur p-5 shadow-xl shadow-black/30 space-y-4"
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock DB lookup</p>
+          <h4 className="text-lg font-semibold text-white">Plant profile & history</h4>
+        </div>
+        <span className="text-xs text-slate-400 px-3 py-1 rounded-full border border-slate-800 bg-slate-800/60">
+          Demo data
+        </span>
+      </div>
+
+      {plantRecord ? (
+        <>
+          <div className="space-y-2">
+            {heights.map((row) => (
+              <div
+                key={`${plantRecord.id}-${row.date}`}
+                className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-200"
+              >
+                <span className="text-slate-400">{row.date}</span>
+                <span className="font-semibold text-white">{row.height_mm} mm</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-3 text-sm text-slate-300">
+          Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {knownIds}.
+        </div>
+      )}
+    </motion.div>
   );
 }
 
