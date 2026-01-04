@@ -17,7 +17,7 @@ const navItems = [
   { label: 'Height Check', to: '/height-check' },
   { label: 'Growth Tracker', to: '/growth-tracker' },
   { label: 'Plant Database', to: '/plant-database' },
-  { label: 'Firebase Data', to: '/firebase-data' },
+ 
   { label: 'Category 2', to: '/category2' },
   { label: 'Category 3', to: '/category3' },
   { label: 'Category 4', to: '/category4' },
@@ -98,11 +98,10 @@ function Dashboard() {
     { title: 'Height Check', to: '/height-check', desc: 'Pull the latest sensor-aligned height from the mock database.', tone: 'from-sky-400/80 to-emerald-500/70' },
     { title: 'Orchid Growth Tracker', to: '/growth-tracker', desc: 'Measure, predict, and benchmark orchid height vs age.', tone: 'from-emerald-400/80 to-blue-500/70' },
     { title: 'Plant Database', to: '/plant-database', desc: 'Browse mock plant IDs, planting dates, and height history.', tone: 'from-indigo-400/80 to-cyan-500/70' },
-    { title: 'Firebase Data', to: '/firebase-data', desc: 'Live pull from Firebase Realtime DB into a table.', tone: 'from-amber-400/80 to-rose-500/70' },
+    
     { title: 'Category 2', to: '/category2', desc: 'Placeholder module', tone: 'from-fuchsia-400/70 to-purple-500/60' },
     { title: 'Category 3', to: '/category3', desc: 'Placeholder module', tone: 'from-amber-300/70 to-orange-500/60' },
-    { title: 'Category 4', to: '/category4', desc: 'Placeholder module', tone: 'from-cyan-300/70 to-sky-500/60' },
-    { title: 'Category 5', to: '/category5', desc: 'Placeholder module', tone: 'from-lime-300/70 to-emerald-500/60' },
+    
   ];
 
   return (

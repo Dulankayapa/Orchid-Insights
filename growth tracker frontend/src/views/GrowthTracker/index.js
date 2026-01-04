@@ -17,11 +17,14 @@ function GrowthTracker() {
   const [error, setError] = useState(null);
   const [manualAgeDays, setManualAgeDays] = useState('');// Add manual age days
   const today = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const [analyzedHeight, setAnalyzedHeight] = useState(null);
+  const [analyzedJarId, setAnalyzedJarId] = useState('');
   const plantRecord = useMemo(() => {
     if (!jarId) return null;
     const id = jarId.trim().toLowerCase();
     return mockPlants.find((p) => p.id.toLowerCase() === id) || null;
   }, [jarId]);
+  
   const derivedAgeDays = useMemo(() => {
     if (!plantingDate) return null;
     const planted = new Date(plantingDate);
@@ -31,9 +34,13 @@ function GrowthTracker() {
   }, [plantingDate]);
   useEffect(() => {
     if (plantRecord) {
-      setPlantingDate(plantRecord.planting_date);
+      if (plantRecord.planting_date) {
+        setPlantingDate(plantRecord.planting_date);
+      }
       const latestHeight = plantRecord.heights?.[0]?.height_mm;
-      if (latestHeight) setCurrentHeight(String(latestHeight));
+      if (latestHeight !== undefined && latestHeight !== null) {
+        setCurrentHeight(String(latestHeight));
+      }
     }
   }, [plantRecord]);
   useEffect(() => {
@@ -51,15 +58,15 @@ function GrowthTracker() {
   }, []);
 
   const displayOverride = useMemo(() => {
-    // Ensure the UI shows a single, deterministic classification based on expected range vs height
+    // Ensure the UI shows a single, deterministic classification based on expected range vs last analyzed height
     if (!result?.expected_height_range) return null;
-    const heightVal = Number(currentHeight) || Number(result?.plant_height_mm);
+    const heightVal = Number(analyzedHeight ?? result?.plant_height_mm);
     if (!Number.isFinite(heightVal)) return null;
     const [minExpected, maxExpected] = result.expected_height_range;
     if (heightVal < minExpected) return { label: 'below_expected', probabilities: { below_expected: 1 } };
     if (heightVal > maxExpected) return { label: 'above_expected', probabilities: { above_expected: 1 } };
     return { label: 'within_expected', probabilities: { within_expected: 1 } };
-  }, [result, currentHeight]);
+  }, [result, analyzedHeight]);
 
   const displayLabel = displayOverride?.label || result?.predicted_label;
   const displayProbabilities = displayOverride?.probabilities || result?.probabilities;
@@ -106,6 +113,8 @@ function GrowthTracker() {
         headers: { 'Content-Type': 'application/json' },
       });
       setResult(resp.data);
+      setAnalyzedHeight(Number(currentHeight));
+      setAnalyzedJarId(jarId);
     } catch (err) {
       console.error(err);
       const message = err.response?.data?.detail || err.response?.data || err.message || 'Request failed';
@@ -142,8 +151,8 @@ function GrowthTracker() {
 
         <ResultCard
           result={result}
-          jarId={jarId}
-          currentHeight={currentHeight}
+          jarId={analyzedJarId}
+          currentHeight={analyzedHeight}
           predictedPillClass={predictedPillClass}
           displayLabel={displayLabel}
           displayProbabilities={normalizedProbabilities}

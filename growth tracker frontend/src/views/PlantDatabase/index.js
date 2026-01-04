@@ -1,17 +1,88 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import axios from 'axios';
 import { motion } from 'framer-motion';
-import { mockPlants } from '../../data/mockPlants';
+
+const firebaseConfig = {
+  apiKey: 'AIzaSyD0lET_4Qpi-W2t0M4OpPGT5NeR2wlyiD0',
+  authDomain: 'orchid-enviromental-monitor-d.firebaseapp.com',
+  databaseURL: 'https://orchid-enviromental-monitor-d-default-rtdb.firebaseio.com',
+  projectId: 'orchid-enviromental-monitor-d',
+};
 
 function PlantDatabase() {
-  const [selectedId, setSelectedId] = useState(mockPlants[0]?.id || '');
+  const [rows, setRows] = useState([]);
+  const [selectedId, setSelectedId] = useState('');
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [sensorLatest, setSensorLatest] = useState(null);
+  const [sensorLogs, setSensorLogs] = useState([]);
 
   const filtered = useMemo(() => {
-    if (!appliedQuery.trim()) return mockPlants;
+    if (!appliedQuery.trim()) return rows;
     const term = appliedQuery.trim().toLowerCase();
-    return mockPlants.filter((p) => p.id.toLowerCase().includes(term));
-  }, [appliedQuery]);
+    return rows.filter((p) => p.id.toLowerCase().includes(term));
+  }, [appliedQuery, rows]);
+
+  useEffect(() => {
+    const fetchRows = async () => {
+      setLoading(true);
+      setError('');
+      try {
+        const [plantsResp, latestResp, logsResp] = await Promise.all([
+          axios.get(`${firebaseConfig.databaseURL}/plants.json`),
+          axios.get(`${firebaseConfig.databaseURL}/orchidData/latest.json`),
+          axios.get(`${firebaseConfig.databaseURL}/orchidData/logs.json`),
+        ]);
+
+        const raw = plantsResp.data || {};
+        const mapped = Object.entries(raw).map(([id, data]) => {
+          const planting_date = data?.planting_date || data?.plantingDate || '';
+          const heights = data?.heights || [];
+          const height_mm = data?.height_mm ?? data?.height ?? data?.current_height ?? null;
+          return {
+            id,
+            planting_date,
+            heights: Array.isArray(heights) ? heights : [],
+            height_mm,
+            cultivar: data?.cultivar || data?.variety || '',
+          };
+        });
+
+        // Build a synthetic Jar-01 from sensor feed
+        const latest = latestResp.data || null;
+        const normalizedLatest = latest ? normalizeSensor(latest) : null;
+        const logsRaw = logsResp.data || {};
+        const logsArr = Object.values(logsRaw || {}).map(normalizeSensor);
+        logsArr.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+        logsArr.reverse();
+        setSensorLatest(normalizedLatest);
+        setSensorLogs(logsArr);
+        const heightsFromLogs = logsArr.slice(0, 50).map((row) => ({
+          date: row.timestamp ? new Date(row.timestamp).toLocaleString() : '-',
+          height_mm: row.plant_height_mm ?? row.distance_mm ?? null,
+        }));
+        const jarSensor = {
+          id: 'Jar-01',
+          planting_date: '-',
+          heights: heightsFromLogs,
+          height_mm: normalizedLatest?.plant_height_mm ?? normalizedLatest?.distance_mm ?? null,
+          cultivar: 'Sensor feed',
+        };
+
+        const combined = [jarSensor, ...mapped.filter((r) => r.id !== 'Jar-01')];
+        setRows(combined);
+        if (combined[0]) setSelectedId(combined[0].id);
+      } catch (err) {
+        const msg = err.response?.data?.detail || err.message || 'Failed to load Firebase plants';
+        setError(msg);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchRows();
+  }, []);
 
   useEffect(() => {
     if (!filtered.length) return;
@@ -33,6 +104,10 @@ function PlantDatabase() {
   return (
     <div className="space-y-8">
       <Hero />
+      {error && <p className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">{error}</p>}
+      {loading && <p className="text-sm text-slate-300">Loading plants from Firebase…</p>}
+
+      <SensorPanel latest={sensorLatest} logs={sensorLogs} />
 
       <motion.div
         initial={{ opacity: 0, y: 10 }}
@@ -44,8 +119,8 @@ function PlantDatabase() {
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Spreadsheet view</p>
             <h3 className="text-xl font-semibold text-white">Plant database (mock)</h3>
-            <p className="text-slate-300 text-sm mt-1">
-              Filter by Jar/Plant ID and click a row to inspect details and history.
+          <p className="text-slate-300 text-sm mt-1">
+              Filter by Jar/Plant ID and click a row to inspect details and history (live from Firebase).
             </p>
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-400">
@@ -96,6 +171,7 @@ function PlantDatabase() {
                         )
                       )
                     : '-';
+                const latestHeight = plant.height_mm ?? latest?.height_mm ?? null;
                 return (
                   <tr
                     key={plant.id}
@@ -108,7 +184,7 @@ function PlantDatabase() {
                     <td className="px-4 py-3 text-slate-300">{plant.planting_date}</td>
                     <td className="px-4 py-3 text-slate-300">{ageDays}</td>
                     <td className="px-4 py-3 text-slate-300">
-                      {latest ? `${latest.height_mm} mm (${latest.date})` : '-'}
+                      {latestHeight != null ? `${latestHeight} mm` : '-'}
                     </td>
                   </tr>
                 );
@@ -155,7 +231,7 @@ function Hero() {
       <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 via-transparent to-blue-500/10 pointer-events-none" />
       <div className="relative space-y-3 max-w-3xl">
         <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Plant database</p>
-        <h2 className="text-3xl font-semibold leading-tight">Mock plant database</h2>
+        <h2 className="text-3xl font-semibold leading-tight"> plant database</h2>
         <p className="text-slate-300 text-sm md:text-base">
           Explore preloaded plant IDs with planting dates and tracked heights. Use this as a stub for sensor-aligned
           database results before wiring to the real backend.
@@ -260,3 +336,104 @@ function StatusPill() {
 }
 
 export default PlantDatabase;
+
+function normalizeSensor(val) {
+  const ts = normalizeTimestamp(val.timestamp);
+  return {
+    ...val,
+    timestamp: ts,
+    lux: Number(val.lux ?? val.light ?? val.lx ?? 0),
+    temperature: Number(val.temperature ?? val.temp ?? 0),
+    humidity: Number(val.humidity ?? val.hum ?? 0),
+    mq135: Number(val.mq135 ?? val.mq ?? 0),
+    distance_mm: Number(val.distance_mm ?? val.distance ?? val.dist ?? 0),
+    plant_height_mm: Number(val.plant_height_mm ?? val.height_mm ?? 0),
+  };
+}
+
+function fmtMaybe(v, fn) {
+  if (v === null || v === undefined) return '—';
+  return fn ? fn(v) : v;
+}
+
+function SensorPanel({ latest, logs }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="rounded-3xl border border-slate-800/80 bg-slate-900/70 backdrop-blur p-6 shadow-xl shadow-black/30 space-y-4"
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Sensor feed</p>
+          <h3 className="text-xl font-semibold text-white">Live readings from /orchidData</h3>
+        </div>
+        <span className="text-xs text-slate-400 px-3 py-1 rounded-full border border-slate-800 bg-slate-800/60">
+          Logs: {logs?.length ?? 0}
+        </span>
+      </div>
+
+      <div className="grid sm:grid-cols-5 gap-3">
+        <SensorCard label="Temp" value={fmtMaybe(latest?.temperature, (v) => `${v.toFixed(1)} °C`)} />
+        <SensorCard label="Humidity" value={fmtMaybe(latest?.humidity, (v) => `${v.toFixed(1)} %`)} />
+        <SensorCard label="Light" value={fmtMaybe(latest?.lux, (v) => `${Math.round(v)} lx`)} />
+        <SensorCard label="MQ135" value={fmtMaybe(latest?.mq135, (v) => `${v}`)} />
+        <SensorCard label="Distance" value={fmtMaybe(latest?.distance_mm, (v) => `${v} mm`)} />
+      </div>
+
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 max-h-72 overflow-auto">
+        <table className="min-w-full text-xs text-left text-slate-200">
+          <thead className="text-[11px] uppercase tracking-[0.2em] text-slate-400 bg-slate-900/80">
+            <tr>
+              <th className="px-3 py-2">Jar</th>
+              <th className="px-3 py-2">Time</th>
+              <th className="px-3 py-2">Temp</th>
+              <th className="px-3 py-2">Hum</th>
+              <th className="px-3 py-2">Lux</th>
+              <th className="px-3 py-2">MQ</th>
+              <th className="px-3 py-2">Dist</th>
+            </tr>
+          </thead>
+          <tbody>
+            {logs.slice(0, 80).map((row, idx) => (
+              <tr key={idx} className="border-t border-slate-800">
+                <td className="px-3 py-2 text-slate-400">Jar-01</td>
+                <td className="px-3 py-2 text-slate-400">{row.timestamp ? new Date(row.timestamp).toLocaleString() : '—'}</td>
+                <td className="px-3 py-2">{fmtMaybe(row.temperature, (v) => v.toFixed(1))}</td>
+                <td className="px-3 py-2">{fmtMaybe(row.humidity, (v) => v.toFixed(1))}</td>
+                <td className="px-3 py-2">{fmtMaybe(row.lux, (v) => Math.round(v))}</td>
+                <td className="px-3 py-2">{fmtMaybe(row.mq135, (v) => v)}</td>
+                <td className="px-3 py-2">{fmtMaybe(row.distance_mm, (v) => v)}</td>
+              </tr>
+            ))}
+            {!logs.length && (
+              <tr>
+                <td colSpan={7} className="px-3 py-3 text-center text-slate-400">
+                  Waiting for sensor logs from Firebase…
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </motion.div>
+  );
+}
+
+function SensorCard({ label, value }) {
+  return (
+    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
+      <p className="text-[11px] uppercase tracking-[0.25em] text-slate-400">{label}</p>
+      <p className="text-lg font-semibold text-white mt-1">{value ?? '—'}</p>
+    </div>
+  );
+}
+
+function normalizeTimestamp(ts) {
+  const n = Number(ts);
+  const now = Date.now();
+  if (!Number.isFinite(n)) return now;
+  // If value looks like millis() uptime (small), fall back to "now" to avoid 1970 dates
+  if (n < 1e12) return now;
+  return n;
+}
