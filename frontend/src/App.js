@@ -8,10 +8,16 @@ import Category2 from './views/Category2';
 import Category3 from './views/Category3';
 import Category4 from './views/Category4';
 import Category5 from './views/Category5';
+import HeightCheck from './views/HeightCheck';
+import PlantDatabase from './views/PlantDatabase';
+import FirebaseTable from './views/FirebaseTable';
 
 const navItems = [
   { label: 'Dashboard', to: '/' },
+  { label: 'Height Check', to: '/height-check' },
   { label: 'Growth Tracker', to: '/growth-tracker' },
+  { label: 'Plant Database', to: '/plant-database' },
+  { label: 'Firebase Data', to: '/firebase-data' },
   { label: 'Category 2', to: '/category2' },
   { label: 'Category 3', to: '/category3' },
   { label: 'Category 4', to: '/category4' },
@@ -61,8 +67,8 @@ function App() {
                 <h1 className="text-lg font-semibold">Orchid Insights</h1>
               </div>
               <div className="flex items-center gap-3 text-sm text-slate-300">
-                <Link className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-blue-500 text-slate-900 font-semibold" to="/growth-tracker">
-                  Launch Tracker
+                <Link className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-emerald-500 to-blue-500 text-slate-900 font-semibold" to="/height-check">
+                  Height Check
                 </Link>
               </div>
             </header>
@@ -70,7 +76,10 @@ function App() {
             <main className="max-w-6xl mx-auto px-6 lg:px-10 py-10">
               <Routes>
                 <Route path="/" element={<Dashboard />} />
+                <Route path="/height-check" element={<HeightCheck />} />
                 <Route path="/growth-tracker" element={<GrowthTracker />} />
+                <Route path="/plant-database" element={<PlantDatabase />} />
+                <Route path="/firebase-data" element={<FirebaseTable />} />
                 <Route path="/category2" element={<Category2 />} />
                 <Route path="/category3" element={<Category3 />} />
                 <Route path="/category4" element={<Category4 />} />
@@ -86,7 +95,10 @@ function App() {
 
 function Dashboard() {
   const cards = [
+    { title: 'Height Check', to: '/height-check', desc: 'Pull the latest sensor-aligned height from the mock database.', tone: 'from-sky-400/80 to-emerald-500/70' },
     { title: 'Orchid Growth Tracker', to: '/growth-tracker', desc: 'Measure, predict, and benchmark orchid height vs age.', tone: 'from-emerald-400/80 to-blue-500/70' },
+    { title: 'Plant Database', to: '/plant-database', desc: 'Browse mock plant IDs, planting dates, and height history.', tone: 'from-indigo-400/80 to-cyan-500/70' },
+    { title: 'Firebase Data', to: '/firebase-data', desc: 'Live pull from Firebase Realtime DB into a table.', tone: 'from-amber-400/80 to-rose-500/70' },
     { title: 'Category 2', to: '/category2', desc: 'Placeholder module', tone: 'from-fuchsia-400/70 to-purple-500/60' },
     { title: 'Category 3', to: '/category3', desc: 'Placeholder module', tone: 'from-amber-300/70 to-orange-500/60' },
     { title: 'Category 4', to: '/category4', desc: 'Placeholder module', tone: 'from-cyan-300/70 to-sky-500/60' },
@@ -112,10 +124,10 @@ function Dashboard() {
             </p>
           </div>
           <Link
-            to="/growth-tracker"
+            to="/height-check"
             className="inline-flex items-center gap-2 px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-400 to-blue-500 text-slate-900 font-semibold shadow-lg shadow-emerald-500/25"
           >
-            Open Tracker <span className="text-slate-800">→</span>
+            Height Check <span className="text-slate-800">→</span>
           </Link>
         </div>
       </motion.div>
