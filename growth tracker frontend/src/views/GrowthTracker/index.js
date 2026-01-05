@@ -258,6 +258,18 @@ return (
       )}
 
       <Field label="Current height (mm) *">
+  <input
+    type="number"
+    step="0.1"
+    value={currentHeight}
+    readOnly
+    placeholder="Enter height in millimeters"
+    className="w-full rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
+    min="0"
+  />
+</Field>
+
+      {/* <Field label="Current height (mm) *">
         <input
           type="number"
           step="0.1"
@@ -268,7 +280,7 @@ return (
           required
           min="0"
         />
-      </Field>
+      </Field> */}
       {/* <Field label="Age (days) - optional (testing)">
         <input
           type="number"
