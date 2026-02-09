@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 
 import Dashboard from "./pages/Dashboard.jsx";
 import GrowthTracker from "./pages/GrowthTracker.jsx";
+import GrowthHistory from "./pages/GrowthHistory.jsx";
 import DiseaseDetector from "./pages/DiseaseDetector.jsx";
 import PlantDatabase from "./pages/PlantDatabase.jsx";
 import FirebaseTable from "./pages/FirebaseTable.jsx";
@@ -11,6 +12,7 @@ import EnvMonitor from "./pages/EnvMonitor.jsx";
 const navItems = [
   { to: "/", label: "Dashboard" },
   { to: "/growth", label: "Growth Tracker" },
+  { to: "/history", label: "Growth History" },
   { to: "/disease", label: "Disease Detector" },
   { to: "/plants", label: "Plant Database" },
   { to: "/firebase", label: "Firebase Table" },
@@ -63,6 +65,7 @@ export default function App() {
               <Routes>
                 <Route path="/" element={<Dashboard />} />
                 <Route path="/growth" element={<GrowthTracker />} />
+                <Route path="/history" element={<GrowthHistory />} />
                 <Route path="/disease" element={<DiseaseDetector />} />
                 <Route path="/plants" element={<PlantDatabase />} />
                 <Route path="/firebase" element={<FirebaseTable />} />
