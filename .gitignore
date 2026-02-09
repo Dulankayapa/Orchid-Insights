@@ -5,3 +5,5 @@ __pycache__/
 node_modules/
 dist/
 *.log
+New folder/backend/.DS_Store
+New folder/backend/app/core/config.py

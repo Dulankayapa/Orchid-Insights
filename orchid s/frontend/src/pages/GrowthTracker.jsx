@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { mockPlants } from "../data/mockPlants";
@@ -89,8 +89,13 @@ export default function GrowthTracker() {
     setAnalyzedJarId("");
     setAnalyzedHeight(null);
 
-    if (!plantingDate || !currentHeight) {
-      setError("Please provide planting date and current height in millimeters.");
+    if (!plantRecord || !plantingDate) {
+      setError("Select a valid Jar/Plant ID so planting date can be loaded from the database.");
+      return;
+    }
+
+    if (!currentHeight) {
+      setError("Current height must be auto-filled from the record; choose a Jar/Plant ID that has a height entry.");
       return;
     }
 
@@ -122,16 +127,16 @@ export default function GrowthTracker() {
   }, [result]);
 
   const predictedPillClass = useMemo(() => {
-    if (!displayLabel) return "border-slate-700 bg-slate-800/60 text-slate-100";
+    if (!displayLabel) return "border-emerald-100 bg-emerald-50 text-emerald-700";
     const label = String(displayLabel).toLowerCase();
-    if (label.includes("below")) return "border-amber-400/50 bg-amber-500/10 text-amber-100";
-    if (label.includes("within") || label.includes("normal")) return "border-emerald-400/60 bg-emerald-500/10 text-emerald-100";
-    if (label.includes("above")) return "border-sky-400/60 bg-sky-500/10 text-sky-100";
-    return "border-slate-600 bg-slate-800/70 text-slate-100";
+    if (label.includes("below")) return "border-amber-200 bg-amber-50 text-amber-800";
+    if (label.includes("within") || label.includes("normal")) return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    if (label.includes("above")) return "border-sky-200 bg-sky-50 text-sky-800";
+    return "border-slate-200 bg-slate-50 text-slate-700";
   }, [displayLabel]);
 
   return (
-    <div className="space-y-8 relative">
+    <div className="space-y-8 relative text-slate-900">
       <BackgroundGrid />
       <Hero />
       <div className="grid lg:grid-cols-5 gap-6 items-start relative">
@@ -183,8 +188,9 @@ function normalizeSensor(val) {
 function BackgroundGrid() {
   return (
     <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(180deg,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:52px_52px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(52,211,153,0.08),transparent_38%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.08),transparent_30%),radial-gradient(circle_at_50%_90%,rgba(248,113,113,0.04),transparent_40%)]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-rose-50 via-white to-emerald-50" />
+      <div className="absolute inset-0 opacity-70 bg-[linear-gradient(90deg,rgba(16,185,129,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(236,72,153,0.06)_1px,transparent_1px)] bg-[size:56px_56px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(110,231,183,0.3),transparent_32%),radial-gradient(circle_at_78%_12%,rgba(236,72,153,0.25),transparent_28%),radial-gradient(circle_at_50%_82%,rgba(59,130,246,0.18),transparent_36%)]" />
     </div>
   );
 }
@@ -195,14 +201,14 @@ function Hero() {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className="glass relative overflow-hidden rounded-3xl border border-emerald-400/30 p-8 shadow-glow"
+      className="relative overflow-hidden rounded-3xl border border-emerald-100 bg-white/90 p-8 shadow-[0_25px_60px_-25px_rgba(16,185,129,0.25)]"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-emerald-500/10 via-transparent to-blue-500/10 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-emerald-100 via-rose-50 to-indigo-50 pointer-events-none" />
       <div className="relative space-y-3 max-w-3xl">
-        <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Growth insight</p>
-        <h2 className="text-3xl font-semibold leading-tight">Model-backed growth tracker</h2>
-        <p className="text-slate-300 text-sm md:text-base">
-          Enter planting date and current height. The FastAPI model returns age-adjusted expected range and a deterministic growth class.
+        <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Growth insight</p>
+        <h2 className="text-3xl font-semibold leading-tight text-slate-900">Orchid growth tracker</h2>
+        <p className="text-slate-700 text-sm md:text-base">
+          Pick a Jar/Plant ID to auto-fill planting date, then enter the latest height. The FastAPI model returns age-adjusted expected range and a deterministic growth class.
         </p>
       </div>
     </motion.div>
@@ -231,12 +237,12 @@ function FormCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="space-y-6 rounded-3xl border border-slate-200 bg-white text-slate-900 p-6 shadow-2xl"
+      className="space-y-6 rounded-3xl border border-emerald-100 bg-white/95 text-slate-900 p-6 shadow-[0_20px_50px_-28px_rgba(6,95,70,0.35)]"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-500">Input</p>
-          <h3 className="text-xl font-semibold mt-1">Enter plant details</h3>
+          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Input</p>
+          <h3 className="text-xl font-semibold mt-1 text-slate-900">Enter plant details</h3>
         </div>
         <StatusDot online />
       </div>
@@ -250,13 +256,14 @@ function FormCard({
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
           />
         </Field>
-        <Field label="Planting date *">
+        <Field label="Planting date (auto from DB)">
           <input
-            type="date"
+            type="text"
             value={plantingDate}
-            onChange={(e) => setPlantingDate(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
-            required
+            readOnly
+            disabled
+            placeholder="Choose a Jar/Plant ID to load"
+            className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
           />
         </Field>
         <Field label="Current height (mm) *">
@@ -264,38 +271,37 @@ function FormCard({
             type="number"
             step="0.1"
             value={currentHeight}
-            onChange={(e) => setCurrentHeight(e.target.value)}
-            placeholder="Enter height in millimeters"
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
-            required
-            min="0"
+            readOnly
+            disabled
+            placeholder="Auto-filled from plant record"
+            className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
           />
         </Field>
         <Field label="Age (days) - optional override">
           <input
             type="number"
             value={manualAgeDays}
-            onChange={(e) => setManualAgeDays(e.target.value)}
-            placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : "e.g. 45"}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-400 transition"
-            min="0"
+            readOnly
+            disabled
+            placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : "Auto-calculated once ID loads"}
+            className="w-full rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
           />
         </Field>
       </div>
 
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No mock record for "{jarId}". Try Jar-12, Jar-07, Jar-19, or Jar-03.
+          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try Jar-12, Jar-07, Jar-19, or Jar-03.
         </p>
       )}
-      <p className="text-xs text-slate-500">Today: {today}</p>
+      <p className="text-xs text-slate-600">Today: {today}</p>
       {plantRecord && (
-        <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
-          Auto-filled from mock DB for {plantRecord.id}.
+        <p className="text-xs text-emerald-800 rounded-lg border border-emerald-100 bg-emerald-50 px-3 py-2">
+          Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
         </p>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-2xl p-3">
+      <div className="grid sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-emerald-50/60 border border-emerald-100 rounded-2xl p-3">
         <p>Tip: current date defaults to today automatically.</p>
         <p>Units: millimeters.</p>
       </div>
@@ -320,7 +326,7 @@ function FormCard({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm text-rose-100"
+            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
           >
             Error: {error}
           </motion.div>
@@ -337,14 +343,14 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className="glass rounded-3xl border border-white/10 p-6 space-y-6"
+        className="rounded-3xl border border-emerald-100 bg-white/95 p-6 space-y-6 shadow-[0_22px_60px_-32px_rgba(16,185,129,0.35)]"
       >
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
-              <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Prediction</p>
-              <h3 className="text-xl font-semibold">Model output</h3>
+              <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Prediction</p>
+              <h3 className="text-xl font-semibold text-slate-900">Model output</h3>
             </div>
-            <div className="flex items-center gap-2 text-xs text-slate-400">
+            <div className="flex items-center gap-2 text-xs text-emerald-600">
               <span className="h-2 w-2 rounded-full bg-emerald-400 shadow shadow-emerald-400/40" />
               Live from FastAPI
             </div>
@@ -353,7 +359,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
         {!result && (
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             {[1, 2, 3].map((item) => (
-              <div key={item} className="h-24 rounded-2xl border border-slate-800/70 bg-slate-800/30 animate-pulse" />
+              <div key={item} className="h-24 rounded-2xl border border-emerald-100 bg-emerald-50/60 animate-pulse" />
             ))}
           </div>
         )}
@@ -366,11 +372,11 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
                 {displayLabel || "-"}
               </div>
               {jarId && (
-                <div className="text-xs text-slate-400 px-3 py-1 rounded-full border border-slate-800 bg-slate-800/60">
+                <div className="text-xs text-slate-600 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
                   Jar/Plant: {jarId}
                 </div>
               )}
-              <div className="text-xs text-slate-400 px-3 py-1 rounded-full border border-slate-800 bg-slate-800/60">
+              <div className="text-xs text-slate-600 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
                 Age: {result.age_days} days
               </div>
             </div>
@@ -386,8 +392,8 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
             </div>
 
             {displayProbabilities && (
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-5 space-y-4">
-                <p className="text-sm text-slate-300 font-semibold">Probability breakdown</p>
+              <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-white via-emerald-50/60 to-rose-50 p-5 space-y-4">
+                <p className="text-sm text-slate-800 font-semibold">Probability breakdown</p>
                 <div className="grid gap-4">
                   {Object.entries(displayProbabilities).map(([label, prob]) => (
                     <ProbabilityBar key={label} label={label} value={prob} />
@@ -396,7 +402,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
               </div>
             )}
 
-            <div className="rounded-2xl border border-slate-800 bg-slate-900/50 px-5 py-4 text-sm text-slate-300">
+            <div className="rounded-2xl border border-emerald-100 bg-white/90 px-5 py-4 text-sm text-slate-700">
               The model compares age-adjusted expected height range with your measurement to classify growth. Use the probability spread to judge confidence and watch for consistent shifts over time.
             </div>
           </div>
@@ -405,7 +411,70 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
     </div>
   );
 }
+// SensorPanel component to display live Firebase data and recent history
+function SensorPanel({ latest, history, error }) {
+  const recent = (history || []).slice(0, 8);
+  const formatTs = (ts) => {
+    const d = new Date(ts);
+    return Number.isNaN(d.getTime()) ? "--" : d.toLocaleString();
+  };
 
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.08 }}
+      className="rounded-3xl border border-emerald-100 bg-white/95 p-5 space-y-4 shadow-[0_16px_40px_-28px_rgba(6,95,70,0.25)]"
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Sensor feed</p>
+          <h4 className="text-lg font-semibold text-slate-900">Live Firebase data</h4>
+        </div>
+        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
+          {latest ? "Streaming" : "Waiting..."}
+        </span>
+      </div>
+
+      {error && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">Sensor error: {error}</div>
+      )}
+
+      {latest ? (
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} °C`} />
+          <SensorStat label="Humidity" value={`${latest.humidity?.toFixed?.(1) ?? latest.humidity ?? "-"} %`} />
+          <SensorStat label="Light" value={`${latest.lux ?? "-"} lx`} />
+          <SensorStat label="MQ135" value={latest.mq135 ?? "-"} />
+          <SensorStat label="Timestamp" value={formatTs(latest.timestamp)} className="col-span-2" />
+        </div>
+      ) : (
+        <p className="text-sm text-slate-700">No live sensor reading yet. Confirm Firebase env vars or data feed.</p>
+      )}
+
+      {recent.length > 0 && (
+        <div className="space-y-2">
+          <p className="text-xs uppercase tracking-[0.2em] text-emerald-500">Recent logs</p>
+          <div className="space-y-2 max-h-56 overflow-auto pr-1">
+            {recent.map((row, idx) => (
+              <div
+                key={`${row.timestamp}-${idx}`}
+                className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-xs text-slate-800"
+              >
+                <span className="text-slate-600">{formatTs(row.timestamp)}</span>
+                <span className="text-slate-900">
+                  {row.temperature ?? "-"}°C · {row.humidity ?? "-"}% · {row.lux ?? "-"} lx · MQ {row.mq135 ?? "-"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
+
+// MockHistoryCard component to display plant history from mockPlants data based on Jar/Plant ID input
 function MockHistoryCard({ plantRecord }) {
   const knownIds = mockPlants.map((p) => p.id).join(", ");
   const heights = plantRecord?.heights || [];
@@ -414,14 +483,14 @@ function MockHistoryCard({ plantRecord }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className="glass rounded-3xl border border-white/10 p-5 space-y-4"
+      className="rounded-3xl border border-emerald-100 bg-white/95 p-5 space-y-4 shadow-[0_16px_40px_-28px_rgba(6,95,70,0.25)]"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-slate-400">Mock DB lookup</p>
-          <h4 className="text-lg font-semibold text-white">Plant profile & history</h4>
+          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Mock DB lookup</p>
+          <h4 className="text-lg font-semibold text-slate-900">Plant profile & history</h4>
         </div>
-        <span className="text-xs text-slate-400 px-3 py-1 rounded-full border border-slate-800 bg-slate-800/60">Demo data</span>
+        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">Demo data</span>
       </div>
 
       {plantRecord ? (
@@ -429,26 +498,26 @@ function MockHistoryCard({ plantRecord }) {
           {heights.map((row) => (
             <div
               key={`${plantRecord.id}-${row.date}`}
-              className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-900/70 px-3 py-2 text-sm text-slate-200"
+              className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-sm text-slate-800"
             >
-              <span className="text-slate-400">{row.date}</span>
-              <span className="font-semibold text-white">{row.height_mm} mm</span>
+              <span className="text-slate-600">{row.date}</span>
+              <span className="font-semibold text-slate-900">{row.height_mm} mm</span>
             </div>
           ))}
         </div>
       ) : (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/50 px-4 py-3 text-sm text-slate-300">
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
           Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {knownIds}.
         </div>
       )}
     </motion.div>
   );
 }
-
+// Reusable Field component for form inputs
 function Field({ label, children }) {
   return (
-    <label className="block text-sm text-slate-200 space-y-2">
-      <span className="text-slate-300">{label}</span>
+    <label className="block text-sm text-slate-800 space-y-2">
+      <span className="text-slate-700">{label}</span>
       {children}
     </label>
   );
@@ -456,34 +525,34 @@ function Field({ label, children }) {
 
 function StatCard({ title, value, hint }) {
   return (
-    <div className="rounded-2xl border border-slate-800 bg-slate-900/60 p-4">
-      <p className="text-xs uppercase tracking-[0.25em] text-slate-400">{title}</p>
-      <p className="text-2xl font-semibold mt-2 text-white">{value}</p>
-      {hint && <p className="text-xs text-slate-400 mt-1">{hint}</p>}
+    <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+      <p className="text-xs uppercase tracking-[0.25em] text-emerald-500">{title}</p>
+      <p className="text-2xl font-semibold mt-2 text-slate-900">{value}</p>
+      {hint && <p className="text-xs text-slate-600 mt-1">{hint}</p>}
     </div>
   );
 }
-
+// ProbabilityBar component to visualize class probabilities
 function ProbabilityBar({ label, value }) {
   const pct = Math.max(0, Math.min(100, (value || 0) * 100));
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs text-slate-300">
-        <span className="font-semibold">{label}</span>
-        <span className="text-slate-400">{pct.toFixed(1)}%</span>
+      <div className="flex items-center justify-between text-xs text-slate-700">
+        <span className="font-semibold capitalize">{label.replace(/_/g, " ")}</span>
+        <span className="text-slate-500">{pct.toFixed(1)}%</span>
       </div>
-      <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+      <div className="h-2 rounded-full bg-emerald-100 overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: 0.35 }}
-          className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-blue-500 shadow-[0_0_16px_rgba(16,185,129,0.35)]"
+          className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-rose-300 to-sky-400 shadow-[0_0_18px_rgba(16,185,129,0.25)]"
         />
       </div>
     </div>
   );
 }
-
+// Simple spinner component using Framer Motion
 function Spinner() {
   return (
     <motion.span
@@ -493,12 +562,22 @@ function Spinner() {
     />
   );
 }
-
+// StatusDot component to indicate API connection status
 function StatusDot({ online }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-slate-400">
-      <span className={`h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]" : "bg-slate-600"}`} />
+    <div className="flex items-center gap-2 text-xs text-emerald-700">
+      <span className={`h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]" : "bg-slate-300"}`} />
       {online ? "API ready" : "Offline"}
     </div>
   );
 }
+
+function SensorStat({ label, value, className = "" }) {
+  return (
+    <div className={`rounded-xl border border-emerald-100 bg-white px-3 py-2 ${className}`}>
+      <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-500">{label}</p>
+      <p className="text-sm font-semibold text-slate-900 mt-1">{value}</p>
+    </div>
+  );
+}
+
