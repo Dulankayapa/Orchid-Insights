@@ -4,6 +4,7 @@ import { api } from "../lib/api";
 
 const cards = [
   { title: "Growth Tracker", to: "/growth", tone: "from-emerald-400/60 to-cyan-500/50", desc: "Model-backed growth classification and ranges." },
+  { title: "Growth History", to: "/history", tone: "from-sky-400/60 to-emerald-500/50", desc: "Trend lines and logs by Jar ID (demo data)." },
   { title: "Disease Detector", to: "/disease", tone: "from-amber-400/60 to-rose-500/50", desc: "Upload a leaf photo for health and disease detection." },
   { title: "Plant Database", to: "/plants", tone: "from-indigo-400/60 to-blue-500/50", desc: "Browse and filter plant records (Firebase-backed)." },
   { title: "Firebase Table", to: "/firebase", tone: "from-fuchsia-400/60 to-purple-500/50", desc: "Live table with CRUD against Realtime DB." },
