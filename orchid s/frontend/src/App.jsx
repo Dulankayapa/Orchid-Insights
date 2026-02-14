@@ -8,6 +8,8 @@ import DiseaseDetector from "./pages/DiseaseDetector.jsx";
 import PlantDatabase from "./pages/PlantDatabase.jsx";
 import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
+import CareGuide from "./pages/CareGuide.jsx";
+import CompanionDashboard from "./pages/CompanionDashboard.jsx";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -17,17 +19,19 @@ const navItems = [
   { to: "/plants", label: "Plant Database" },
   { to: "/firebase", label: "Firebase Table" },
   { to: "/monitor", label: "Env Monitor" },
+  { to: "/companion-dashboard", label: "Companion Dash" },
+  { to: "/care", label: "Care Guide" },
 ];
 
 export default function App() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-night via-slate-950 to-slate-900 text-slate-100">
+    <div className="min-h-screen bg-gradient-to-br from-background via-purple-50 to-pink-50 text-dark">
       <div className="flex">
-        <aside className="hidden lg:flex lg:flex-col w-72 px-6 py-8 border-r border-white/10 glass">
+        <aside className="hidden lg:flex lg:flex-col w-72 px-6 py-8 border-r border-border/40 glass">
           <div className="flex items-center gap-3">
-            <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-emerald-400 to-cyan-500 shadow-glow" />
+            <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-fuchsia-400 to-purple-500 shadow-glow" />
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Orchid Lab</p>
+              <p className="text-xs uppercase tracking-[0.2em] text-subtle">Orchid Lab</p>
               <h1 className="text-xl font-semibold">Insights Suite</h1>
             </div>
           </div>
@@ -37,15 +41,14 @@ export default function App() {
                 key={item.to}
                 to={item.to}
                 className={({ isActive }) =>
-                  `flex items-center justify-between rounded-xl px-3 py-3 text-sm transition ${
-                    isActive
-                      ? "bg-emerald-500/10 text-white border border-emerald-400/50"
-                      : "text-slate-300 hover:text-white hover:bg-white/5"
+                  `flex items-center justify-between rounded-xl px-3 py-3 text-sm transition ${isActive
+                    ? "bg-primary/10 text-primary-dark border border-primary/20"
+                    : "text-slate-500 hover:text-primary hover:bg-primary/5"
                   }`
                 }
               >
                 <span>{item.label}</span>
-                <span className="text-xs text-slate-500">→</span>
+                <span className="text-xs text-slate-400">→</span>
               </NavLink>
             ))}
           </nav>
@@ -53,9 +56,9 @@ export default function App() {
         </aside>
 
         <div className="flex-1 min-w-0">
-          <header className="lg:hidden px-4 py-4 sticky top-0 bg-night/80 border-b border-white/10 backdrop-blur z-10">
+          <header className="lg:hidden px-4 py-4 sticky top-0 bg-white/80 border-b border-border/40 backdrop-blur z-10">
             <div>
-              <p className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Orchid Lab</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">Orchid Lab</p>
               <h1 className="text-lg font-semibold">Insights Suite</h1>
             </div>
           </header>
@@ -70,6 +73,8 @@ export default function App() {
                 <Route path="/plants" element={<PlantDatabase />} />
                 <Route path="/firebase" element={<FirebaseTable />} />
                 <Route path="/monitor" element={<EnvMonitor />} />
+                <Route path="/care" element={<CareGuide />} />
+                <Route path="/companion-dashboard" element={<CompanionDashboard />} />
               </Routes>
             </motion.div>
           </main>
