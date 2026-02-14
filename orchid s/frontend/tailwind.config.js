@@ -4,12 +4,18 @@ export default {
   theme: {
     extend: {
       colors: {
-        night: "#0b1220",
-        panel: "#0f172a",
-        accent: "#34d399",
+        background: "#fdf4ff", // very light pink/purple for bg
+        paper: "#ffffff",
+        primary: "#d946ef", // fuchsia-500
+        secondary: "#a855f7", // purple-500
+        accent: "#ec4899", // pink-500
+        dark: "#1e293b", // slate-800 for text
+        subtle: "#64748b", // slate-500 for secondary text
+        border: "#f0abfc", // fuchsia-300 for borders
       },
       boxShadow: {
-        glow: "0 20px 80px rgba(52, 211, 153, 0.15)",
+        glow: "0 10px 40px -10px rgba(217, 70, 239, 0.3)", // pink glow
+        soft: "0 4px 20px -2px rgba(217, 70, 239, 0.1)",
       },
     },
   },
