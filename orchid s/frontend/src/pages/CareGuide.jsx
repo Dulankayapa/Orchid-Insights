@@ -1,5 +1,6 @@
 import React from 'react';
 import CareGuideBot from '../components/companion/CareGuideBot.jsx';
+import CompanionNavbar from '../components/companion/Navbar.jsx';
 import { motion } from "framer-motion";
 
 const CareGuide = () => {
@@ -85,6 +86,7 @@ const CareGuide = () => {
 
     return (
         <div className="relative space-y-8 pb-10">
+            <CompanionNavbar />
             <div className="text-center space-y-3 py-4">
                 <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Orchid Care Guide</h1>
                 <p className="text-slate-600 max-w-2xl mx-auto">Essential tips for healthy, blooming orchids. Master the basics of watering, light, and temperature.</p>

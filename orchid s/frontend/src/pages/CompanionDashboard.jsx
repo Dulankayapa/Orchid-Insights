@@ -1,9 +1,11 @@
-import React from 'react';
+import CompanionNavbar from '../components/companion/Navbar.jsx';
 import Dashboard from '../components/companion/Dashboard.jsx';
 
 const CompanionDashboard = () => {
     return (
         <div className="space-y-6 pb-10">
+            <CompanionNavbar />
+
             <div className="space-y-1">
                 <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Companion Dashboard</h1>
                 <p className="text-slate-600">Overview of your orchid's environment, health, and growth status.</p>

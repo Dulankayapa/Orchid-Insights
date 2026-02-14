@@ -1,10 +1,28 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { motion } from "framer-motion";
+import DetailsModal from './DetailsModal.jsx';
 
 const Dashboard = () => {
+    const [modalConfig, setModalConfig] = useState({ isOpen: false, type: null, data: null });
+
+    const openModal = (type, data = {}) => {
+        setModalConfig({ isOpen: true, type, data });
+    };
+
+    const closeModal = () => {
+        setModalConfig(prev => ({ ...prev, isOpen: false }));
+    };
+
     return (
         <div className="space-y-8">
+            <DetailsModal
+                isOpen={modalConfig.isOpen}
+                onClose={closeModal}
+                type={modalConfig.type}
+                data={modalConfig.data}
+            />
+
             {/* Environmental Monitor Section */}
             <section>
                 <div className="flex items-center justify-between mb-4">
@@ -15,10 +33,18 @@ const Dashboard = () => {
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <MetricCard title="Temperature" value="24" unit="°C" status="Good" statusColor="emerald" icon="🌡️" />
-                    <MetricCard title="Light" value="700" unit="lux" status="Medium" statusColor="amber" icon="☀️" />
-                    <MetricCard title="Humidity" value="50" unit="%" status="Low" statusColor="rose" icon="💧" />
-                    <MetricCard title="CO2" value="400" unit="ppm" status="Good" statusColor="emerald" icon="🌬️" />
+                    <div onClick={() => openModal('temperature')} className="cursor-pointer">
+                        <MetricCard title="Temperature" value="24" unit="°C" status="Good" statusColor="emerald" icon="🌡️" />
+                    </div>
+                    <div onClick={() => openModal('light')} className="cursor-pointer">
+                        <MetricCard title="Light" value="700" unit="lux" status="Medium" statusColor="amber" icon="☀️" />
+                    </div>
+                    <div onClick={() => openModal('humidity')} className="cursor-pointer">
+                        <MetricCard title="Humidity" value="50" unit="%" status="Low" statusColor="rose" icon="💧" />
+                    </div>
+                    <div onClick={() => openModal('co2')} className="cursor-pointer">
+                        <MetricCard title="CO2" value="400" unit="ppm" status="Good" statusColor="emerald" icon="🌬️" />
+                    </div>
                 </div>
             </section>
 
@@ -33,28 +59,34 @@ const Dashboard = () => {
                     </div>
 
                     <div className="space-y-4">
-                        <div className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex items-center justify-between">
+                        <div
+                            className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow group"
+                            onClick={() => openModal('disease')}
+                        >
                             <div>
-                                <h3 className="text-sm font-semibold text-slate-600 mb-1">Disease Detection</h3>
+                                <h3 className="text-sm font-semibold text-slate-600 mb-1 group-hover:text-fuchsia-600 transition-colors">Disease Detection</h3>
                                 <div className="flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                                     <span className="text-lg font-bold text-slate-800">Healthy</span>
                                 </div>
                             </div>
-                            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl">
+                            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
                                 🌿
                             </div>
                         </div>
 
-                        <div className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex items-center justify-between">
+                        <div
+                            className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow group"
+                            onClick={() => openModal('leaf')}
+                        >
                             <div>
-                                <h3 className="text-sm font-semibold text-slate-600 mb-1">Leaf Condition</h3>
+                                <h3 className="text-sm font-semibold text-slate-600 mb-1 group-hover:text-fuchsia-600 transition-colors">Leaf Condition</h3>
                                 <div className="flex items-center gap-2">
                                     <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
                                     <span className="text-lg font-bold text-slate-800">Excellent</span>
                                 </div>
                             </div>
-                            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl">
+                            <div className="h-10 w-10 rounded-full bg-emerald-100 flex items-center justify-center text-xl group-hover:scale-110 transition-transform">
                                 ✨
                             </div>
                         </div>
@@ -70,11 +102,14 @@ const Dashboard = () => {
                         <Link to="/growth" className="text-sm text-fuchsia-600 hover:text-fuchsia-700 font-medium">Growth Analysis &rarr;</Link>
                     </div>
 
-                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-fuchsia-100 h-full max-h-[160px] flex flex-col justify-center relative overflow-hidden">
-                        <div className="absolute top-0 right-0 p-6 opacity-10 text-9xl leading-none select-none pointer-events-none">
+                    <div
+                        className="bg-white rounded-2xl p-6 shadow-sm border border-fuchsia-100 h-full max-h-[160px] flex flex-col justify-center relative overflow-hidden cursor-pointer hover:shadow-md transition-shadow group"
+                        onClick={() => openModal('height')}
+                    >
+                        <div className="absolute top-0 right-0 p-6 opacity-10 text-9xl leading-none select-none pointer-events-none group-hover:scale-110 transition-transform">
                             📏
                         </div>
-                        <h3 className="text-sm font-semibold text-slate-600 mb-2">Current Plant Height</h3>
+                        <h3 className="text-sm font-semibold text-slate-600 mb-2 group-hover:text-fuchsia-600 transition-colors">Current Plant Height</h3>
                         <div className="flex items-end gap-2">
                             <span className="text-4xl font-bold text-slate-800">30</span>
                             <span className="text-lg text-slate-500 mb-1">cm</span>
@@ -100,7 +135,7 @@ const MetricCard = ({ title, value, unit, status, statusColor, icon }) => {
     return (
         <motion.div
             whileHover={{ y: -2 }}
-            className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex flex-col justify-between"
+            className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex flex-col justify-between h-full hover:shadow-md transition-shadow"
         >
             <div className="flex items-start justify-between mb-3">
                 <span className="text-2xl">{icon}</span>
@@ -109,7 +144,7 @@ const MetricCard = ({ title, value, unit, status, statusColor, icon }) => {
                 </span>
             </div>
             <div>
-                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">{title}</h3>
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1 transition-colors">{title}</h3>
                 <div className="flex items-baseline gap-1">
                     <span className="text-2xl font-bold text-slate-800">{value}</span>
                     <span className="text-sm text-slate-500">{unit}</span>
