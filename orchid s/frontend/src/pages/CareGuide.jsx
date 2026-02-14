@@ -1,8 +1,8 @@
 import React from 'react';
-import CareGuideBot from '../../components/companion/CareGuideBot.jsx';
+import CareGuideBot from '../components/companion/CareGuideBot.jsx';
 import { motion } from "framer-motion";
 
-const CareGuidePage = () => {
+const CareGuide = () => {
     const careSections = [
         {
             id: 1,
@@ -212,4 +212,4 @@ const CareGuidePage = () => {
     );
 };
 
-export default CareGuidePage;
+export default CareGuide;

@@ -8,6 +8,8 @@ import DiseaseDetector from "./pages/DiseaseDetector.jsx";
 import PlantDatabase from "./pages/PlantDatabase.jsx";
 import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
+import CareGuide from "./pages/CareGuide.jsx";
+import CompanionDashboard from "./pages/CompanionDashboard.jsx";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -17,6 +19,8 @@ const navItems = [
   { to: "/plants", label: "Plant Database" },
   { to: "/firebase", label: "Firebase Table" },
   { to: "/monitor", label: "Env Monitor" },
+  { to: "/companion-dashboard", label: "Companion Dash" },
+  { to: "/care", label: "Care Guide" },
 ];
 
 export default function App() {
@@ -69,6 +73,8 @@ export default function App() {
                 <Route path="/plants" element={<PlantDatabase />} />
                 <Route path="/firebase" element={<FirebaseTable />} />
                 <Route path="/monitor" element={<EnvMonitor />} />
+                <Route path="/care" element={<CareGuide />} />
+                <Route path="/companion-dashboard" element={<CompanionDashboard />} />
               </Routes>
             </motion.div>
           </main>

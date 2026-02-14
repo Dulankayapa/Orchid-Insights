@@ -1,7 +1,7 @@
 import React from 'react';
-import Dashboard from '../../components/companion/Dashboard.jsx';
+import Dashboard from '../components/companion/Dashboard.jsx';
 
-const DashboardPage = () => {
+const CompanionDashboard = () => {
     return (
         <div className="space-y-6 pb-10">
             <div className="space-y-1">
@@ -14,4 +14,4 @@ const DashboardPage = () => {
     );
 };
 
-export default DashboardPage;
+export default CompanionDashboard;
