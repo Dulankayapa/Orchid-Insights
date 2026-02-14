@@ -49,15 +49,15 @@ function LookupCard({ jarId, setJarId, record, history }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="rounded-3xl border border-emerald-100 bg-white/95 p-6 shadow-[0_20px_50px_-32px_rgba(16,185,129,0.35)] space-y-5"
+      className="rounded-3xl border border-fuchsia-100 bg-white/95 p-6 shadow-[0_20px_50px_-32px_rgba(217,70,239,0.2)] space-y-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-emerald-500">Growth history</p>
+          <p className="text-xs uppercase tracking-[0.28em] text-primary">Growth history</p>
           <h2 className="text-2xl font-semibold text-slate-900">Find a jar and see its trail</h2>
           <p className="text-sm text-slate-600 mt-1">Type a Jar ID and we will load the demo measurements already used in Growth Tracker.</p>
         </div>
-        <span className="h-2.5 w-2.5 rounded-full bg-emerald-400 shadow-[0_0_12px_rgba(16,185,129,0.6)] mt-1" aria-hidden />
+        <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-400 shadow-[0_0_12px_rgba(217,70,239,0.4)] mt-1" aria-hidden />
       </div>
 
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end">
@@ -67,10 +67,10 @@ function LookupCard({ jarId, setJarId, record, history }) {
             value={jarId}
             onChange={(e) => setJarId(e.target.value)}
             placeholder="Try Jar-12, Jar-07, Jar-19, Jar-03"
-            className="w-full rounded-2xl border border-emerald-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm focus:outline-none focus:ring-2 focus:ring-emerald-500/70 focus:border-emerald-400 transition"
+            className="w-full rounded-2xl border border-fuchsia-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition"
           />
         </label>
-        <div className="rounded-2xl border border-emerald-100 bg-emerald-50/60 px-4 py-3 text-sm text-emerald-900 shadow-inner">
+        <div className="rounded-2xl border border-fuchsia-100 bg-fuchsia-50/60 px-4 py-3 text-sm text-fuchsia-900 shadow-inner">
           {record ? (
             <p>
               Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar}
@@ -89,11 +89,10 @@ function LookupCard({ jarId, setJarId, record, history }) {
             key={chip}
             type="button"
             onClick={() => setJarId(chip)}
-            className={`px-3 py-2 rounded-xl text-sm border transition ${
-              chip.toLowerCase() === jarId.trim().toLowerCase()
-                ? "border-emerald-400 bg-emerald-50 text-emerald-800 shadow-sm"
-                : "border-slate-200 bg-white hover:border-emerald-300 hover:text-emerald-700"
-            }`}
+            className={`px-3 py-2 rounded-xl text-sm border transition ${chip.toLowerCase() === jarId.trim().toLowerCase()
+                ? "border-fuchsia-400 bg-fuchsia-50 text-fuchsia-800 shadow-sm"
+                : "border-slate-200 bg-white hover:border-fuchsia-300 hover:text-primary"
+              }`}
           >
             {chip}
           </button>
@@ -123,13 +122,13 @@ function ChartCard({ record, history }) {
           {
             label: record?.id || "Height",
             data: dataPoints,
-            borderColor: "#10b981",
-            backgroundColor: "rgba(16,185,129,0.15)",
+            borderColor: "#d946ef", // primary (fuchsia-500)
+            backgroundColor: "rgba(217, 70, 239, 0.15)",
             tension: 0.28,
             borderWidth: 2.4,
             pointRadius: 4,
-            pointBackgroundColor: "#0f766e",
-            pointBorderColor: "#ecfeff",
+            pointBackgroundColor: "#a21caf", // fuchsia-700
+            pointBorderColor: "#fdf4ff", // background color
             fill: true,
           },
         ],
@@ -176,11 +175,11 @@ function ChartCard({ record, history }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="rounded-3xl border border-emerald-100 bg-white/95 p-6 shadow-[0_22px_60px_-34px_rgba(16,185,129,0.35)] space-y-4"
+      className="rounded-3xl border border-fuchsia-100 bg-white/95 p-6 shadow-[0_22px_60px_-34px_rgba(217,70,239,0.2)] space-y-4"
     >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-emerald-500">Trend line</p>
+          <p className="text-xs uppercase tracking-[0.24em] text-primary">Trend line</p>
           <h3 className="text-xl font-semibold text-slate-900">Height over time</h3>
         </div>
         <span className="text-xs text-slate-500">{history.length} points</span>
@@ -283,11 +282,11 @@ function Hero() {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className="relative overflow-hidden rounded-3xl border border-emerald-100 bg-white/95 p-8 shadow-[0_25px_60px_-28px_rgba(16,185,129,0.35)]"
+      className="relative overflow-hidden rounded-3xl border border-fuchsia-100 bg-white/95 p-8 shadow-[0_25px_60px_-28px_rgba(217,70,239,0.2)]"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-emerald-50 via-white to-sky-50 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-purple-50 via-white to-pink-50 pointer-events-none" />
       <div className="relative space-y-3">
-        <p className="text-xs uppercase tracking-[0.32em] text-emerald-500">Historical view</p>
+        <p className="text-xs uppercase tracking-[0.32em] text-primary">Historical view</p>
         <h1 className="text-3xl font-semibold text-slate-900">Jar height history</h1>
         <p className="text-slate-700 text-sm md:text-base max-w-2xl">
           Query any Jar ID and review its recorded heights. The line chart uses the same demo data as Growth Tracker, with dates on the x-axis and height in millimeters on the y-axis.
@@ -300,9 +299,9 @@ function Hero() {
 function Backdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 bg-gradient-to-b from-emerald-50 via-white to-sky-50" />
-      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(16,185,129,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(59,130,246,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(16,185,129,0.25),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(59,130,246,0.2),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(236,72,153,0.16),transparent_36%)]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-purple-50 via-white to-pink-50" />
+      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(168,85,247,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(236,72,153,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(217,70,239,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(168,85,247,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(244,114,182,0.1),transparent_36%)]" />
     </div>
   );
 }
