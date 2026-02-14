@@ -87,13 +87,13 @@ const EnvMonitor = () => {
       {/* Header Area */}
       <div className="flex flex-col md:flex-row md://items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-slate-800 tracking-tight">Environmental Monitor</h1>
-          <p className="text-slate-600">Real-time sensor data and analytics.</p>
+          <h1 className="text-3xl font-bold text-dark tracking-tight">Environmental Monitor</h1>
+          <p className="text-subtle">Real-time sensor data and analytics.</p>
         </div>
         <div className="flex items-center gap-3">
-          <div className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border ${connectionStatus === 'connected' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-            connectionStatus === 'stale' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-              'bg-rose-50 text-rose-700 border-rose-200'
+          <div className={`px-3 py-1.5 rounded-full text-xs font-bold flex items-center gap-2 border ${connectionStatus === 'connected' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:text-emerald-400' :
+            connectionStatus === 'stale' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20 dark:text-amber-400' :
+              'bg-rose-500/10 text-rose-600 border-rose-500/20 dark:text-rose-400'
             }`}>
             <span className={`w-2 h-2 rounded-full ${connectionStatus === 'connected' ? 'bg-emerald-500 animate-pulse' :
               connectionStatus === 'stale' ? 'bg-amber-500' : 'bg-rose-500'
@@ -101,7 +101,7 @@ const EnvMonitor = () => {
             {connectionStatus === 'connected' ? 'LIVE DATA' : connectionStatus.toUpperCase()}
           </div>
 
-          <button onClick={handleExportPDF} className="bg-white border border-slate-200 text-slate-600 px-4 py-2 rounded-xl text-sm font-bold hover:bg-slate-50 transition-colors shadow-sm">
+          <button onClick={handleExportPDF} className="bg-paper border border-border text-subtle px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/5 hover:text-primary transition-colors shadow-sm">
             📄 Export Report
           </button>
         </div>
@@ -115,9 +115,9 @@ const EnvMonitor = () => {
           className="space-y-2"
         >
           {alerts.map((alert, idx) => (
-            <div key={idx} className={`p-4 rounded-xl flex items-center gap-3 border ${alert.type === 'danger' ? 'bg-rose-50 border-rose-100 text-rose-800' :
-              alert.type === 'warning' ? 'bg-amber-50 border-amber-100 text-amber-800' :
-                'bg-blue-50 border-blue-100 text-blue-800'
+            <div key={idx} className={`p-4 rounded-xl flex items-center gap-3 border ${alert.type === 'danger' ? 'bg-rose-500/10 border-rose-500/20 text-rose-600 dark:text-rose-400' :
+              alert.type === 'warning' ? 'bg-amber-500/10 border-amber-500/20 text-amber-600 dark:text-amber-400' :
+                'bg-blue-500/10 border-blue-500/20 text-blue-600 dark:text-blue-400'
               }`}>
               <span className="text-xl">{alert.icon}</span>
               <div className="flex-1">
@@ -154,16 +154,16 @@ const EnvMonitor = () => {
       {/* Key Metrics Grid */}
       <section>
         <div className="flex items-center gap-2 mb-4">
-          <h2 className="text-xl font-bold text-slate-800">Current Status</h2>
+          <h2 className="text-xl font-bold text-dark">Current Status</h2>
         </div>
         <OverviewCards data={latest} />
       </section>
 
       {/* Charts */}
-      <section className="bg-slate-50 rounded-3xl p-6 border border-slate-100">
+      <section className="bg-paper/50 rounded-3xl p-6 border border-border/50">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-slate-800">Analytics Trends</h2>
-          <select className="bg-white border border-slate-200 text-sm font-medium rounded-lg px-3 py-1.5 text-slate-600 outline-none focus:ring-2 focus:ring-fuchsia-500/20">
+          <h2 className="text-xl font-bold text-dark">Analytics Trends</h2>
+          <select className="bg-paper border border-border text-sm font-medium rounded-lg px-3 py-1.5 text-subtle outline-none focus:ring-2 focus:ring-primary/20">
             <option>Last Hour</option>
             <option>Last 6 Hours</option>
             <option>Last 24 Hours</option>
@@ -174,7 +174,7 @@ const EnvMonitor = () => {
 
       {/* Growth Logs */}
       <section>
-        <h2 className="text-xl font-bold text-slate-800 mb-4">Growth Journal</h2>
+        <h2 className="text-xl font-bold text-dark mb-4">Growth Journal</h2>
         <GrowthPanel logs={growthLogs} />
       </section>
 

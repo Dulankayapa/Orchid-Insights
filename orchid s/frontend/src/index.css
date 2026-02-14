@@ -2,13 +2,52 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    /* Light Mode - Standard clean look */
+    --background: 253 244 255;
+    /* fuchsia-50ish */
+    --paper: 255 255 255;
+    --primary: 217 70 239;
+    /* fuchsia-500 */
+    --secondary: 168 85 247;
+    /* purple-500 */
+    --accent: 236 72 153;
+    /* pink-500 */
+    --dark: 30 41 59;
+    /* slate-800 - DARK TEXT */
+    --subtle: 100 116 139;
+    /* slate-500 */
+    --border: 240 171 252;
+    /* fuchsia-300 */
+  }
+
+  .dark {
+    /* Dark Mode - Deep background, LIGHT TEXT */
+    --background: 15 23 42;
+    /* slate-900 */
+    --paper: 30 41 59;
+    /* slate-800 */
+    --primary: 232 121 249;
+    /* fuchsia-400 */
+    --secondary: 192 132 252;
+    /* purple-400 */
+    --accent: 244 114 182;
+    /* pink-400 */
+    --dark: 241 245 249;
+    /* slate-100 - WHITE TEXT */
+    --subtle: 148 163 184;
+    /* slate-400 */
+    --border: 51 65 85;
+    /* slate-700 */
+  }
+}
+
 body {
   font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  @apply bg-background text-dark transition-colors duration-300;
 }
 
 .glass {
-  background: rgba(255, 255, 255, 0.7);
-  border: 1px solid rgba(240, 171, 252, 0.3); /* fuchsia-300 with opacity */
-  backdrop-filter: blur(12px);
-  box-shadow: 0 4px 30px rgba(0, 0, 0, 0.03);
+  @apply bg-paper/70 backdrop-blur-md border border-border/50 shadow-sm transition-colors duration-300;
 }
