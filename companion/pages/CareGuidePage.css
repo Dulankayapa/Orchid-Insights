@@ -1,0 +1,329 @@
+/* src\pages\CareGuidePage.css */
+.care-guide-page {
+  padding: 20px;
+  background: linear-gradient(135deg, #f8f5ff 0%, #f0ebff 100%);
+  min-height: calc(100vh - 120px);
+}
+
+.care-guide-header {
+  text-align: center;
+  margin-bottom: 40px;
+  padding: 30px;
+  background: white;
+  border-radius: 20px;
+  box-shadow: 0 8px 30px rgba(183, 0, 140, 0.1);
+}
+
+.care-guide-title {
+  color: #b7008c;
+  font-size: 36px;
+  margin-bottom: 10px;
+  font-weight: 800;
+}
+
+.care-guide-subtitle {
+  color: #666;
+  font-size: 18px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* AI Bot Section */
+.ai-bot-section {
+  margin: 40px 0;
+  padding: 25px;
+  background: linear-gradient(135deg, rgba(255, 255, 255, 0.95), rgba(248, 249, 250, 0.95));
+  border-radius: 20px;
+  box-shadow: 0 8px 30px rgba(183, 0, 140, 0.1);
+  border: 1px solid rgba(183, 0, 140, 0.1);
+}
+
+.section-title-bot {
+  color: #d81b60;
+  font-size: 28px;
+  margin-bottom: 10px;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.bot-intro {
+  color: #666;
+  text-align: center;
+  margin-bottom: 20px;
+  font-size: 16px;
+  max-width: 600px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* Rest of your existing CareGuidePage.css styles remain the same... */
+.care-sections-container {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+  gap: 25px;
+  margin-bottom: 40px;
+}
+
+.care-section-card {
+  background: white;
+  border-radius: 16px;
+  padding: 25px;
+  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.08);
+  transition: all 0.3s ease;
+  border: 1px solid rgba(183, 0, 140, 0.1);
+}
+
+.care-section-card:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 12px 35px rgba(183, 0, 140, 0.15);
+}
+
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 20px;
+  padding-bottom: 15px;
+  border-bottom: 2px solid rgba(183, 0, 140, 0.1);
+}
+
+.section-icon {
+  font-size: 32px;
+  width: 60px;
+  height: 60px;
+  background: linear-gradient(135deg, #d81b60 0%, #b7008c 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  flex-shrink: 0;
+}
+
+.section-header h2 {
+  color: #333;
+  font-size: 24px;
+  margin: 0;
+  font-weight: 700;
+}
+
+.tips-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 20px 0;
+}
+
+.tip-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px;
+  background: rgba(183, 0, 140, 0.03);
+  border-radius: 8px;
+  transition: background 0.3s ease;
+}
+
+.tip-item:hover {
+  background: rgba(183, 0, 140, 0.08);
+}
+
+.tip-bullet {
+  color: #d81b60;
+  font-weight: bold;
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.problems-container {
+  margin-top: 20px;
+  padding: 20px;
+  background: rgba(255, 193, 7, 0.05);
+  border-radius: 12px;
+  border-left: 4px solid #FF9800;
+}
+
+.problems-container h4 {
+  color: #FF9800;
+  margin-bottom: 15px;
+  font-size: 18px;
+}
+
+.problem-item {
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255, 193, 7, 0.2);
+}
+
+.problem-item:last-child {
+  border-bottom: none;
+}
+
+.problem-symptom {
+  color: #333;
+  font-weight: 600;
+  margin-bottom: 5px;
+}
+
+.problem-details {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cause {
+  color: #666;
+  font-size: 14px;
+}
+
+.fix {
+  color: #4CAF50;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.warning-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 15px;
+  background: rgba(244, 67, 54, 0.08);
+  border-radius: 10px;
+  margin-top: 20px;
+  border-left: 4px solid #F44336;
+}
+
+.warning-icon {
+  font-size: 24px;
+}
+
+.warning-text {
+  color: #D32F2F;
+  font-weight: 600;
+  font-size: 15px;
+}
+
+.care-guide-footer {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 25px;
+  margin-top: 40px;
+}
+
+.reminder-card,
+.emergency-card {
+  background: white;
+  border-radius: 16px;
+  padding: 25px;
+  box-shadow: 0 6px 25px rgba(0, 0, 0, 0.08);
+}
+
+.reminder-card h3,
+.emergency-card h3 {
+  color: #333;
+  margin-bottom: 20px;
+  font-size: 22px;
+}
+
+.checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.checklist-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.checklist-item input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 2px solid #d81b60;
+  cursor: pointer;
+}
+
+.checklist-item label {
+  color: #555;
+  cursor: pointer;
+  font-size: 16px;
+}
+
+.checklist-item input[type="checkbox"]:checked + label {
+  color: #4CAF50;
+  text-decoration: line-through;
+}
+
+.emergency-card {
+  background: linear-gradient(135deg, #fff5f5 0%, #ffeaea 100%);
+  border: 2px solid #F44336;
+}
+
+.emergency-card h3 {
+  color: #F44336;
+}
+
+.emergency-card ul {
+  list-style: none;
+  padding: 0;
+}
+
+.emergency-card li {
+  padding: 8px 0;
+  color: #666;
+  border-bottom: 1px dashed rgba(244, 67, 54, 0.2);
+}
+
+.emergency-card li:last-child {
+  border-bottom: none;
+}
+
+.emergency-card li:before {
+  content: "•";
+  color: #F44336;
+  font-weight: bold;
+  display: inline-block;
+  width: 1em;
+  margin-left: -1em;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .care-sections-container {
+    grid-template-columns: 1fr;
+  }
+  
+  .care-guide-footer {
+    grid-template-columns: 1fr;
+  }
+  
+  .care-guide-title {
+    font-size: 28px;
+  }
+  
+  .section-title-bot {
+    font-size: 24px;
+  }
+  
+  .section-header {
+    flex-direction: column;
+    text-align: center;
+    gap: 10px;
+  }
+  
+  .section-icon {
+    width: 50px;
+    height: 50px;
+    font-size: 24px;
+  }
+  
+  .ai-bot-section {
+    margin: 20px 0;
+    padding: 20px;
+  }
+}
