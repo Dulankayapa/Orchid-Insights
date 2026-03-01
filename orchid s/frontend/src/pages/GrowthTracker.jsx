@@ -4,8 +4,11 @@ import { api } from "../lib/api";
 import { mockPlants } from "../data/mockPlants";
 import { db } from "../lib/firebase";
 import { ref, onValue, query, limitToLast } from "firebase/database";
+import { useTheme } from "../context/ThemeContext";
 
 export default function GrowthTracker() {
+  const { theme } = useTheme();
+  const isLight = theme === "light";
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [jarId, setJarId] = useState("");
   const [plantingDate, setPlantingDate] = useState("");
@@ -142,6 +145,7 @@ export default function GrowthTracker() {
       <div className="grid lg:grid-cols-5 gap-6 items-start relative">
         <div className="lg:col-span-2 space-y-4">
           <FormCard
+            isLight={isLight}
             onSubmit={submit}
             jarId={jarId}
             setJarId={setJarId}
@@ -157,10 +161,11 @@ export default function GrowthTracker() {
             error={error}
             plantRecord={plantRecord}
           />
-          <MockHistoryCard plantRecord={plantRecord} />
-          <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
+          <MockHistoryCard isLight={isLight} plantRecord={plantRecord} />
+          <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
+          isLight={isLight}
           result={result}
           jarId={analyzedJarId}
           currentHeight={analyzedHeight}
@@ -216,6 +221,7 @@ function Hero() {
 }
 
 function FormCard({
+  isLight,
   onSubmit,
   jarId,
   setJarId,
@@ -237,7 +243,7 @@ function FormCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="space-y-6 rounded-3xl border border-fuchsia-100 bg-white/95 text-slate-900 p-6 shadow-[0_20px_50px_-28px_rgba(217,70,239,0.2)]"
+      className={`space-y-6 rounded-3xl text-slate-900 p-6 shadow-[0_28px_72px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -336,14 +342,14 @@ function FormCard({
   );
 }
 
-function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities }) {
+function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities, isLight }) {
   return (
     <div className="lg:col-span-3 space-y-6">
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className="rounded-3xl border border-fuchsia-100 bg-white/95 p-6 space-y-6 shadow-[0_22px_60px_-32px_rgba(217,70,239,0.2)]"
+        className={`rounded-3xl p-6 space-y-6 shadow-[0_28px_72px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
       >
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
@@ -412,7 +418,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
   );
 }
 // SensorPanel component to display live Firebase data and recent history
-function SensorPanel({ latest, history, error }) {
+function SensorPanel({ latest, history, error, isLight }) {
   const recent = (history || []).slice(0, 8);
   const formatTs = (ts) => {
     const d = new Date(ts);
@@ -424,7 +430,7 @@ function SensorPanel({ latest, history, error }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.08 }}
-      className="rounded-3xl border border-fuchsia-100 bg-white/95 p-5 space-y-4 shadow-[0_16px_40px_-28px_rgba(217,70,239,0.15)]"
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_24px_60px_-30px_rgba(216,45,139,0.26)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -475,7 +481,7 @@ function SensorPanel({ latest, history, error }) {
 }
 
 // MockHistoryCard component to display plant history from mockPlants data based on Jar/Plant ID input
-function MockHistoryCard({ plantRecord }) {
+function MockHistoryCard({ plantRecord, isLight }) {
   const knownIds = mockPlants.map((p) => p.id).join(", ");
   const heights = plantRecord?.heights || [];
   return (
@@ -483,7 +489,7 @@ function MockHistoryCard({ plantRecord }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className="rounded-3xl border border-emerald-100 bg-white/95 p-5 space-y-4 shadow-[0_16px_40px_-28px_rgba(6,95,70,0.25)]"
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(216,45,139,0.26)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
