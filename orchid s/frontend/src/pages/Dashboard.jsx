@@ -27,7 +27,7 @@ export default function Dashboard() {
       <div className="glass rounded-3xl p-6 border border-primary/20 shadow-glow">
         <p className="text-xs uppercase tracking-[0.25em] text-subtle">Orchid Insights</p>
         <h2 className="text-3xl font-semibold mt-1 text-dark">Unified dashboard</h2>
-        <p className="text-slate-600 mt-2">Growth analytics, disease detection, Firebase plant DB, and environmental monitoring in one place.</p>
+        <p className="text-subtle mt-2">Growth analytics, disease detection, Firebase plant DB, and environmental monitoring in one place.</p>
         {health && (
           <div className="mt-4 grid sm:grid-cols-3 gap-3 text-sm">
             <StatusPill label="Growth model" ok={health.model_loaded} />
@@ -40,12 +40,12 @@ export default function Dashboard() {
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {cards.map((c) => (
-          <Link key={c.to} to={c.to} className="relative overflow-hidden glass rounded-2xl border border-white/40 p-4 hover:scale-[1.01] transition hover:shadow-soft">
-            <div className={`absolute inset-0 bg-gradient-to-br ${c.tone} opacity-10`} />
+          <Link key={c.to} to={c.to} className="relative overflow-hidden glass rounded-2xl border border-border/40 p-4 hover:scale-[1.01] transition hover:shadow-soft group">
+            <div className={`absolute inset-0 bg-gradient-to-br ${c.tone} opacity-10 group-hover:opacity-20 transition-opacity`} />
             <div className="relative space-y-1">
               <p className="text-[11px] uppercase tracking-[0.25em] text-subtle">Module</p>
               <h3 className="text-lg font-semibold text-dark">{c.title}</h3>
-              <p className="text-sm text-slate-600">{c.desc}</p>
+              <p className="text-sm text-subtle">{c.desc}</p>
             </div>
           </Link>
         ))}
@@ -56,7 +56,7 @@ export default function Dashboard() {
 
 function StatusPill({ label, ok }) {
   return (
-    <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border ${ok ? "border-emerald-400/40 bg-emerald-50 text-emerald-700" : "border-amber-400/40 bg-amber-50 text-amber-700"}`}>
+    <div className={`inline-flex items-center gap-2 px-3 py-2 rounded-xl border ${ok ? "border-emerald-400/40 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" : "border-amber-400/40 bg-amber-500/10 text-amber-600 dark:text-amber-400"}`}>
       <span className={`h-2 w-2 rounded-full ${ok ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.4)]" : "bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.4)]"}`} />
       {label}: {ok ? "ready" : "unavailable"}
     </div>
