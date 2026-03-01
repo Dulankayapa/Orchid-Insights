@@ -3,8 +3,12 @@ import { motion } from "framer-motion";
 import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
 import { mockPlants } from "../data/mockPlants";
+import { useTheme } from "../context/ThemeContext";
 
 export default function GrowthHistory() {
+  const { theme } = useTheme();
+  const isLight = theme === "light";
+
   const [jarId, setJarId] = useState("");
 
   const record = useMemo(() => {
@@ -27,21 +31,21 @@ export default function GrowthHistory() {
   return (
     <div className="relative space-y-8 text-slate-900">
       <Backdrop />
-      <Hero />
-      <LookupCard jarId={jarId} setJarId={setJarId} record={record} history={history} />
+      <Hero isLight={isLight} />
+      <LookupCard isLight={isLight} jarId={jarId} setJarId={setJarId} record={record} history={history} />
 
       <div className="relative grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
-          <ChartCard record={record} history={history} />
-          <HistoryList history={history} />
+          <ChartCard isLight={isLight} record={record} history={history} />
+          <HistoryList isLight={isLight} history={history} />
         </div>
-        <SummaryCard record={record} history={history} />
+        <SummaryCard isLight={isLight} record={record} history={history} />
       </div>
     </div>
   );
 }
 
-function LookupCard({ jarId, setJarId, record, history }) {
+function LookupCard({ jarId, setJarId, record, history, isLight }) {
   const chips = mockPlants.map((p) => p.id);
 
   return (
@@ -49,7 +53,7 @@ function LookupCard({ jarId, setJarId, record, history }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="rounded-3xl border border-fuchsia-100 bg-white/95 p-6 shadow-[0_20px_50px_-32px_rgba(217,70,239,0.2)] space-y-5"
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-5 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -102,7 +106,7 @@ function LookupCard({ jarId, setJarId, record, history }) {
   );
 }
 
-function ChartCard({ record, history }) {
+function ChartCard({ record, history, isLight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -175,14 +179,14 @@ function ChartCard({ record, history }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="rounded-3xl border border-fuchsia-100 bg-white/95 p-6 shadow-[0_22px_60px_-34px_rgba(217,70,239,0.2)] space-y-4"
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Trend line</p>
           <h3 className="text-xl font-normal text-black">Height over time</h3>
         </div>
-        <span className="text-xs text-slate-500">{history.length} points</span>
+        <span className={`text-xs ${isLight ? "text-slate-700" : "text-slate-500"}`}>{history.length} points</span>
       </div>
       <div className="h-80">
         {history.length ? (
@@ -195,7 +199,7 @@ function ChartCard({ record, history }) {
   );
 }
 
-function HistoryList({ history }) {
+function HistoryList({ history, isLight }) {
   const rows = [...history].reverse(); // newest first
 
   return (
@@ -203,7 +207,7 @@ function HistoryList({ history }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_18px_42px_-32px_rgba(15,23,42,0.3)] space-y-4"
+      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(216,45,139,0.28)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -236,7 +240,7 @@ function HistoryList({ history }) {
   );
 }
 
-function SummaryCard({ record, history }) {
+function SummaryCard({ record, history, isLight }) {
   const latest = history.length ? history[history.length - 1] : null;
   const first = history[0];
   const avg = history.length ? history.reduce((sum, row) => sum + Number(row.height_mm), 0) / history.length : null;
@@ -256,7 +260,7 @@ function SummaryCard({ record, history }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_20px_48px_-30px_rgba(15,23,42,0.35)] space-y-5"
+      className={`rounded-3xl p-6 shadow-[0_26px_70px_-30px_rgba(216,45,139,0.28)] space-y-5 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="space-y-1">
         <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Snapshot</p>
@@ -276,13 +280,13 @@ function SummaryCard({ record, history }) {
   );
 }
 
-function Hero() {
+function Hero({ isLight }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className="relative overflow-hidden rounded-3xl border border-fuchsia-100 bg-white/95 p-8 shadow-[0_25px_60px_-28px_rgba(217,70,239,0.2)]"
+      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="absolute inset-0 bg-gradient-to-r from-purple-50 via-white to-pink-50 pointer-events-none " />
       <div className="relative space-y-3">

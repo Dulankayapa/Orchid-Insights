@@ -10,12 +10,14 @@ import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CareGuide from "./pages/CareGuide.jsx";
 import CompanionDashboard from "./pages/CompanionDashboard.jsx";
+import CultureDetails from "./pages/CultureDetails.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
+  { to: "/reculture", label: "Culture Details" },
   { to: "/growth", label: "Growth Tracker" },
   { to: "/history", label: "Growth History" },
   { to: "/disease", label: "Disease Detector" },
@@ -77,6 +79,7 @@ export default function App() {
               <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
+                  <Route path="/reculture" element={<CultureDetails />} />
                   <Route path="/growth" element={<GrowthTracker />} />
                   <Route path="/history" element={<GrowthHistory />} />
                   <Route path="/disease" element={<DiseaseDetector />} />
