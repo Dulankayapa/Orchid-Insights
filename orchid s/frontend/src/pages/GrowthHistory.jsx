@@ -53,14 +53,14 @@ function LookupCard({ jarId, setJarId, record, history }) {
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-primary">Growth history</p>
-          <h2 className="text-2xl font-semibold text-slate-900">Find a jar and see its trail</h2>
+          <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Growth history</p>
+          <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2>
           <p className="text-sm text-slate-600 mt-1">Type a Jar ID and we will load the demo measurements already used in Growth Tracker.</p>
         </div>
         <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-400 shadow-[0_0_12px_rgba(217,70,239,0.4)] mt-1" aria-hidden />
       </div>
 
-      <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end">
+      <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
         <label className="space-y-2">
           <span className="text-xs uppercase tracking-[0.22em] text-slate-500">Jar / Plant ID</span>
           <input
@@ -179,8 +179,8 @@ function ChartCard({ record, history }) {
     >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-primary">Trend line</p>
-          <h3 className="text-xl font-semibold text-slate-900">Height over time</h3>
+          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Trend line</p>
+          <h3 className="text-xl font-normal text-black">Height over time</h3>
         </div>
         <span className="text-xs text-slate-500">{history.length} points</span>
       </div>
@@ -207,8 +207,8 @@ function HistoryList({ history }) {
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">History</p>
-          <h3 className="text-lg font-semibold text-slate-900">Logged measurements</h3>
+          <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">History</p>
+          <h3 className="text-lg font-normal text-black">Logged measurements</h3>
         </div>
         <span className="text-xs text-slate-500">{rows.length ? "Latest first" : "Waiting for selection"}</span>
       </div>
@@ -259,8 +259,8 @@ function SummaryCard({ record, history }) {
       className="rounded-3xl border border-slate-200 bg-white p-6 shadow-[0_20px_48px_-30px_rgba(15,23,42,0.35)] space-y-5"
     >
       <div className="space-y-1">
-        <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Snapshot</p>
-        <h3 className="text-lg font-semibold text-slate-900">{record ? record.id : "Awaiting jar"}</h3>
+        <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Snapshot</p>
+        <h3 className="text-lg font-normal text-black">{record ? record.id : "Awaiting jar"}</h3>
         <p className="text-sm text-slate-600">Overview of planting metadata and simple stats from the demo dataset.</p>
       </div>
 
@@ -284,10 +284,10 @@ function Hero() {
       transition={{ duration: 0.45 }}
       className="relative overflow-hidden rounded-3xl border border-fuchsia-100 bg-white/95 p-8 shadow-[0_25px_60px_-28px_rgba(217,70,239,0.2)]"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-purple-50 via-white to-pink-50 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-purple-50 via-white to-pink-50 pointer-events-none " />
       <div className="relative space-y-3">
-        <p className="text-xs uppercase tracking-[0.32em] text-primary">Historical view</p>
-        <h1 className="text-3xl font-semibold text-slate-900">Jar height history</h1>
+        <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Historical view</p>
+        <h1 className="text-3xl font-normal text-black">Jar height history</h1>
         <p className="text-slate-700 text-sm md:text-base max-w-2xl">
           Query any Jar ID and review its recorded heights. The line chart uses the same demo data as Growth Tracker, with dates on the x-axis and height in millimeters on the y-axis.
         </p>
@@ -307,8 +307,11 @@ function Backdrop() {
 }
 
 function EmptyState({ message }) {
-  return <div className="h-full flex items-center justify-center text-sm text-slate-500 bg-slate-50 rounded-2xl border border-slate-200">{message}</div>;
+  return <div className="h-full flex items-center justify-center text-sm  text-fuchsia-800 bg-slate-50 rounded-2xl border border-slate-200">{message}
+  
+  </div>;
 }
+ 
 
 function formatDate(ts) {
   if (!ts) return "-";
