@@ -57,7 +57,7 @@ export default function GrowthHistory() {
     </div>
   );
 }
-
+// Lookup card with search input, status messages, and demo data loading logic. 
 function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery, status, setStatus }) {
   const handleSearch = (e) => {
     e.preventDefault();
@@ -77,7 +77,7 @@ function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery
       setStatus("No demo record for that Jar ID. Try Jar-12, Jar-07, Jar-19, or Jar-03.");
     }
   };
-
+// Lookup card with search input, status messages, and demo data loading logic.
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -143,7 +143,7 @@ function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery
     </motion.div>
   );
 }
-
+// Chart card
 function ChartCard({ record, history, isLight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
