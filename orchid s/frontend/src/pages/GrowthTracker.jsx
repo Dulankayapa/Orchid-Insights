@@ -10,6 +10,8 @@ export default function GrowthTracker() {
   const { theme } = useTheme();
   const isLight = theme === "light";
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const demoIds = useMemo(() => mockPlants.map((p) => p.id), []);
+  const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
   const [jarId, setJarId] = useState("");
   const [plantingDate, setPlantingDate] = useState("");
   const [currentHeight, setCurrentHeight] = useState("");
@@ -160,8 +162,10 @@ export default function GrowthTracker() {
             loading={loading}
             error={error}
             plantRecord={plantRecord}
+            demoIds={demoIds}
+            demoIdHint={demoIdHint}
           />
-          <MockHistoryCard isLight={isLight} plantRecord={plantRecord} />
+          <MockHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
           <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
@@ -236,6 +240,8 @@ function FormCard({
   loading,
   error,
   plantRecord,
+  demoIds,
+  demoIdHint,
 }) {
   return (
     <motion.form
@@ -258,7 +264,7 @@ function FormCard({
           <input
             value={jarId}
             onChange={(e) => setJarId(e.target.value)}
-            placeholder="e.g. Jar-12"
+            placeholder={demoIds.length ? `e.g. ${demoIds[0]}` : "Enter Jar ID"}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition"
           />
         </Field>
@@ -297,7 +303,7 @@ function FormCard({
 
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try Jar-12, Jar-07, Jar-19, or Jar-03.
+          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known demo ID"}.
         </p>
       )}
       <p className="text-xs text-slate-600">Today: {today}</p>
@@ -481,8 +487,7 @@ function SensorPanel({ latest, history, error, isLight }) {
 }
 
 // MockHistoryCard component to display plant history from mockPlants data based on Jar/Plant ID input
-function MockHistoryCard({ plantRecord, isLight }) {
-  const knownIds = mockPlants.map((p) => p.id).join(", ");
+function MockHistoryCard({ plantRecord, isLight, demoIdHint }) {
   const heights = plantRecord?.heights || [];
   return (
     <motion.div
@@ -513,7 +518,7 @@ function MockHistoryCard({ plantRecord, isLight }) {
         </div>
       ) : (
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
-          Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {knownIds}.
+          Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {demoIdHint}.
         </div>
       )}
     </motion.div>
