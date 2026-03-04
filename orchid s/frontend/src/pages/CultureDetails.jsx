@@ -388,6 +388,35 @@ function FormCard({
 }
 
 function JarList({ entries, selectedId, onSelect, isLight }) {
+  const [query, setQuery] = useState("");
+  const [searchMessage, setSearchMessage] = useState("");
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const filteredEntries = useMemo(() => {
+    if (!normalizedQuery) return entries;
+    return entries.filter((entry) => entry.jarId.toLowerCase().includes(normalizedQuery));
+  }, [entries, normalizedQuery]);
+
+  useEffect(() => {
+    if (!query.trim()) setSearchMessage("");
+  }, [query]);
+
+  const handleSearch = (e) => {
+    e.preventDefault();
+    if (!normalizedQuery) {
+      setSearchMessage("Type a Jar ID to search.");
+      return;
+    }
+    const match = entries.find((entry) => entry.jarId.toLowerCase() === normalizedQuery);
+    if (match) {
+      onSelect(match);
+      setSearchMessage(`Loaded ${match.jarId} from search.`);
+    } else {
+      setSearchMessage("No jar found with that ID.");
+    }
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -403,41 +432,77 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
         <span className="text-xs text-slate-500">{entries.length} total</span>
       </div>
 
-      {entries.length ? (
-        <div className="space-y-2 max-h-[24rem] overflow-auto pr-1">
-          {entries.map((entry) => {
-            const nextReculture = entry.recultures.find((r) => new Date(r.date) >= new Date());
-            return (
-              <button
-                key={entry.jarId}
-                onClick={() => onSelect(entry)}
-            className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm ${selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase()
-                    ? "border-pink-300 bg-primary/10 text-primary shadow-md"
-                    : `${isLight ? "border-pink-100 bg-slate-50" : "border-pink-100 bg-slate-50/60"} hover:border-pink-300 hover:bg-primary/5 hover:shadow-md`
-                  }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold">{entry.jarId}</p>
-                    <p className="text-xs text-slate-600">
-                      Culture: {entry.cultureDate} - Rack: {entry.rackNo || "---"} - {entry.orchidType || "Type N/A"}
-                    </p>
-                    <p className="text-[11px] text-slate-500">Nutrition: {entry.nutrition || "Not noted"}</p>
-                  </div>
-                  <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
-                    {entry.recultures.length} dates
-                  </span>
-                </div>
-                {nextReculture && (
-                  <p className="text-xs text-emerald-700 mt-1">
-                    Next re-culture: {nextReculture.date}
-                    {nextReculture.note ? ` - ${nextReculture.note}` : ""}
-                  </p>
-                )}
-              </button>
-            );
-          })}
+      <form onSubmit={handleSearch} className="space-y-2">
+        <div
+          className={`flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-sm ${
+            isLight ? "border-pink-100 bg-slate-50" : "border-pink-100 bg-slate-50/60"
+          }`}
+        >
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search Jar ID (e.g. Jar-12)"
+            className="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
+          />
+          {query && (
+            <button
+              type="button"
+              onClick={() => setQuery("")}
+              className="text-xs text-slate-500 hover:text-slate-700 transition"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            type="submit"
+            className="rounded-xl bg-gradient-to-r from-primary to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+          >
+            Search
+          </button>
         </div>
+        {searchMessage && <p className="text-[11px] text-slate-600 px-1">{searchMessage}</p>}
+      </form>
+
+      {entries.length ? (
+        filteredEntries.length ? (
+          <div className="space-y-2 max-h-[24rem] overflow-auto pr-1">
+            {filteredEntries.map((entry) => {
+              const nextReculture = entry.recultures.find((r) => new Date(r.date) >= new Date());
+              return (
+                <button
+                  key={entry.jarId}
+                  onClick={() => onSelect(entry)}
+                  className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm ${
+                    selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase()
+                      ? "border-pink-300 bg-primary/10 text-primary shadow-md"
+                      : `${isLight ? "border-pink-100 bg-slate-50" : "border-pink-100 bg-slate-50/60"} hover:border-pink-300 hover:bg-primary/5 hover:shadow-md`
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">{entry.jarId}</p>
+                      <p className="text-xs text-slate-600">
+                        Culture: {entry.cultureDate} - Rack: {entry.rackNo || "---"} - {entry.orchidType || "Type N/A"}
+                      </p>
+                      <p className="text-[11px] text-slate-500">Nutrition: {entry.nutrition || "Not noted"}</p>
+                    </div>
+                    <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                      {entry.recultures.length} dates
+                    </span>
+                  </div>
+                  {nextReculture && (
+                    <p className="text-xs text-emerald-700 mt-1">
+                      Next re-culture: {nextReculture.date}
+                      {nextReculture.note ? ` - ${nextReculture.note}` : ""}
+                    </p>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <EmptyState message="No jars match that ID. Try another search." />
+        )
       ) : (
         <EmptyState message="No jars yet. Save one to see it here." />
       )}
