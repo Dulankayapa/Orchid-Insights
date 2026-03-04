@@ -1,3 +1,4 @@
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Chart from "chart.js/auto";
@@ -10,6 +11,8 @@ export default function GrowthHistory() {
   const isLight = theme === "light";
 
   const [jarId, setJarId] = useState("");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
 
   const record = useMemo(() => {
     if (!jarId) return null;
@@ -32,7 +35,17 @@ export default function GrowthHistory() {
     <div className="relative space-y-8 text-slate-900">
       <Backdrop />
       <Hero isLight={isLight} />
-      <LookupCard isLight={isLight} jarId={jarId} setJarId={setJarId} record={record} history={history} />
+      <LookupCard
+        isLight={isLight}
+        jarId={jarId}
+        setJarId={setJarId}
+        record={record}
+        history={history}
+        query={query}
+        setQuery={setQuery}
+        status={status}
+        setStatus={setStatus}
+      />
 
       <div className="relative grid lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2 space-y-6">
@@ -45,8 +58,25 @@ export default function GrowthHistory() {
   );
 }
 
-function LookupCard({ jarId, setJarId, record, history, isLight }) {
-  const chips = mockPlants.map((p) => p.id);
+function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery, status, setStatus }) {
+  const handleSearch = (e) => {
+    e.preventDefault();
+    const term = query.trim();
+
+    if (!term) {
+      setStatus("Enter a Jar ID to search.");
+      return;
+    }
+
+    const match = mockPlants.find((p) => p.id.toLowerCase() === term.toLowerCase());
+    if (match) {
+      setJarId(match.id);
+      setStatus(`Loaded ${match.id} from demo data.`);
+    } else {
+      setJarId("");
+      setStatus("No demo record for that Jar ID. Try Jar-12, Jar-07, Jar-19, or Jar-03.");
+    }
+  };
 
   return (
     <motion.div
@@ -58,49 +88,57 @@ function LookupCard({ jarId, setJarId, record, history, isLight }) {
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Growth history</p>
-          <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2>
-          <p className="text-sm text-slate-600 mt-1">Type a Jar ID and we will load the demo measurements already used in Growth Tracker.</p>
+           <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2> 
+          <p className="text-sm text-slate-600 mt-1">Type a Jar ID </p>
         </div>
         <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-400 shadow-[0_0_12px_rgba(217,70,239,0.4)] mt-1" aria-hidden />
       </div>
 
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
-        <label className="space-y-2">
+        <form onSubmit={handleSearch} className="space-y-2">
           <span className="text-xs uppercase tracking-[0.22em] text-slate-500">Jar / Plant ID</span>
-          <input
-            value={jarId}
-            onChange={(e) => setJarId(e.target.value)}
-            placeholder="Try Jar-12, Jar-07, Jar-19, Jar-03"
-            className="w-full rounded-2xl border border-fuchsia-200 bg-white px-4 py-3 text-sm text-slate-900 placeholder:text-slate-500 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition"
-          />
-        </label>
+          <div className="flex items-center gap-3 rounded-2xl border border-fuchsia-200 bg-white px-4 py-3 shadow-sm">
+            <input
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+                if (status) setStatus("");
+              }}
+              placeholder="Search Jar ID (e.g. Jar-12)"
+              className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+            />
+            {query && (
+              <button
+                type="button"
+                onClick={() => {
+                  setQuery("");
+                  setStatus("");
+                }}
+                className="text-xs text-slate-500 hover:text-slate-700 transition"
+              >
+                Clear
+              </button>
+            )}
+            <button
+              type="submit"
+              className="rounded-xl bg-gradient-to-r from-primary to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+            >
+              Search
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-500">Demo IDs: Jar-12, Jar-07, Jar-19, Jar-03</p>
+        </form>
         <div className="rounded-2xl border border-fuchsia-100 bg-fuchsia-50/60 px-4 py-3 text-sm text-fuchsia-900 shadow-inner">
           {record ? (
             <p>
               Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar}
             </p>
-          ) : jarId ? (
-            <p className="text-amber-800">No demo record for "{jarId}". Try one of the chips below.</p>
+          ) : status ? (
+            <p className="text-amber-800">{status}</p>
           ) : (
             <p>Pick a Jar ID to load its planting date and height history.</p>
           )}
         </div>
-      </div>
-
-      <div className="flex flex-wrap gap-2">
-        {chips.map((chip) => (
-          <button
-            key={chip}
-            type="button"
-            onClick={() => setJarId(chip)}
-            className={`px-3 py-2 rounded-xl text-sm border transition ${chip.toLowerCase() === jarId.trim().toLowerCase()
-                ? "border-fuchsia-400 bg-fuchsia-50 text-fuchsia-800 shadow-sm"
-                : "border-slate-200 bg-white hover:border-fuchsia-300 hover:text-primary"
-              }`}
-          >
-            {chip}
-          </button>
-        ))}
       </div>
     </motion.div>
   );
@@ -239,7 +277,7 @@ function HistoryList({ history, isLight }) {
     </motion.div>
   );
 }
-
+// Summary card showing key metadata and simple stats, with conditional formatting for positive/negative change and graceful handling of missing data
 function SummaryCard({ record, history, isLight }) {
   const latest = history.length ? history[history.length - 1] : null;
   const first = history[0];
@@ -300,6 +338,7 @@ function Hero({ isLight }) {
   );
 }
 
+// Backdrop with layered gradients and patterns for visual interest, using pointer-events-none to avoid interfering with interactions
 function Backdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 -z-10">
