@@ -16,6 +16,8 @@ export default function GrowthHistory() {
   const [status, setStatus] = useState("");
   const [rackQuery, setRackQuery] = useState("");
   const [rackStatus, setRackStatus] = useState("");
+  const [compareIds, setCompareIds] = useState([]);
+  const [compareWindow, setCompareWindow] = useState("all"); // all | 30d | 90d | 365d
 
   const cultureEntries = useMemo(() => {
     if (typeof window === "undefined") return mockRecultureData;
@@ -134,6 +136,20 @@ export default function GrowthHistory() {
           rackHintString={rackHintString}
         />
         <RackChart isLight={isLight} rackQuery={rackQuery} rackPlants={rackPlants} rackHintString={rackHintString} />
+        <ComparePanel
+          combinedRecords={combinedRecords}
+          compareIds={compareIds}
+          setCompareIds={setCompareIds}
+          compareWindow={compareWindow}
+          setCompareWindow={setCompareWindow}
+          isLight={isLight}
+        />
+        <CompareChart
+          combinedRecords={combinedRecords}
+          compareIds={compareIds}
+          compareWindow={compareWindow}
+          isLight={isLight}
+        />
       </div>
     </div>
   );
@@ -330,6 +346,129 @@ function ChartCard({ record, history, isLight }) {
   );
 }
 
+function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindow, setCompareWindow, isLight }) {
+  const [search, setSearch] = useState("");
+
+  const toggleId = (id) => {
+    setCompareIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (prev.length >= 3) return prev; // limit selections
+      return [...prev, id];
+    });
+    setSearch("");
+  };
+
+  const windows = [
+    { key: "30d", label: "30d" },
+    { key: "90d", label: "90d" },
+    { key: "365d", label: "1y" },
+    { key: "all", label: "All" },
+  ];
+
+  const sortedIds = useMemo(() => combinedRecords.map((p) => p.id).sort(), [combinedRecords]);
+  const filtered = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return sortedIds.filter((id) => !compareIds.includes(id) && (!term || id.toLowerCase().includes(term))).slice(0, 10);
+  }, [sortedIds, compareIds, search]);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!filtered.length) return;
+    toggleId(filtered[0]);
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className={`rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(216,45,139,0.25)] ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+    >
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Compare</p>
+          <h3 className="text-lg font-semibold text-slate-900">Select jars to compare growth</h3>
+          <p className="text-sm text-slate-600">Search and add up to 3 jars, then choose a window (month, quarter, year, or all time).</p>
+        </div>
+        <div className="flex gap-2">
+          {windows.map((w) => (
+            <button
+              key={w.key}
+              onClick={() => setCompareWindow(w.key)}
+              className={`px-3 py-1.5 text-xs rounded-lg border transition ${
+                compareWindow === w.key ? "bg-primary text-white border-primary" : "border-slate-200 text-slate-700 hover:border-primary/50"
+              }`}
+            >
+              {w.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-3 mt-4">
+        <form onSubmit={handleSubmit} className="flex items-center gap-3">
+          <div className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 flex items-center gap-2 shadow-sm">
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search Jar ID (type to filter)"
+              className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch("")} className="text-xs text-slate-500 hover:text-slate-700">
+                Clear
+              </button>
+            )}
+          </div>
+          <button
+            type="submit"
+            className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-primary to-purple-500 shadow-glow disabled:opacity-60"
+            disabled={!filtered.length}
+          >
+            Add
+          </button>
+        </form>
+
+        <div className="flex flex-wrap gap-2">
+          {compareIds.map((id) => (
+            <span
+              key={id}
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm border border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800"
+            >
+              {id}
+              <button onClick={() => toggleId(id)} className="text-xs text-fuchsia-700 hover:text-fuchsia-900">
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+          <p className="text-[11px] text-slate-600">Matches</p>
+          {filtered.length ? (
+            <div className="flex flex-wrap gap-2 mt-1">
+              {filtered.map((id) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => toggleId(id)}
+                  className="px-3 py-1.5 rounded-lg text-xs border border-slate-200 bg-white hover:border-primary/50 hover:text-primary transition"
+                >
+                  {id}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-slate-500 mt-1">No matches. Try another ID.</p>
+          )}
+        </div>
+      </div>
+
+      <p className="text-[11px] text-slate-500 mt-2">Select 2–3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
+    </motion.div>
+  );
+}
+
 function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPlants, rackHintString }) {
   const handleRackSearch = (e) => {
     e.preventDefault();
@@ -392,9 +531,138 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
             Search
           </button>
         </div>
-        <p className="text-[11px] text-slate-500">Known racks: {rackHintString || "—"}</p>
+        <p className="text-[11px] text-slate-500">Known racks: {rackHintString || "n/a"}</p>
         {rackStatus && <p className="text-[12px] text-fuchsia-800">{rackStatus}</p>}
       </form>
+    </motion.div>
+  );
+}
+
+function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  const datasets = useMemo(() => {
+    const palette = ["#e64cc3", "#4f46e5", "#22c55e", "#f59e0b", "#0ea5e9", "#ef4444"];
+    const cutoffMs = (() => {
+      const now = Date.now();
+      if (compareWindow === "30d") return now - 30 * 24 * 3600 * 1000;
+      if (compareWindow === "90d") return now - 90 * 24 * 3600 * 1000;
+      if (compareWindow === "365d") return now - 365 * 24 * 3600 * 1000;
+      return null;
+    })();
+
+    return compareIds
+      .map((id, idx) => {
+        const plant = combinedRecords.find((p) => p.id === id);
+        if (!plant) return null;
+        const sorted = (plant.heights || [])
+          .map((h) => {
+            const ts = Date.parse(h.date);
+            return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
+          })
+          .filter((p) => p.x !== null && (cutoffMs === null || p.x >= cutoffMs))
+          .sort((a, b) => a.x - b.x);
+        if (!sorted.length) return null;
+        const color = palette[idx % palette.length];
+        return {
+          label: id,
+          data: sorted,
+          borderColor: color,
+          backgroundColor: `${color}33`,
+          tension: 0.25,
+          borderWidth: 2.2,
+          pointRadius: 4,
+          pointBackgroundColor: color,
+          fill: false,
+        };
+      })
+      .filter(Boolean);
+  }, [compareIds, combinedRecords, compareWindow]);
+
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+    if (!datasets.length || !canvasRef.current) return;
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        parsing: false,
+        interaction: { mode: "nearest", intersect: false },
+        scales: {
+          x: {
+            type: "time",
+            time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
+            grid: { color: "rgba(148,163,184,0.15)" },
+            ticks: { color: "#475569" },
+            title: { display: true, text: "Measurement date", color: "#0f172a" },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: "rgba(148,163,184,0.12)" },
+            ticks: { color: "#475569" },
+            title: { display: true, text: "Height (mm)", color: "#0f172a" },
+          },
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: "bottom",
+            labels: {
+              usePointStyle: true,
+              pointStyle: "line",
+              padding: 16,
+              color: "#0f172a",
+            },
+          },
+          tooltip: {
+            callbacks: {
+              title: (items) => {
+                const ts = items[0]?.parsed?.x;
+                return ts ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(ts) : "";
+              },
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
+            },
+          },
+        },
+      },
+    });
+
+    return () => {
+      chartRef.current?.destroy();
+    };
+  }, [datasets]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Jar comparison</p>
+          <h3 className="text-xl font-normal text-black">Growth lines across selected jars</h3>
+          <p className="text-sm text-slate-600">Window: {compareWindow === "all" ? "All time" : compareWindow}</p>
+        </div>
+        <span className={`text-xs ${isLight ? "text-slate-700" : "text-slate-500"}`}>
+          {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : "Waiting for selection"}
+        </span>
+      </div>
+      <div className="h-72">
+        {datasets.length ? (
+          <canvas ref={canvasRef} />
+        ) : (
+          <EmptyState message="Select at least one jar to see the comparison chart." />
+        )}
+      </div>
     </motion.div>
   );
 }
@@ -572,19 +840,18 @@ function SummaryCard({ record, history, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_26px_70px_-30px_rgba(216,45,139,0.28)] space-y-5 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-4 shadow-[0_18px_48px_-28px_rgba(216,45,139,0.24)] space-y-3 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="space-y-1">
-        <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Snapshot</p>
-        <h3 className="text-lg font-normal text-black">{record ? record.id : "Awaiting jar"}</h3>
-        <p className="text-sm text-slate-600">Overview of planting metadata and simple stats from the demo dataset.</p>
+        <p className="text-[11px] uppercase tracking-[0.3em] text-primary font-bold">Snapshot</p>
+        <h3 className="text-base font-semibold text-black">{record ? record.id : "Awaiting jar"}</h3>
       </div>
 
-      <div className="grid sm:grid-cols-2 gap-3">
+      <div className="grid sm:grid-cols-2 gap-2">
         {stats.map((item) => (
-          <div key={item.label} className="rounded-2xl border border-slate-100 bg-slate-50/60 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
-            <p className="text-sm font-semibold text-slate-900 mt-1">{item.value}</p>
+          <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
+            <p className="text-sm font-semibold text-slate-900 mt-0.5">{item.value}</p>
           </div>
         ))}
       </div>
