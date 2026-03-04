@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
 import { mockPlants } from "../data/mockPlants";
+import { mockRecultureData } from "../data/mockReculture";
 import { useTheme } from "../context/ThemeContext";
 
 export default function GrowthHistory() {
@@ -13,12 +14,83 @@ export default function GrowthHistory() {
   const [jarId, setJarId] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
+  const [rackQuery, setRackQuery] = useState("");
+  const [rackStatus, setRackStatus] = useState("");
+
+  const cultureEntries = useMemo(() => {
+    if (typeof window === "undefined") return mockRecultureData;
+    try {
+      const raw = localStorage.getItem("reculture-entries");
+      if (raw) return JSON.parse(raw);
+    } catch {
+      /* ignore */
+    }
+    return mockRecultureData;
+  }, []);
+
+  const cultureMap = useMemo(() => {
+    const map = new Map();
+    cultureEntries.forEach((entry) => {
+      if (entry?.jarId) map.set(entry.jarId.toLowerCase(), entry);
+    });
+    return map;
+  }, [cultureEntries]);
+
+  const demoIds = useMemo(() => {
+    const ids = new Set();
+    cultureEntries.forEach((e) => e.jarId && ids.add(e.jarId));
+    mockPlants.forEach((p) => p.id && ids.add(p.id));
+    return Array.from(ids);
+  }, [cultureEntries]);
+
+  const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
+
+  const rackHints = useMemo(() => {
+    const set = new Set();
+    cultureEntries.forEach((e) => e.rackNo && set.add(`Rack ${e.rackNo}`));
+    mockPlants.forEach((p) => p.location && set.add(p.location));
+    return Array.from(set);
+  }, [cultureEntries]);
+  const rackHintString = useMemo(() => rackHints.join(", "), [rackHints]);
+
+  const combinedRecords = useMemo(() => {
+    return mockPlants.map((plant) => {
+      const culture = cultureMap.get(plant.id.toLowerCase());
+      const location = culture?.rackNo ? `Rack ${culture.rackNo}` : plant.location;
+      const planting_date = culture?.cultureDate || plant.planting_date;
+      const cultivar = culture?.orchidType || plant.cultivar;
+      const nutrition = culture?.nutrition || plant.nutrition;
+      const recultures = culture?.recultures || [];
+      return { ...plant, location, planting_date, cultivar, nutrition, recultures };
+    });
+  }, [cultureMap]);
+
+  const rackPlants = useMemo(() => {
+    const term = rackQuery.trim().toLowerCase();
+    if (!term) return [];
+    return combinedRecords.filter((p) => (p.location || "").toLowerCase().includes(term));
+  }, [combinedRecords, rackQuery]);
 
   const record = useMemo(() => {
     if (!jarId) return null;
     const id = jarId.trim().toLowerCase();
-    return mockPlants.find((p) => p.id.toLowerCase() === id) || null;
-  }, [jarId]);
+    const heightsRecord = mockPlants.find((p) => p.id.toLowerCase() === id) || null;
+    const culture = cultureMap.get(id) || null;
+
+    if (!heightsRecord && !culture) return null;
+
+    const baseId = culture?.jarId || heightsRecord?.id || jarId.trim();
+    const merged = {
+      id: baseId,
+      heights: heightsRecord?.heights || [],
+      planting_date: culture?.cultureDate || heightsRecord?.planting_date,
+      location: culture?.rackNo ? `Rack ${culture.rackNo}` : heightsRecord?.location,
+      cultivar: culture?.orchidType || heightsRecord?.cultivar,
+      nutrition: culture?.nutrition || heightsRecord?.nutrition,
+      recultures: culture?.recultures || [],
+    };
+    return merged;
+  }, [jarId, cultureMap]);
 
   const history = useMemo(() => {
     if (!record) return [];
@@ -45,20 +117,41 @@ export default function GrowthHistory() {
         setQuery={setQuery}
         status={status}
         setStatus={setStatus}
+        demoIdHint={demoIdHint}
+        demoIds={demoIds}
       />
 
-      <div className="relative grid lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 space-y-6">
-          <ChartCard isLight={isLight} record={record} history={history} />
-          <HistoryList isLight={isLight} history={history} />
-        </div>
+      <div className="relative space-y-6">
         <SummaryCard isLight={isLight} record={record} history={history} />
+        <ChartCard isLight={isLight} record={record} history={history} />
+        <HistoryList isLight={isLight} history={history} />
+        <RackSearch
+          rackQuery={rackQuery}
+          setRackQuery={setRackQuery}
+          rackStatus={rackStatus}
+          setRackStatus={setRackStatus}
+          rackPlants={rackPlants}
+          rackHintString={rackHintString}
+        />
+        <RackChart isLight={isLight} rackQuery={rackQuery} rackPlants={rackPlants} rackHintString={rackHintString} />
       </div>
     </div>
   );
 }
-// Lookup card with search input, status messages, and demo data loading logic. 
-function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery, status, setStatus }) {
+// Lookup card with search input, status messages, and demo data loading logic.
+function LookupCard({
+  jarId,
+  setJarId,
+  record,
+  history,
+  isLight,
+  query,
+  setQuery,
+  status,
+  setStatus,
+  demoIdHint,
+  demoIds,
+}) {
   const handleSearch = (e) => {
     e.preventDefault();
     const term = query.trim();
@@ -68,16 +161,16 @@ function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery
       return;
     }
 
-    const match = mockPlants.find((p) => p.id.toLowerCase() === term.toLowerCase());
+    const match = demoIds.find((id) => id.toLowerCase() === term.toLowerCase());
     if (match) {
-      setJarId(match.id);
-      setStatus(`Loaded ${match.id} from demo data.`);
+      setJarId(match);
+      setStatus(`Loaded ${match} from demo data.`);
     } else {
       setJarId("");
-      setStatus("No demo record for that Jar ID. Try Jar-12, Jar-07, Jar-19, or Jar-03.");
+      setStatus(`No demo record for that Jar ID. Try ${demoIdHint || "a known demo ID"}.`);
     }
   };
-// Lookup card with search input, status messages, and demo data loading logic.
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -88,8 +181,8 @@ function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Growth history</p>
-           <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2> 
-          <p className="text-sm text-slate-600 mt-1">Type a Jar ID </p>
+          <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2>
+          <p className="text-sm text-slate-600 mt-1">Type a Jar ID and we will load the demo measurements already used in Growth Tracker.</p>
         </div>
         <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-400 shadow-[0_0_12px_rgba(217,70,239,0.4)] mt-1" aria-hidden />
       </div>
@@ -104,7 +197,7 @@ function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery
                 setQuery(e.target.value);
                 if (status) setStatus("");
               }}
-              placeholder="Search Jar ID (e.g. Jar-12)"
+              placeholder={`Search Jar ID (${demoIdHint || "demo IDs"})`}
               className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
             />
             {query && (
@@ -126,7 +219,7 @@ function LookupCard({ jarId, setJarId, record, history, isLight, query, setQuery
               Search
             </button>
           </div>
-          <p className="text-[11px] text-slate-500">Demo IDs: Jar-12, Jar-07, Jar-19, Jar-03</p>
+          <p className="text-[11px] text-slate-500">Demo IDs: {demoIdHint}</p>
         </form>
         <div className="rounded-2xl border border-fuchsia-100 bg-fuchsia-50/60 px-4 py-3 text-sm text-fuchsia-900 shadow-inner">
           {record ? (
@@ -231,6 +324,187 @@ function ChartCard({ record, history, isLight }) {
           <canvas ref={canvasRef} />
         ) : (
           <EmptyState message="No measurements yet. Choose a demo Jar ID to see the line chart." />
+        )}
+      </div>
+    </motion.div>
+  );
+}
+
+function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPlants, rackHintString }) {
+  const handleRackSearch = (e) => {
+    e.preventDefault();
+    const term = rackQuery.trim();
+    if (!term) {
+      setRackStatus("Enter a rack label (e.g. A1, B3, C2).");
+      return;
+    }
+    const count = rackPlants.length;
+    if (count) {
+      setRackStatus(`Showing ${count} jar${count > 1 ? "s" : ""} on racks matching "${term}".`);
+    } else {
+      setRackStatus("No jars found for that rack.");
+    }
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(216,45,139,0.25)] border border-fuchsia-100 bg-white/95 space-y-4"
+    >
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Rack filter</p>
+          <h3 className="text-lg font-semibold text-slate-900">Plot all jars on a rack</h3>
+          <p className="text-sm text-slate-600">Search by rack label to see every jar’s height line in one chart below.</p>
+        </div>
+        <span className="text-xs text-slate-500">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
+      </div>
+
+      <form onSubmit={handleRackSearch} className="space-y-2">
+        <div className="flex items-center gap-3 rounded-2xl border border-fuchsia-200 bg-white px-4 py-3 shadow-sm">
+          <input
+            value={rackQuery}
+            onChange={(e) => {
+              setRackQuery(e.target.value);
+              if (rackStatus) setRackStatus("");
+            }}
+            placeholder="e.g. A1, B3, C2, A4"
+            className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+          />
+          {rackQuery && (
+            <button
+              type="button"
+              onClick={() => {
+                setRackQuery("");
+                setRackStatus("");
+              }}
+              className="text-xs text-slate-500 hover:text-slate-700 transition"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            type="submit"
+            className="rounded-xl bg-gradient-to-r from-primary to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+          >
+            Search
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-500">Known racks: {rackHintString || "—"}</p>
+        {rackStatus && <p className="text-[12px] text-fuchsia-800">{rackStatus}</p>}
+      </form>
+    </motion.div>
+  );
+}
+
+function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  const datasets = useMemo(() => {
+    const palette = ["#d946ef", "#a855f7", "#6366f1", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#0ea5e9"];
+
+    return rackPlants
+      .map((plant, idx) => {
+        const sorted = (plant.heights || [])
+          .map((h) => {
+            const ts = Date.parse(h.date);
+            return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
+          })
+          .filter((p) => p.x !== null)
+          .sort((a, b) => a.x - b.x);
+
+        if (!sorted.length) return null;
+        const color = palette[idx % palette.length];
+        return {
+          label: plant.id,
+          data: sorted,
+          borderColor: color,
+          backgroundColor: `${color}33`,
+          tension: 0.24,
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: color,
+          fill: false,
+        };
+      })
+      .filter(Boolean);
+  }, [rackPlants]);
+
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.destroy();
+      chartRef.current = null;
+    }
+    if (!datasets.length || !canvasRef.current) return;
+
+    chartRef.current = new Chart(canvasRef.current, {
+      type: "line",
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        parsing: false,
+        interaction: { mode: "nearest", intersect: false },
+        scales: {
+          x: {
+            type: "time",
+            time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
+            grid: { color: "rgba(148,163,184,0.25)" },
+            ticks: { color: "#334155" },
+            title: { display: true, text: "Measurement date", color: "#0f172a" },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: "rgba(148,163,184,0.25)" },
+            ticks: { color: "#334155" },
+            title: { display: true, text: "Height (mm)", color: "#0f172a" },
+          },
+        },
+        plugins: {
+          legend: { display: true, position: "bottom" },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
+            },
+          },
+        },
+      },
+    });
+
+    return () => {
+      chartRef.current?.destroy();
+    };
+  }, [datasets]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Rack summary</p>
+          <h3 className="text-xl font-normal text-black">Growth by rack</h3>
+          <p className="text-sm text-slate-600">Lines show each jar found on the rack label you searched.</p>
+        </div>
+        <span className={`text-xs ${isLight ? "text-slate-700" : "text-slate-500"}`}>
+          {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : rackQuery ? "No matches" : "Waiting"}
+        </span>
+      </div>
+      <div className="h-72">
+        {rackQuery ? (
+          datasets.length ? (
+            <canvas ref={canvasRef} />
+          ) : (
+            <EmptyState message={`No jars found for that rack label. Known racks: ${rackHintString || "n/a"}.`} />
+          )
+        ) : (
+          <EmptyState message={`Enter a rack label above to plot all jar heights in that rack. Known racks: ${rackHintString || "n/a"}.`} />
         )}
       </div>
     </motion.div>
