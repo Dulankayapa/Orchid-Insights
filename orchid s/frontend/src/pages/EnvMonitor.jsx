@@ -8,8 +8,15 @@ import { jsPDF } from 'jspdf';
 // import html2canvas from 'html2canvas'; // Reserved for future chart export
 
 const EnvMonitor = () => {
-  const { latest, history, growthLogs, connectionStatus, alerts, aiTip } = useMonitorData();
+  const { latest, history, growthLogs, jarReadings, connectionStatus, alerts, aiTip } = useMonitorData();
   const pdfRef = useRef();
+  const jarOrder = ['Jar1', 'Jar2', 'Jar3'];
+
+  const formatValue = (value, digits = 1) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return '--';
+    const num = Number(value);
+    return Number.isFinite(num) ? num.toFixed(digits) : '--';
+  };
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
@@ -157,6 +164,42 @@ const EnvMonitor = () => {
           <h2 className="text-xl font-bold text-dark">Current Status</h2>
         </div>
         <OverviewCards data={latest} />
+        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+          {jarOrder.map((jarKey) => {
+            const data = jarReadings?.[jarKey];
+            return (
+              <div key={jarKey} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
+                <div className="text-sm font-bold text-slate-700 mb-3">{jarKey}</div>
+                {data ? (
+                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
+                      <span>Temp</span>
+                      <span>{formatValue(data.temperature)} C</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
+                      <span>Humidity</span>
+                      <span>{formatValue(data.humidity)} %</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
+                      <span>Lux</span>
+                      <span>{formatValue(data.lux, 0)} lx</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
+                      <span>MQ135</span>
+                      <span>{formatValue(data.mq135, 0)}</span>
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1 col-span-2">
+                      <span>Height</span>
+                      <span>{formatValue(data.height, 0)} mm</span>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400">Waiting for data...</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </section>
 
       {/* Charts */}
