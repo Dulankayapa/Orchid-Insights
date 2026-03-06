@@ -1,11 +1,30 @@
 import { useState, useEffect } from 'react';
-import { ref, onValue, query, limitToLast, orderByKey } from 'firebase/database';
+import { ref, onValue, query, limitToLast } from 'firebase/database';
 import { db } from '../lib/firebase'; // Correct path to firebase config
+
+const JAR_PATHS = ['Jar1', 'Jar2', 'Jar3'];
+const PRIMARY_JAR = 'Jar1';
+
+const toNumber = (value) => {
+    if (value === undefined || value === null || value === '') return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+};
+
+const normalizeJar = (data) => ({
+    temperature: toNumber(data?.temperature ?? data?.temp),
+    humidity: toNumber(data?.humidity ?? data?.hum),
+    lux: toNumber(data?.lux ?? data?.light ?? data?.lx),
+    mq135: toNumber(data?.mq135 ?? data?.mq),
+    height: toNumber(data?.height ?? data?.height_mm ?? data?.heightCm),
+    timestamp: toNumber(data?.timestamp) || Date.now()
+});
 
 export const useMonitorData = (settings) => {
     const [latest, setLatest] = useState(null);
     const [history, setHistory] = useState([]);
     const [growthLogs, setGrowthLogs] = useState([]);
+    const [jarReadings, setJarReadings] = useState({});
     const [connectionStatus, setConnectionStatus] = useState('connecting'); // 'connected', 'stale', 'offline'
     const [lastUpdate, setLastUpdate] = useState(null);
     const [alerts, setAlerts] = useState([]);
@@ -54,6 +73,33 @@ export const useMonitorData = (settings) => {
             }
         });
 
+        // 2b. Jar Readings (Realtime DB)
+        const jarUnsubs = JAR_PATHS.map((jarKey) => {
+            const jarRef = ref(db, jarKey);
+            return onValue(jarRef, (snap) => {
+                const data = snap.val();
+                if (!data) return;
+                const normalized = normalizeJar(data);
+                setJarReadings((prev) => ({ ...prev, [jarKey]: normalized }));
+
+                if (jarKey === PRIMARY_JAR) {
+                    setLatest(normalized);
+                    setLastUpdate(Date.now());
+                    setHistory(prev => {
+                        const newPoint = {
+                            ts: normalized.timestamp || Date.now(),
+                            t: normalized.temperature,
+                            h: normalized.humidity,
+                            lx: normalized.lux,
+                            mq: normalized.mq135
+                        };
+                        const newHistory = [...prev, newPoint];
+                        return newHistory.slice(-100);
+                    });
+                }
+            });
+        });
+
         // 3. Growth Logs
         const growthRef = query(ref(db, 'growthLogs'), limitToLast(20));
         const unsubGrowth = onValue(growthRef, (snap) => {
@@ -68,6 +114,7 @@ export const useMonitorData = (settings) => {
             unsubConnected();
             unsubLatest();
             unsubGrowth();
+            jarUnsubs.forEach((off) => off());
         };
     }, []);
 
@@ -137,5 +184,5 @@ export const useMonitorData = (settings) => {
         setAiTip(tips[Math.floor(Math.random() * tips.length)]);
     }, []);
 
-    return { latest, history, growthLogs, connectionStatus, alerts, aiTip };
+    return { latest, history, growthLogs, jarReadings, connectionStatus, alerts, aiTip };
 };

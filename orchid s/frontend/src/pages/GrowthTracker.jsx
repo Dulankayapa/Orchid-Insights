@@ -4,9 +4,14 @@ import { api } from "../lib/api";
 import { mockPlants } from "../data/mockPlants";
 import { db } from "../lib/firebase";
 import { ref, onValue, query, limitToLast } from "firebase/database";
+import { useTheme } from "../context/ThemeContext";
 
 export default function GrowthTracker() {
+  const { theme } = useTheme();
+  const isLight = theme === "light";
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
+  const demoIds = useMemo(() => mockPlants.map((p) => p.id), []);
+  const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
   const [jarId, setJarId] = useState("");
   const [plantingDate, setPlantingDate] = useState("");
   const [currentHeight, setCurrentHeight] = useState("");
@@ -142,6 +147,7 @@ export default function GrowthTracker() {
       <div className="grid lg:grid-cols-5 gap-6 items-start relative">
         <div className="lg:col-span-2 space-y-4">
           <FormCard
+            isLight={isLight}
             onSubmit={submit}
             jarId={jarId}
             setJarId={setJarId}
@@ -156,11 +162,14 @@ export default function GrowthTracker() {
             loading={loading}
             error={error}
             plantRecord={plantRecord}
+            demoIds={demoIds}
+            demoIdHint={demoIdHint}
           />
-          <MockHistoryCard plantRecord={plantRecord} />
-          <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
+          <MockHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
+          <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
+          isLight={isLight}
           result={result}
           jarId={analyzedJarId}
           currentHeight={analyzedHeight}
@@ -216,6 +225,7 @@ function Hero() {
 }
 
 function FormCard({
+  isLight,
   onSubmit,
   jarId,
   setJarId,
@@ -230,6 +240,8 @@ function FormCard({
   loading,
   error,
   plantRecord,
+  demoIds,
+  demoIdHint,
 }) {
   return (
     <motion.form
@@ -237,7 +249,7 @@ function FormCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className="space-y-6 rounded-3xl border border-fuchsia-100 bg-white/95 text-slate-900 p-6 shadow-[0_20px_50px_-28px_rgba(217,70,239,0.2)]"
+      className={`space-y-6 rounded-3xl text-slate-900 p-6 shadow-[0_28px_72px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -252,7 +264,7 @@ function FormCard({
           <input
             value={jarId}
             onChange={(e) => setJarId(e.target.value)}
-            placeholder="e.g. Jar-12"
+            placeholder={demoIds.length ? `e.g. ${demoIds[0]}` : "Enter Jar ID"}
             className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition"
           />
         </Field>
@@ -291,7 +303,7 @@ function FormCard({
 
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try Jar-12, Jar-07, Jar-19, or Jar-03.
+          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known demo ID"}.
         </p>
       )}
       <p className="text-xs text-slate-600">Today: {today}</p>
@@ -336,14 +348,14 @@ function FormCard({
   );
 }
 
-function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities }) {
+function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities, isLight }) {
   return (
     <div className="lg:col-span-3 space-y-6">
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className="rounded-3xl border border-fuchsia-100 bg-white/95 p-6 space-y-6 shadow-[0_22px_60px_-32px_rgba(217,70,239,0.2)]"
+        className={`rounded-3xl p-6 space-y-6 shadow-[0_28px_72px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
       >
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
@@ -412,7 +424,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
   );
 }
 // SensorPanel component to display live Firebase data and recent history
-function SensorPanel({ latest, history, error }) {
+function SensorPanel({ latest, history, error, isLight }) {
   const recent = (history || []).slice(0, 8);
   const formatTs = (ts) => {
     const d = new Date(ts);
@@ -424,7 +436,7 @@ function SensorPanel({ latest, history, error }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.08 }}
-      className="rounded-3xl border border-fuchsia-100 bg-white/95 p-5 space-y-4 shadow-[0_16px_40px_-28px_rgba(217,70,239,0.15)]"
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_24px_60px_-30px_rgba(216,45,139,0.26)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -475,15 +487,14 @@ function SensorPanel({ latest, history, error }) {
 }
 
 // MockHistoryCard component to display plant history from mockPlants data based on Jar/Plant ID input
-function MockHistoryCard({ plantRecord }) {
-  const knownIds = mockPlants.map((p) => p.id).join(", ");
+function MockHistoryCard({ plantRecord, isLight, demoIdHint }) {
   const heights = plantRecord?.heights || [];
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className="rounded-3xl border border-emerald-100 bg-white/95 p-5 space-y-4 shadow-[0_16px_40px_-28px_rgba(6,95,70,0.25)]"
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(216,45,139,0.26)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -507,7 +518,7 @@ function MockHistoryCard({ plantRecord }) {
         </div>
       ) : (
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
-          Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {knownIds}.
+          Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {demoIdHint}.
         </div>
       )}
     </motion.div>

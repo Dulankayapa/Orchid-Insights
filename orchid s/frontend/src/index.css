@@ -51,3 +51,10 @@ body {
 .glass {
   @apply bg-paper/70 backdrop-blur-md border border-border/50 shadow-sm transition-colors duration-300;
 }
+
+/* Light-mode boost: make white/glass boxes pop with pink outline + deeper shadow */
+.light .glass {
+  border-color: rgb(226 232 240); /* slate-200 */
+  box-shadow: 0 28px 72px -30px rgba(51, 65, 85, 0.22); /* slate-700 tint */
+  background-color: rgba(255, 255, 255, 0.92);
+}

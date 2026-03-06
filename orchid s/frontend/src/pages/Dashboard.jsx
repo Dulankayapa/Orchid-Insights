@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../lib/api";
+import { useTheme } from "../context/ThemeContext";
 
 const cards = [
   { title: "Growth Tracker", to: "/growth", tone: "from-fuchsia-400/60 to-pink-500/50", desc: "Model-backed growth classification and ranges." },
@@ -12,6 +13,8 @@ const cards = [
 ];
 
 export default function Dashboard() {
+  const { theme } = useTheme();
+  const isLight = theme === "light";
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
 
@@ -24,7 +27,13 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div className="glass rounded-3xl p-6 border border-primary/20 shadow-glow">
+      <div
+        className={`rounded-3xl p-6 ${
+          isLight
+            ? "bg-white border border-pink-200 shadow-[0_32px_80px_-30px_rgba(216,45,139,0.28)]"
+            : "glass border border-pink-300/30 shadow-[0_24px_60px_-28px_rgba(236,72,153,0.35)] bg-paper/80"
+        }`}
+      >
         <p className="text-xs uppercase tracking-[0.25em] text-subtle">Orchid Insights</p>
         <h2 className="text-3xl font-semibold mt-1 text-dark">Unified dashboard</h2>
         <p className="text-subtle mt-2">Growth analytics, disease detection, Firebase plant DB, and environmental monitoring in one place.</p>
@@ -40,7 +49,15 @@ export default function Dashboard() {
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {cards.map((c) => (
-          <Link key={c.to} to={c.to} className="relative overflow-hidden glass rounded-2xl border border-border/40 p-4 hover:scale-[1.01] transition hover:shadow-soft group">
+          <Link
+            key={c.to}
+            to={c.to}
+            className={`relative overflow-hidden rounded-2xl p-4 hover:scale-[1.01] transition group ${
+              isLight
+                ? "bg-white border border-pink-200 shadow-[0_26px_70px_-32px_rgba(216,45,139,0.28)]"
+                : "glass border border-pink-300/30 shadow-[0_22px_60px_-30px_rgba(236,72,153,0.32)]"
+            }`}
+          >
             <div className={`absolute inset-0 bg-gradient-to-br ${c.tone} opacity-10 group-hover:opacity-20 transition-opacity`} />
             <div className="relative space-y-1">
               <p className="text-[11px] uppercase tracking-[0.25em] text-subtle">Module</p>
