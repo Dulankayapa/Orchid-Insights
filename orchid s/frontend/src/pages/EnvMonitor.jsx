@@ -3,26 +3,16 @@ import { motion } from 'framer-motion';
 import { useMonitorData } from '../hooks/useMonitorData';
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
-import GrowthPanel from '../components/monitor/GrowthPanel.jsx';
 import { jsPDF } from 'jspdf';
-// import html2canvas from 'html2canvas'; // Reserved for future chart export
 
 const EnvMonitor = () => {
-  const { latest, history, growthLogs, jarReadings, connectionStatus, alerts, aiTip } = useMonitorData();
+  const { latest, history, growthLogs, connectionStatus, lastUpdate, alerts, aiTip } = useMonitorData();
   const pdfRef = useRef();
-  const jarOrder = ['Jar1', 'Jar2', 'Jar3'];
-
-  const formatValue = (value, digits = 1) => {
-    if (value === null || value === undefined || Number.isNaN(value)) return '--';
-    const num = Number(value);
-    return Number.isFinite(num) ? num.toFixed(digits) : '--';
-  };
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
     const date = new Date().toLocaleString();
 
-    // Title
     doc.setFontSize(20);
     doc.setTextColor(40, 40, 40);
     doc.text('Orchid Environmental Report', 14, 22);
@@ -30,11 +20,8 @@ const EnvMonitor = () => {
     doc.setFontSize(10);
     doc.setTextColor(100, 100, 100);
     doc.text(`Generated: ${date}`, 14, 28);
-
-    // Connection Status
     doc.text(`Status: ${connectionStatus.toUpperCase()}`, 14, 34);
 
-    // Snapshot Data Table
     let y = 50;
     doc.setFontSize(14);
     doc.setTextColor(0, 0, 0);
@@ -51,19 +38,15 @@ const EnvMonitor = () => {
       ['Air Quality (MQ135)', `${latest?.mq135 ?? '--'}`, (latest?.mq135 > 150) ? 'High' : 'Good']
     ];
 
-    // Draw Table Manually (Simple version)
     doc.setFontSize(10);
     let rowY = y;
-
-    // Header
     doc.setFont('helvetica', 'bold');
     doc.text(headers[0], 14, rowY);
     doc.text(headers[1], 80, rowY);
     doc.text(headers[2], 140, rowY);
     rowY += 8;
-    doc.line(14, rowY - 6, 190, rowY - 6); // Underline
+    doc.line(14, rowY - 6, 190, rowY - 6);
 
-    // Rows
     doc.setFont('helvetica', 'normal');
     data.forEach(row => {
       doc.text(row[0], 14, rowY);
@@ -72,7 +55,6 @@ const EnvMonitor = () => {
       rowY += 8;
     });
 
-    // Add Note
     if (aiTip) {
       rowY += 10;
       doc.setFontSize(12);
@@ -80,8 +62,6 @@ const EnvMonitor = () => {
       doc.text('AI Insight:', 14, rowY);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
-
-      // Text wrapping
       const splitTip = doc.splitTextToSize(aiTip, 180);
       doc.text(splitTip, 14, rowY + 6);
     }
@@ -92,7 +72,7 @@ const EnvMonitor = () => {
   return (
     <div className="space-y-6 pb-20">
       {/* Header Area */}
-      <div className="flex flex-col md:flex-row md://items-center justify-between gap-4">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold text-dark tracking-tight">Environmental Monitor</h1>
           <p className="text-subtle">Real-time sensor data and analytics.</p>
@@ -114,7 +94,7 @@ const EnvMonitor = () => {
         </div>
       </div>
 
-      {/* Alerts Section (Only shows if active) */}
+      {/* Alerts Section */}
       {alerts.length > 0 && (
         <motion.div
           initial={{ opacity: 0, height: 0 }}
@@ -152,7 +132,6 @@ const EnvMonitor = () => {
               <p className="font-medium text-lg leading-snug">"{aiTip}"</p>
             </div>
           </div>
-          {/* Decor tokens */}
           <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
           <div className="absolute bottom-0 right-20 w-20 h-20 bg-purple-500/30 rounded-full blur-xl"></div>
         </motion.div>
@@ -163,43 +142,7 @@ const EnvMonitor = () => {
         <div className="flex items-center gap-2 mb-4">
           <h2 className="text-xl font-bold text-dark">Current Status</h2>
         </div>
-        <OverviewCards data={latest} />
-        <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-          {jarOrder.map((jarKey) => {
-            const data = jarReadings?.[jarKey];
-            return (
-              <div key={jarKey} className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm">
-                <div className="text-sm font-bold text-slate-700 mb-3">{jarKey}</div>
-                {data ? (
-                  <div className="grid grid-cols-2 gap-2 text-xs text-slate-700">
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
-                      <span>Temp</span>
-                      <span>{formatValue(data.temperature)} C</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
-                      <span>Humidity</span>
-                      <span>{formatValue(data.humidity)} %</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
-                      <span>Lux</span>
-                      <span>{formatValue(data.lux, 0)} lx</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1">
-                      <span>MQ135</span>
-                      <span>{formatValue(data.mq135, 0)}</span>
-                    </div>
-                    <div className="flex items-center justify-between rounded-lg bg-slate-50 px-2 py-1 col-span-2">
-                      <span>Height</span>
-                      <span>{formatValue(data.height, 0)} mm</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-xs text-slate-400">Waiting for data...</div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <OverviewCards data={latest} lastUpdate={lastUpdate} />
       </section>
 
       {/* Charts */}
@@ -213,12 +156,6 @@ const EnvMonitor = () => {
           </select>
         </div>
         <MonitorCharts history={history} />
-      </section>
-
-      {/* Growth Logs */}
-      <section>
-        <h2 className="text-xl font-bold text-dark mb-4">Growth Journal</h2>
-        <GrowthPanel logs={growthLogs} />
       </section>
 
     </div>

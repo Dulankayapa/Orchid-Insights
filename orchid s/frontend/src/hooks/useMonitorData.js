@@ -1,45 +1,64 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ref, onValue, query, limitToLast } from 'firebase/database';
-import { db } from '../lib/firebase'; // Correct path to firebase config
+import { db } from '../lib/firebase';
 
-const JAR_PATHS = ['Jar1', 'Jar2', 'Jar3'];
-const PRIMARY_JAR = 'Jar1';
+const normalizeSensor = (val) => {
+    if (!val) return null;
+    let ts = Number(val.timestamp) || Number(val.ts) || Date.now();
 
-const toNumber = (value) => {
-    if (value === undefined || value === null || value === '') return null;
-    const num = Number(value);
-    return Number.isFinite(num) ? num : null;
+    // Heuristic: If timestamp is in seconds (less than 10 billion), convert to milliseconds
+    if (ts < 10000000000) ts *= 1000;
+
+    const temp = Number(val.temperature ?? val.temp ?? val.t ?? 0);
+    const hum = Number(val.humidity ?? val.hum ?? val.h ?? 0);
+    const luxVal = Number(val.lux ?? val.light ?? val.lx ?? 0);
+    const mqVal = Number(val.mq135 ?? val.mq ?? 0);
+
+    return {
+        ...val,
+        timestamp: ts,
+        ts: ts, // for chart compatibility
+        temperature: temp,
+        humidity: hum,
+        lux: luxVal,
+        mq135: mqVal,
+        t: temp, // shorthand for charts
+        h: hum,
+        lx: luxVal,
+        mq: mqVal
+    };
 };
-
-const normalizeJar = (data) => ({
-    temperature: toNumber(data?.temperature ?? data?.temp),
-    humidity: toNumber(data?.humidity ?? data?.hum),
-    lux: toNumber(data?.lux ?? data?.light ?? data?.lx),
-    mq135: toNumber(data?.mq135 ?? data?.mq),
-    height: toNumber(data?.height ?? data?.height_mm ?? data?.heightCm),
-    timestamp: toNumber(data?.timestamp) || Date.now()
-});
 
 export const useMonitorData = (settings) => {
     const [latest, setLatest] = useState(null);
     const [history, setHistory] = useState([]);
     const [growthLogs, setGrowthLogs] = useState([]);
-    const [jarReadings, setJarReadings] = useState({});
     const [connectionStatus, setConnectionStatus] = useState('connecting'); // 'connected', 'stale', 'offline'
     const [lastUpdate, setLastUpdate] = useState(null);
     const [alerts, setAlerts] = useState([]);
     const [aiTip, setAiTip] = useState(null);
 
-    // Constants representing the "safe" ranges (can be passed via settings or hardcoded defaults)
-    const SAFETY_DEFAULTS = {
+    // Constants representing the "safe" ranges
+    const SAFETY_DEFAULTS = useMemo(() => ({
         tMin: 18, tMax: 28,
         hMin: 40, hMax: 70,
         lMin: 1000, lMax: 25000,
         mqWarn: 150,
         staleSec: 15
-    };
+    }), []);
 
-    const config = { ...SAFETY_DEFAULTS, ...settings };
+    const config = useMemo(() => ({ ...SAFETY_DEFAULTS, ...settings }), [SAFETY_DEFAULTS, settings]);
+
+    // Stitch the latest live point into history for ultra-real-time graphs
+    const liveHistory = useMemo(() => {
+        if (!latest) return history;
+        // Don't duplicate if the latest point is already the last one in history
+        if (history.length > 0 && history[history.length - 1].timestamp === latest.timestamp) {
+            return history;
+        }
+        const combined = [...history, latest];
+        return combined.slice(-100); // Keep last 100
+    }, [history, latest]);
 
     useEffect(() => {
         // 1. Connection Status
@@ -49,58 +68,32 @@ export const useMonitorData = (settings) => {
             setConnectionStatus(isConnected ? 'connected' : 'offline');
         });
 
-        // 2. Latest Data
+        // 2. Latest Data (Live Feed)
         const latestRef = ref(db, 'orchidData/latest');
         const unsubLatest = onValue(latestRef, (snap) => {
             const data = snap.val();
             if (data) {
-                setLatest(data);
+                const normalized = normalizeSensor(data);
+                setLatest(normalized);
                 setLastUpdate(Date.now());
-
-                // Update history with new point
-                setHistory(prev => {
-                    const newPoint = {
-                        ts: Date.now(),
-                        t: data.temperature,
-                        h: data.humidity,
-                        lx: data.lux,
-                        mq: data.mq135
-                    };
-                    // Keep last 100 points
-                    const newHistory = [...prev, newPoint];
-                    return newHistory.slice(-100);
-                });
             }
         });
 
-        // 2b. Jar Readings (Realtime DB)
-        const jarUnsubs = JAR_PATHS.map((jarKey) => {
-            const jarRef = ref(db, jarKey);
-            return onValue(jarRef, (snap) => {
-                const data = snap.val();
-                if (!data) return;
-                const normalized = normalizeJar(data);
-                setJarReadings((prev) => ({ ...prev, [jarKey]: normalized }));
-
-                if (jarKey === PRIMARY_JAR) {
-                    setLatest(normalized);
-                    setLastUpdate(Date.now());
-                    setHistory(prev => {
-                        const newPoint = {
-                            ts: normalized.timestamp || Date.now(),
-                            t: normalized.temperature,
-                            h: normalized.humidity,
-                            lx: normalized.lux,
-                            mq: normalized.mq135
-                        };
-                        const newHistory = [...prev, newPoint];
-                        return newHistory.slice(-100);
-                    });
-                }
-            });
+        // 3. History (Historical Logs)
+        const historyRef = query(ref(db, 'orchidData/logs'), limitToLast(100));
+        const unsubHistory = onValue(historyRef, (snap) => {
+            const data = snap.val();
+            if (data) {
+                const rows = Object.values(data)
+                    .map(normalizeSensor)
+                    // Filter out 1970/junk data (Only keep points from 2025 onwards)
+                    .filter(row => row && row.timestamp > 1735689600000)
+                    .sort((a, b) => a.timestamp - b.timestamp);
+                setHistory(rows);
+            }
         });
 
-        // 3. Growth Logs
+        // 4. Growth Logs
         const growthRef = query(ref(db, 'growthLogs'), limitToLast(20));
         const unsubGrowth = onValue(growthRef, (snap) => {
             const data = snap.val();
@@ -113,8 +106,8 @@ export const useMonitorData = (settings) => {
         return () => {
             unsubConnected();
             unsubLatest();
+            unsubHistory();
             unsubGrowth();
-            jarUnsubs.forEach((off) => off());
         };
     }, []);
 
@@ -123,56 +116,51 @@ export const useMonitorData = (settings) => {
         const interval = setInterval(() => {
             if (lastUpdate && (Date.now() - lastUpdate) > (config.staleSec * 1000)) {
                 setConnectionStatus('stale');
-            } else if (connectionStatus === 'stale') {
-                setConnectionStatus('connected');
+            } else {
+                setConnectionStatus(prev => prev === 'stale' ? 'connected' : prev);
             }
         }, 1000);
         return () => clearInterval(interval);
-    }, [lastUpdate, connectionStatus, config.staleSec]);
+    }, [lastUpdate, config.staleSec]);
 
-    // Compute Alerts & Tips
+    // Compute Alerts
     useEffect(() => {
         if (!latest) return;
 
         const newAlerts = [];
 
-        // Temperature
         if (latest.temperature < config.tMin || latest.temperature > config.tMax) {
             newAlerts.push({
                 type: 'danger',
                 icon: '🌡️',
                 title: 'Temperature Alert',
-                message: `${latest.temperature}°C is outside safe range (${config.tMin}-${config.tMax}°C)`
+                message: `${latest.temperature.toFixed(1)}°C is outside safe range (${config.tMin}-${config.tMax}°C)`
             });
         }
 
-        // Humidity
         if (latest.humidity < config.hMin || latest.humidity > config.hMax) {
             newAlerts.push({
                 type: 'warning',
                 icon: '💧',
                 title: 'Humidity Alert',
-                message: `${latest.humidity}% is outside safe range (${config.hMin}-${config.hMax}%)`
+                message: `${latest.humidity.toFixed(1)}% is outside safe range (${config.hMin}-${config.hMax}%)`
             });
         }
 
-        // Light
         if (latest.lux < config.lMin) {
-            newAlerts.push({ type: 'info', icon: '☀️', title: 'Low Light', message: 'Light levels are low for active growth.' });
+            newAlerts.push({ type: 'info', icon: '☀️', title: 'Low Light', message: 'Light levels are low.' });
         } else if (latest.lux > config.lMax) {
             newAlerts.push({ type: 'warning', icon: '☀️', title: 'High Light', message: 'Risk of leaf burn.' });
         }
 
-        // MQ135
         if (latest.mq135 > config.mqWarn) {
             newAlerts.push({ type: 'danger', icon: '💨', title: 'Air Quality', message: 'High CO2/VOC levels detected.' });
         }
 
         setAlerts(newAlerts);
-
     }, [latest, config]);
 
-    // AI Tip Generation - Stable (Run once on mount)
+    // AI Tip Generation
     useEffect(() => {
         const tips = [
             "Orchids bloom best with a 10°C temperature drop at night.",
@@ -184,5 +172,5 @@ export const useMonitorData = (settings) => {
         setAiTip(tips[Math.floor(Math.random() * tips.length)]);
     }, []);
 
-    return { latest, history, growthLogs, jarReadings, connectionStatus, alerts, aiTip };
+    return { latest, history: liveHistory, growthLogs, connectionStatus, lastUpdate, alerts, aiTip };
 };
