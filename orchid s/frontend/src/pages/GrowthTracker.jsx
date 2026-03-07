@@ -1,9 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  TimeScale,
+  Tooltip,
+  Legend,
+  Filler,
+  CategoryScale,
+} from "chart.js";
+import "chartjs-adapter-date-fns";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
 import { ref, onValue, query, limitToLast, push } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
+
+ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend, Filler, CategoryScale);
 
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -346,6 +361,29 @@ export default function GrowthTracker() {
   const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
   const liveTimestamp = jarLive?.timestamp ?? sensorLatest?.timestamp ?? null;
 
+  const heightPoints = useMemo(() => {
+    const pts = [];
+    if (Array.isArray(plantRecord?.heights)) {
+      plantRecord.heights.forEach((row) => {
+        const ts = coerceTimestamp(row.timestamp ?? row.ts) ?? (row.date ? Date.parse(row.date) : null);
+        const h = toNumber(row.height_mm ?? row.height);
+        if (ts && h !== null) pts.push({ x: ts, y: h, source: "record" });
+      });
+    }
+    (sensorHistory || []).forEach((row) => {
+      const ts = Number(row.timestamp);
+      const h = toNumber(row.height_mm ?? row.height);
+      if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
+    });
+    if (sensorLatest) {
+      const ts = Number(sensorLatest.timestamp);
+      const h = toNumber(sensorLatest.height_mm ?? sensorLatest.height);
+      if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "latest" });
+    }
+    pts.sort((a, b) => a.x - b.x);
+    return pts.slice(-120); // keep last 120 points
+  }, [plantRecord, sensorHistory, sensorLatest]);
+
   // Listen directly to Firebase plants/{id} for real-time planting date/height updates
   useEffect(() => {
     if (!jarId) return undefined;
@@ -403,6 +441,7 @@ export default function GrowthTracker() {
             liveHeight={liveHeight}
             liveTimestamp={liveTimestamp}
           />
+          <HeightChartCard isLight={isLight} points={heightPoints} />
         </div>
         <ResultCard
           isLight={isLight}
@@ -863,6 +902,89 @@ function SensorStat({ label, value, className = "" }) {
       <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-500">{label}</p>
       <p className="text-sm font-semibold text-slate-900 mt-1">{value}</p>
     </div>
+  );
+}
+
+function HeightChartCard({ points, isLight }) {
+  const hasData = points && points.length;
+  const data = useMemo(
+    () => ({
+      datasets: [
+        {
+          label: "Height (mm)",
+          data: points,
+          parsing: false,
+          spanGaps: true,
+          borderColor: "rgba(16, 185, 129, 1)",
+          backgroundColor: "rgba(16, 185, 129, 0.18)",
+          tension: 0.25,
+          fill: true,
+          pointRadius: 2.5,
+        },
+      ],
+    }),
+    [points]
+  );
+
+  const options = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: "time",
+          time: { unit: "day", tooltipFormat: "PPpp" },
+          ticks: { color: "#475569" },
+          grid: { color: "rgba(148, 163, 184, 0.15)" },
+        },
+        y: {
+          title: { display: true, text: "mm" },
+          ticks: { color: "#475569" },
+          grid: { color: "rgba(148, 163, 184, 0.12)" },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `Height: ${ctx.parsed.y} mm`,
+          },
+        },
+      },
+    }),
+    []
+  );
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.08 }}
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(13,148,136,0.26)] ${
+        isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"
+      }`}
+      style={{ minHeight: "320px" }}
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Growth</p>
+          <h4 className="text-lg font-semibold text-slate-900">Height trend</h4>
+        </div>
+        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
+          {hasData ? "Live from Firebase" : "Waiting..."}
+        </span>
+      </div>
+
+      {hasData ? (
+        <div className="h-64">
+          <Line data={data} options={options} />
+        </div>
+      ) : (
+        <div className="text-sm text-slate-700 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+          No height points yet. Once a Jar is selected and either a plant history or live sensor height is available, the chart will populate automatically.
+        </div>
+      )}
+    </motion.div>
   );
 }
 

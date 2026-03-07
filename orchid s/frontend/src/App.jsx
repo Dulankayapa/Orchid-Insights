@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import { NavLink, Route, Routes } from "react-router-dom";
 import { motion } from "framer-motion";
 
@@ -23,13 +24,39 @@ const navItems = [
   { to: "/monitor", label: "Env Monitor", code: "🌡️" },
 ];
 
-const todayLabel = new Intl.DateTimeFormat("en-US", {
-  weekday: "short",
-  month: "short",
-  day: "numeric",
-}).format(new Date());
+const TIME_ZONE = "Asia/Colombo";
+const LOCATION_LABEL = "Colombo, Sri Lanka";
 
 export default function App() {
+  const [now, setNow] = useState(new Date());
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const todayLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        timeZone: TIME_ZONE,
+      }).format(now),
+    [now]
+  );
+
+  const timeLabel = useMemo(
+    () =>
+      new Intl.DateTimeFormat("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        timeZone: TIME_ZONE,
+      }).format(now),
+    [now]
+  );
+
   return (
     <ThemeProvider>
       <div className="relative min-h-screen overflow-hidden bg-background text-dark transition-colors duration-300">
@@ -43,17 +70,24 @@ export default function App() {
           <aside className="hidden lg:flex lg:w-80 lg:flex-col px-6 py-7">
             <div className="panel space-y-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-secondary text-sm font-bold text-white shadow-[0_18px_32px_-20px_rgba(13,148,136,0.9)]">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-secondary text-sm font-bold text-white shadow-[0_18px_32px_-20px_rgba(13,148,136,0.9)] ring-4 ring-primary/10">
                   OI
                 </div>
                 <div>
-                  <p className="kicker">ORCHID INSIGHTS</p>
+                  <p className="kicker text-[12px] tracking-[0.28em] text-primary/80">ORCHID INSIGHTS</p>
                 </div>
               </div>
 
-              <div className="panel-muted px-4 py-3">
-                <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">Today</p>
-                <p className="mt-1 text-sm font-semibold text-dark">{todayLabel}</p>
+              <div className="rounded-3xl border border-border/30 bg-white/85 px-4 py-3 shadow-[0_12px_30px_-22px_rgba(15,23,42,0.28)]">
+                <p className="text-[11px] uppercase tracking-[0.22em] text-primary/75">Today</p>
+                <div className="mt-2 space-y-1">
+                  <p className="text-base font-semibold text-dark">{todayLabel}</p>
+                  <p className="text-[12px] text-subtle">
+                    {timeLabel}
+                    <span className="mx-1.5 text-border">•</span>
+                    {LOCATION_LABEL}
+                  </p>
+                </div>
               </div>
 
               <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-paper/70 px-4 py-3">
