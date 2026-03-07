@@ -78,14 +78,14 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-border/30 bg-white/85 px-4 py-3 shadow-[0_12px_30px_-22px_rgba(15,23,42,0.28)]">
+              <div className="rounded-3xl border border-border/30 bg-paper/90 px-4 py-3 shadow-[0_12px_30px_-22px_rgba(15,23,42,0.28)]">
                 <p className="text-[11px] uppercase tracking-[0.22em] text-primary/75">Today</p>
                 <div className="mt-2 space-y-1">
                   <p className="text-base font-semibold text-dark">{todayLabel}</p>
-                  <p className="text-[13px] font-medium leading-5 text-dark/80 [font-variant-numeric:tabular-nums]">
+                  <p className="text-[13px] font-medium leading-5 text-dark [font-variant-numeric:tabular-nums]">
                     {timeLabel}
                   </p>
-                  <p className="text-[12px] leading-5 text-subtle">{LOCATION_LABEL}</p>
+                  <p className="text-[12px] leading-5 text-subtle/95">{LOCATION_LABEL}</p>
                 </div>
               </div>
 
