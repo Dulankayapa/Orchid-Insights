@@ -1869,10 +1869,10 @@ function Hero() {
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3">
-        <p className="kicker">Historical view</p>
-        <h1 className="title-lg">Jar height history</h1>
+        <p className="kicker">Growth Analysis</p>
+        <h1 className="title-lg">Growth History Comparison</h1>
         <p className="text-subtle text-sm md:text-base max-w-2xl">
-          Explore growth trends for any jar using time-stamped measurements from Firebase. The chart plots dates on the x-axis and height in millimeters on the y-axis, while the sections below support jar comparison, rack-level filtering, and detailed measurement review.
+           Explore historical growth records and compare development trends of culture jars over time.
         </p>
       </div>
     </motion.div>

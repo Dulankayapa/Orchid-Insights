@@ -408,8 +408,8 @@ function Hero() {
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3">
-        <p className="kicker">Re-culture planner</p>
-        <h1 className="title-lg">Jar Meta Data</h1>
+        <p className="kicker">Orchid Culture Manager</p>
+        <h1 className="title-lg">OrchiLab</h1>
       </div>
     </motion.div>
   );
