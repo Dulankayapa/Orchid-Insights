@@ -1,60 +1,93 @@
+@import url("https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Sora:wght@500;600;700&display=swap");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    /* Light Mode - Standard clean look */
-    --background: 253 244 255;
-    /* fuchsia-50ish */
+    --background: 238 245 241;
     --paper: 255 255 255;
-    --primary: 217 70 239;
-    /* fuchsia-500 */
-    --secondary: 168 85 247;
-    /* purple-500 */
-    --accent: 236 72 153;
-    /* pink-500 */
-    --dark: 30 41 59;
-    /* slate-800 - DARK TEXT */
-    --subtle: 100 116 139;
-    /* slate-500 */
-    --border: 240 171 252;
-    /* fuchsia-300 */
+    --primary: 13 148 136;
+    --secondary: 6 182 212;
+    --accent: 249 115 22;
+    --dark: 15 23 42;
+    --subtle: 71 85 105;
+    --border: 148 163 184;
   }
 
   .dark {
-    /* Dark Mode - Deep background, LIGHT TEXT */
-    --background: 15 23 42;
-    /* slate-900 */
-    --paper: 30 41 59;
-    /* slate-800 */
-    --primary: 232 121 249;
-    /* fuchsia-400 */
-    --secondary: 192 132 252;
-    /* purple-400 */
-    --accent: 244 114 182;
-    /* pink-400 */
-    --dark: 241 245 249;
-    /* slate-100 - WHITE TEXT */
+    --background: 2 6 23;
+    --paper: 15 23 42;
+    --primary: 45 212 191;
+    --secondary: 34 211 238;
+    --accent: 251 146 60;
+    --dark: 226 232 240;
     --subtle: 148 163 184;
-    /* slate-400 */
     --border: 51 65 85;
-    /* slate-700 */
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    background-image:
+      radial-gradient(circle at 14% 9%, rgba(13, 148, 136, 0.14), transparent 26%),
+      radial-gradient(circle at 88% 12%, rgba(6, 182, 212, 0.1), transparent 24%),
+      radial-gradient(circle at 52% 88%, rgba(249, 115, 22, 0.08), transparent 30%);
+    background-attachment: fixed;
+    @apply bg-background text-dark antialiased transition-colors duration-300;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Sora", "Avenir Next", sans-serif;
+    letter-spacing: -0.01em;
   }
 }
 
-body {
-  font-family: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  @apply bg-background text-dark transition-colors duration-300;
+@layer components {
+  .glass {
+    @apply bg-paper/80 backdrop-blur-xl border border-border/45 shadow-[0_24px_65px_-35px_rgba(15,23,42,0.35)] transition-colors duration-300;
+  }
+
+  .panel {
+    @apply rounded-3xl glass p-6;
+  }
+
+  .panel-muted {
+    @apply rounded-2xl border border-border/35 bg-paper/60 backdrop-blur-sm;
+  }
+
+  .kicker {
+    @apply text-[11px] uppercase tracking-[0.26em] font-semibold text-primary/85;
+  }
+
+  .title-lg {
+    @apply text-2xl md:text-3xl font-semibold text-dark;
+  }
+
+  .input-shell {
+    @apply w-full rounded-xl border border-border/45 bg-paper px-3 py-2.5 text-sm text-dark placeholder:text-subtle/80 focus:outline-none focus:ring-2 focus:ring-primary/35 focus:border-primary/45;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-secondary px-4 py-2.5 text-sm font-semibold text-white shadow-[0_16px_35px_-18px_rgba(13,148,136,0.85)] transition hover:brightness-105;
+  }
+
+  .btn-soft {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-border/45 bg-paper/80 px-4 py-2.5 text-sm font-medium text-dark transition hover:border-primary/35 hover:text-primary;
+  }
 }
 
-.glass {
-  @apply bg-paper/70 backdrop-blur-md border border-border/50 shadow-sm transition-colors duration-300;
-}
-
-/* Light-mode boost: make white/glass boxes pop with pink outline + deeper shadow */
 .light .glass {
-  border-color: rgb(226 232 240); /* slate-200 */
-  box-shadow: 0 28px 72px -30px rgba(51, 65, 85, 0.22); /* slate-700 tint */
-  background-color: rgba(255, 255, 255, 0.92);
+  border-color: rgba(148, 163, 184, 0.32);
 }

@@ -2,7 +2,6 @@
 
 React + Vite + Tailwind dashboard covering:
 - Growth Tracker (calls `/api/growth/analyze`)
-- Disease Detector (uploads to `/api/disease/predict`)
 - Plant Database + Firebase Table (via `/api/env/*`)
 - Env Monitor snapshot (Chart.js sample; swap with live data)
 
