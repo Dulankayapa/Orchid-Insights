@@ -3,9 +3,85 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
-import { mockPlants } from "../data/mockPlants";
-import { mockRecultureData } from "../data/mockReculture";
+import { onValue, ref } from "firebase/database";
+import { api } from "../lib/api";
+import { db } from "../lib/firebase";
 import { useTheme } from "../context/ThemeContext";
+
+const toNumber = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const coerceTimestamp = (value) => {
+  const num = toNumber(value);
+  if (num === null) return null;
+  return num < 10000000000 ? num * 1000 : num;
+};
+
+const normalizeHeightEntry = (entry) => {
+  if (entry === undefined || entry === null) return null;
+  if (typeof entry === "number") return { height_mm: entry };
+  if (typeof entry === "string") {
+    const num = toNumber(entry);
+    return num === null ? null : { height_mm: num };
+  }
+  if (typeof entry !== "object") return null;
+
+  const heightMm = toNumber(entry.height_mm ?? entry.height ?? entry.heightMm ?? entry.heightMM ?? entry.current_height);
+  const heightCm = toNumber(entry.height_cm ?? entry.heightCm);
+  const resolvedHeight = heightMm ?? (heightCm !== null ? heightCm * 10 : null);
+  if (resolvedHeight === null) return null;
+
+  const ts = coerceTimestamp(entry.timestamp ?? entry.ts ?? entry.time ?? entry.logged_at ?? entry.loggedAt);
+  const date = entry.date || entry.recorded_at || entry.recordedAt || (ts ? new Date(ts).toISOString().split("T")[0] : null);
+
+  return {
+    ...entry,
+    height_mm: resolvedHeight,
+    timestamp: ts,
+    date,
+  };
+};
+
+const normalizeHeights = (raw) => {
+  if (!raw) return [];
+  const list = Array.isArray(raw) ? raw : Object.values(raw);
+  return list.map(normalizeHeightEntry).filter(Boolean);
+};
+
+const normalizePlantRecord = (plant) => {
+  if (!plant) return null;
+  const extra = plant.extra || {};
+  const heights = normalizeHeights(
+    plant.heights ??
+      extra.heights ??
+      extra.height_history ??
+      extra.heightHistory ??
+      extra.growth_logs ??
+      extra.growthLogs
+  );
+  return {
+    ...plant,
+    id: plant.id ?? extra.id ?? "",
+    heights,
+    planting_date: plant.planting_date || plant.plantingDate || extra.planting_date || extra.plantingDate,
+    location: plant.location ?? extra.location ?? (extra.rackNo ? `Rack ${extra.rackNo}` : undefined),
+    cultivar: plant.cultivar ?? extra.cultivar ?? extra.orchidType,
+    nutrition: plant.nutrition ?? extra.nutrition,
+  };
+};
+
+const resolveHeightTimestamp = (row) => {
+  const direct = coerceTimestamp(row.timestamp ?? row.ts);
+  if (direct !== null) return direct;
+  if (row.date) {
+    const parsed = Date.parse(row.date);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
 
 export default function GrowthHistory() {
   const { theme } = useTheme();
@@ -18,16 +94,65 @@ export default function GrowthHistory() {
   const [rackStatus, setRackStatus] = useState("");
   const [compareIds, setCompareIds] = useState([]);
   const [compareWindow, setCompareWindow] = useState("all"); // all | 30d | 90d | 365d
+  const [plants, setPlants] = useState([]);
+  const [plantsError, setPlantsError] = useState("");
+  const [cultureEntries, setCultureEntries] = useState([]);
+  const [cultureError, setCultureError] = useState("");
 
-  const cultureEntries = useMemo(() => {
-    if (typeof window === "undefined") return mockRecultureData;
-    try {
-      const raw = localStorage.getItem("reculture-entries");
-      if (raw) return JSON.parse(raw);
-    } catch {
-      /* ignore */
-    }
-    return mockRecultureData;
+  useEffect(() => {
+    let active = true;
+    setPlantsError("");
+
+    api
+      .get("/env/plants")
+      .then((resp) => {
+        if (!active) return;
+        const data = Array.isArray(resp.data) ? resp.data : [];
+        const normalized = data.map(normalizePlantRecord).filter(Boolean);
+        setPlants(normalized);
+      })
+      .catch((err) => {
+        if (!active) return;
+        const message = err.response?.data?.detail || err.message || "Failed to load plant records";
+        setPlantsError(typeof message === "string" ? message : "Failed to load plant records");
+        setPlants([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const entriesRef = ref(db, "recultureEntries");
+    const unsubscribe = onValue(
+      entriesRef,
+      (snap) => {
+        const data = snap.val() || {};
+        const next = Object.entries(data)
+          .map(([key, value]) => {
+            const entry = value && typeof value === "object" ? value : {};
+            return {
+              jarId: entry.jarId || key,
+              cultureDate: entry.cultureDate,
+              rackNo: entry.rackNo,
+              orchidType: entry.orchidType,
+              nutrition: entry.nutrition,
+              recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+              updatedAt: entry.updatedAt,
+            };
+          })
+          .filter((entry) => entry.jarId);
+        setCultureEntries(next);
+        setCultureError("");
+      },
+      (err) => {
+        setCultureError(err?.message || "Failed to load culture entries");
+        setCultureEntries([]);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
   const cultureMap = useMemo(() => {
@@ -41,22 +166,22 @@ export default function GrowthHistory() {
   const demoIds = useMemo(() => {
     const ids = new Set();
     cultureEntries.forEach((e) => e.jarId && ids.add(e.jarId));
-    mockPlants.forEach((p) => p.id && ids.add(p.id));
+    plants.forEach((p) => p.id && ids.add(p.id));
     return Array.from(ids);
-  }, [cultureEntries]);
+  }, [cultureEntries, plants]);
 
   const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
 
   const rackHints = useMemo(() => {
     const set = new Set();
     cultureEntries.forEach((e) => e.rackNo && set.add(`Rack ${e.rackNo}`));
-    mockPlants.forEach((p) => p.location && set.add(p.location));
+    plants.forEach((p) => p.location && set.add(p.location));
     return Array.from(set);
-  }, [cultureEntries]);
+  }, [cultureEntries, plants]);
   const rackHintString = useMemo(() => rackHints.join(", "), [rackHints]);
 
   const combinedRecords = useMemo(() => {
-    return mockPlants.map((plant) => {
+    return plants.map((plant) => {
       const culture = cultureMap.get(plant.id.toLowerCase());
       const location = culture?.rackNo ? `Rack ${culture.rackNo}` : plant.location;
       const planting_date = culture?.cultureDate || plant.planting_date;
@@ -65,7 +190,7 @@ export default function GrowthHistory() {
       const recultures = culture?.recultures || [];
       return { ...plant, location, planting_date, cultivar, nutrition, recultures };
     });
-  }, [cultureMap]);
+  }, [cultureMap, plants]);
 
   const rackPlants = useMemo(() => {
     const term = rackQuery.trim().toLowerCase();
@@ -76,7 +201,7 @@ export default function GrowthHistory() {
   const record = useMemo(() => {
     if (!jarId) return null;
     const id = jarId.trim().toLowerCase();
-    const heightsRecord = mockPlants.find((p) => p.id.toLowerCase() === id) || null;
+    const heightsRecord = plants.find((p) => String(p.id).toLowerCase() === id) || null;
     const culture = cultureMap.get(id) || null;
 
     if (!heightsRecord && !culture) return null;
@@ -92,13 +217,13 @@ export default function GrowthHistory() {
       recultures: culture?.recultures || [],
     };
     return merged;
-  }, [jarId, cultureMap]);
+  }, [jarId, cultureMap, plants]);
 
   const history = useMemo(() => {
     if (!record) return [];
     return (record.heights || [])
       .map((h) => {
-        const ts = Date.parse(h.date);
+        const ts = resolveHeightTimestamp(h);
         return { ...h, ts: Number.isFinite(ts) ? ts : null };
       })
       .filter((h) => h.ts !== null)
@@ -121,6 +246,8 @@ export default function GrowthHistory() {
         setStatus={setStatus}
         demoIdHint={demoIdHint}
         demoIds={demoIds}
+        plantsError={plantsError}
+        cultureError={cultureError}
       />
 
       <div className="relative space-y-6">
@@ -154,7 +281,7 @@ export default function GrowthHistory() {
     </div>
   );
 }
-// Lookup card with search input, status messages, and demo data loading logic.
+// Lookup card with search input and status messages.
 function LookupCard({
   jarId,
   setJarId,
@@ -167,6 +294,8 @@ function LookupCard({
   setStatus,
   demoIdHint,
   demoIds,
+  plantsError,
+  cultureError,
 }) {
   const handleSearch = (e) => {
     e.preventDefault();
@@ -180,10 +309,10 @@ function LookupCard({
     const match = demoIds.find((id) => id.toLowerCase() === term.toLowerCase());
     if (match) {
       setJarId(match);
-      setStatus(`Loaded ${match} from demo data.`);
+      setStatus(`Loaded ${match} from Firebase.`);
     } else {
       setJarId("");
-      setStatus(`No demo record for that Jar ID. Try ${demoIdHint || "a known demo ID"}.`);
+      setStatus(`No record for that Jar ID. Try ${demoIdHint || "a known ID"}.`);
     }
   };
 
@@ -198,10 +327,17 @@ function LookupCard({
         <div>
           <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Growth history</p>
           <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2>
-          <p className="text-sm text-slate-600 mt-1">Type a Jar ID and we will load the demo measurements already used in Growth Tracker.</p>
+          <p className="text-sm text-slate-600 mt-1">Type a Jar ID to load measurements from Firebase.</p>
         </div>
         <span className="h-2.5 w-2.5 rounded-full bg-teal-400 shadow-[0_0_12px_rgba(13,148,136,0.4)] mt-1" aria-hidden />
       </div>
+
+      {(plantsError || cultureError) && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+          {plantsError && <p>Plant records: {plantsError}</p>}
+          {cultureError && <p>Culture entries: {cultureError}</p>}
+        </div>
+      )}
 
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
         <form onSubmit={handleSearch} className="space-y-2">
@@ -213,7 +349,7 @@ function LookupCard({
                 setQuery(e.target.value);
                 if (status) setStatus("");
               }}
-              placeholder={`Search Jar ID (${demoIdHint || "demo IDs"})`}
+              placeholder={`Search Jar ID (${demoIdHint || "known IDs"})`}
               className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
             />
             {query && (
@@ -235,7 +371,7 @@ function LookupCard({
               Search
             </button>
           </div>
-          <p className="text-[11px] text-slate-500">Demo IDs: {demoIdHint}</p>
+          <p className="text-[11px] text-slate-500">Known IDs: {demoIdHint}</p>
         </form>
         <div className="rounded-2xl border border-teal-100 bg-teal-50/60 px-4 py-3 text-sm text-teal-900 shadow-inner">
           {record ? (
@@ -339,7 +475,7 @@ function ChartCard({ record, history, isLight }) {
         {history.length ? (
           <canvas ref={canvasRef} />
         ) : (
-          <EmptyState message="No measurements yet. Choose a demo Jar ID to see the line chart." />
+          <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
         )}
       </div>
     </motion.div>
@@ -437,7 +573,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
             >
               {id}
               <button onClick={() => toggleId(id)} className="text-xs text-teal-700 hover:text-teal-900">
-                ×
+                Ã
               </button>
             </span>
           ))}
@@ -464,7 +600,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-500 mt-2">Select 2–3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
+      <p className="text-[11px] text-slate-500 mt-2">Select 2â3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
     </motion.div>
   );
 }
@@ -496,7 +632,7 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
         <div>
           <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Rack filter</p>
           <h3 className="text-lg font-semibold text-slate-900">Plot all jars on a rack</h3>
-          <p className="text-sm text-slate-600">Search by rack label to see every jar’s height line in one chart below.</p>
+          <p className="text-sm text-slate-600">Search by rack label to see every jarâs height line in one chart below.</p>
         </div>
         <span className="text-xs text-slate-500">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
       </div>
@@ -872,7 +1008,7 @@ function Hero({ isLight }) {
         <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Historical view</p>
         <h1 className="text-3xl font-normal text-black">Jar height history</h1>
         <p className="text-slate-700 text-sm md:text-base max-w-2xl">
-          Query any Jar ID and review its recorded heights. The line chart uses the same demo data as Growth Tracker, with dates on the x-axis and height in millimeters on the y-axis.
+          Query any Jar ID and review its recorded heights. The line chart uses Firebase data, with dates on the x-axis and height in millimeters on the y-axis.
         </p>
       </div>
     </motion.div>
