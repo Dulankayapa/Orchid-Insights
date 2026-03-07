@@ -83,6 +83,12 @@ const resolveHeightTimestamp = (row) => {
   return null;
 };
 
+const chartTheme = (isLight) => ({
+  axis: isLight ? "#0f172a" : "#e2e8f0",
+  ticks: isLight ? "#475569" : "#94a3b8",
+  grid: isLight ? "rgba(148,163,184,0.25)" : "rgba(51,65,85,0.45)",
+});
+
 export default function GrowthHistory() {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -231,11 +237,10 @@ export default function GrowthHistory() {
   }, [record]);
 
   return (
-    <div className="relative space-y-8 text-slate-900">
-      <Backdrop />
-      <Hero isLight={isLight} />
+    <div className="relative space-y-8">
+      <Backdrop isLight={isLight} />
+      <Hero />
       <LookupCard
-        isLight={isLight}
         jarId={jarId}
         setJarId={setJarId}
         record={record}
@@ -251,9 +256,9 @@ export default function GrowthHistory() {
       />
 
       <div className="relative space-y-6">
-        <SummaryCard isLight={isLight} record={record} history={history} />
+        <SummaryCard record={record} history={history} />
         <ChartCard isLight={isLight} record={record} history={history} />
-        <HistoryList isLight={isLight} history={history} />
+        <HistoryList history={history} />
         <RackSearch
           rackQuery={rackQuery}
           setRackQuery={setRackQuery}
@@ -269,7 +274,6 @@ export default function GrowthHistory() {
           setCompareIds={setCompareIds}
           compareWindow={compareWindow}
           setCompareWindow={setCompareWindow}
-          isLight={isLight}
         />
         <CompareChart
           combinedRecords={combinedRecords}
@@ -287,7 +291,6 @@ function LookupCard({
   setJarId,
   record,
   history,
-  isLight,
   query,
   setQuery,
   status,
@@ -321,19 +324,19 @@ function LookupCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-5 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-5"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Growth history</p>
-          <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2>
-          <p className="text-sm text-slate-600 mt-1">Type a Jar ID to load measurements from Firebase.</p>
+          <p className="kicker">Growth history</p>
+          <h2 className="text-2xl font-semibold text-dark">Find a jar and see its trail</h2>
+          <p className="text-sm text-subtle mt-1">Type a Jar ID to load measurements from Firebase.</p>
         </div>
-        <span className="h-2.5 w-2.5 rounded-full bg-teal-400 shadow-[0_0_12px_rgba(13,148,136,0.4)] mt-1" aria-hidden />
+        <span className="h-2.5 w-2.5 rounded-full bg-primary shadow-[0_0_12px_rgba(13,148,136,0.4)] mt-1" aria-hidden />
       </div>
 
       {(plantsError || cultureError) && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2 text-sm text-rose-700">
+        <div className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-4 py-2 text-sm text-rose-700 dark:text-rose-300">
           {plantsError && <p>Plant records: {plantsError}</p>}
           {cultureError && <p>Culture entries: {cultureError}</p>}
         </div>
@@ -341,8 +344,8 @@ function LookupCard({
 
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
         <form onSubmit={handleSearch} className="space-y-2">
-          <span className="text-xs uppercase tracking-[0.22em] text-slate-500">Jar / Plant ID</span>
-          <div className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 shadow-sm">
+          <span className="text-xs uppercase tracking-[0.22em] text-subtle">Jar / Plant ID</span>
+          <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
             <input
               value={query}
               onChange={(e) => {
@@ -350,7 +353,7 @@ function LookupCard({
                 if (status) setStatus("");
               }}
               placeholder={`Search Jar ID (${demoIdHint || "known IDs"})`}
-              className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+              className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
             />
             {query && (
               <button
@@ -359,27 +362,27 @@ function LookupCard({
                   setQuery("");
                   setStatus("");
                 }}
-                className="text-xs text-slate-500 hover:text-slate-700 transition"
+                className="text-xs text-subtle hover:text-dark transition"
               >
                 Clear
               </button>
             )}
             <button
               type="submit"
-              className="rounded-xl bg-gradient-to-r from-primary to-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+              className="rounded-xl bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
             >
               Search
             </button>
           </div>
-          <p className="text-[11px] text-slate-500">Known IDs: {demoIdHint}</p>
+          <p className="text-[11px] text-subtle">Known IDs: {demoIdHint}</p>
         </form>
-        <div className="rounded-2xl border border-teal-100 bg-teal-50/60 px-4 py-3 text-sm text-teal-900 shadow-inner">
+        <div className="rounded-2xl border border-border/40 bg-paper/70 px-4 py-3 text-sm text-dark shadow-inner">
           {record ? (
             <p>
               Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar}
             </p>
           ) : status ? (
-            <p className="text-amber-800">{status}</p>
+            <p className="text-amber-700 dark:text-amber-300">{status}</p>
           ) : (
             <p>Pick a Jar ID to load its planting date and height history.</p>
           )}
@@ -400,6 +403,7 @@ function ChartCard({ record, history, isLight }) {
     }
     if (!history.length || !canvasRef.current) return;
 
+    const theme = chartTheme(isLight);
     const dataPoints = history.map((row) => ({ x: row.ts, y: Number(row.height_mm) }));
 
     chartRef.current = new Chart(canvasRef.current, {
@@ -428,15 +432,15 @@ function ChartCard({ record, history, isLight }) {
           x: {
             type: "time",
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
-            grid: { color: "rgba(148,163,184,0.25)" },
-            ticks: { color: "#334155" },
-            title: { display: true, text: "Measurement date", color: "#0f172a" },
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks },
+            title: { display: true, text: "Measurement date", color: theme.axis },
           },
           y: {
             beginAtZero: true,
-            grid: { color: "rgba(148,163,184,0.25)" },
-            ticks: { color: "#334155" },
-            title: { display: true, text: "Plant height (mm)", color: "#0f172a" },
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks },
+            title: { display: true, text: "Plant height (mm)", color: theme.axis },
           },
         },
         plugins: {
@@ -455,21 +459,21 @@ function ChartCard({ record, history, isLight }) {
     return () => {
       chartRef.current?.destroy();
     };
-  }, [history, record?.id]);
+  }, [history, record?.id, isLight]);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Trend line</p>
-          <h3 className="text-xl font-normal text-black">Height over time</h3>
+          <p className="kicker">Trend line</p>
+          <h3 className="text-xl font-semibold text-dark">Height over time</h3>
         </div>
-        <span className={`text-xs ${isLight ? "text-slate-700" : "text-slate-500"}`}>{history.length} points</span>
+        <span className="text-xs text-subtle">{history.length} points</span>
       </div>
       <div className="h-80">
         {history.length ? (
@@ -482,7 +486,7 @@ function ChartCard({ record, history, isLight }) {
   );
 }
 
-function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindow, setCompareWindow, isLight }) {
+function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindow, setCompareWindow }) {
   const [search, setSearch] = useState("");
 
   const toggleId = (id) => {
@@ -518,13 +522,13 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(13,148,136,0.25)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel"
     >
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Compare</p>
-          <h3 className="text-lg font-semibold text-slate-900">Select jars to compare growth</h3>
-          <p className="text-sm text-slate-600">Search and add up to 3 jars, then choose a window (month, quarter, year, or all time).</p>
+          <p className="kicker">Compare</p>
+          <h3 className="text-lg font-semibold text-dark">Select jars to compare growth</h3>
+          <p className="text-sm text-subtle">Search and add up to 3 jars, then choose a window (month, quarter, year, or all time).</p>
         </div>
         <div className="flex gap-2">
           {windows.map((w) => (
@@ -532,7 +536,9 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
               key={w.key}
               onClick={() => setCompareWindow(w.key)}
               className={`px-3 py-1.5 text-xs rounded-lg border transition ${
-                compareWindow === w.key ? "bg-primary text-white border-primary" : "border-slate-200 text-slate-700 hover:border-primary/50"
+                compareWindow === w.key
+                  ? "bg-primary text-white border-primary"
+                  : "border-border/45 text-subtle hover:border-primary/50 hover:text-primary"
               }`}
             >
               {w.label}
@@ -543,22 +549,22 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
 
       <div className="space-y-3 mt-4">
         <form onSubmit={handleSubmit} className="flex items-center gap-3">
-          <div className="flex-1 rounded-xl border border-slate-200 bg-white px-3 py-2 flex items-center gap-2 shadow-sm">
+          <div className="flex-1 rounded-xl border border-border/45 bg-paper/70 px-3 py-2 flex items-center gap-2 shadow-sm">
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search Jar ID (type to filter)"
-              className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+              className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
             />
             {search && (
-              <button type="button" onClick={() => setSearch("")} className="text-xs text-slate-500 hover:text-slate-700">
+              <button type="button" onClick={() => setSearch("")} className="text-xs text-subtle hover:text-dark">
                 Clear
               </button>
             )}
           </div>
           <button
             type="submit"
-            className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-primary to-cyan-500 shadow-glow disabled:opacity-60"
+            className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-primary to-secondary shadow-glow disabled:opacity-60"
             disabled={!filtered.length}
           >
             Add
@@ -569,18 +575,18 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
           {compareIds.map((id) => (
             <span
               key={id}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm border border-teal-300 bg-teal-50 text-teal-800"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm border border-primary/35 bg-primary/10 text-primary"
             >
               {id}
-              <button onClick={() => toggleId(id)} className="text-xs text-teal-700 hover:text-teal-900">
-                Ã
+              <button onClick={() => toggleId(id)} className="text-xs text-primary/80 hover:text-primary">
+                ×
               </button>
             </span>
           ))}
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-[11px] text-slate-600">Matches</p>
+        <div className="rounded-xl border border-border/40 bg-paper/60 px-3 py-2">
+          <p className="text-[11px] text-subtle">Matches</p>
           {filtered.length ? (
             <div className="flex flex-wrap gap-2 mt-1">
               {filtered.map((id) => (
@@ -588,19 +594,19 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
                   key={id}
                   type="button"
                   onClick={() => toggleId(id)}
-                  className="px-3 py-1.5 rounded-lg text-xs border border-slate-200 bg-white hover:border-primary/50 hover:text-primary transition"
+                  className="px-3 py-1.5 rounded-lg text-xs border border-border/45 bg-paper/80 text-subtle hover:border-primary/50 hover:text-primary transition"
                 >
                   {id}
                 </button>
               ))}
             </div>
           ) : (
-            <p className="text-[11px] text-slate-500 mt-1">No matches. Try another ID.</p>
+            <p className="text-[11px] text-subtle mt-1">No matches. Try another ID.</p>
           )}
         </div>
       </div>
 
-      <p className="text-[11px] text-slate-500 mt-2">Select 2â3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
+      <p className="text-[11px] text-subtle mt-2">Select 2–3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
     </motion.div>
   );
 }
@@ -626,19 +632,19 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(13,148,136,0.25)] border border-teal-100 bg-white/95 space-y-4"
+      className="panel space-y-4"
     >
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Rack filter</p>
-          <h3 className="text-lg font-semibold text-slate-900">Plot all jars on a rack</h3>
-          <p className="text-sm text-slate-600">Search by rack label to see every jarâs height line in one chart below.</p>
+          <p className="kicker">Rack filter</p>
+          <h3 className="text-lg font-semibold text-dark">Plot all jars on a rack</h3>
+          <p className="text-sm text-subtle">Search by rack label to see every jar’s height line in one chart below.</p>
         </div>
-        <span className="text-xs text-slate-500">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
+        <span className="text-xs text-subtle">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
       </div>
 
       <form onSubmit={handleRackSearch} className="space-y-2">
-        <div className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
           <input
             value={rackQuery}
             onChange={(e) => {
@@ -646,7 +652,7 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
               if (rackStatus) setRackStatus("");
             }}
             placeholder="e.g. A1, B3, C2, A4"
-            className="w-full bg-transparent text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none"
+            className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
           />
           {rackQuery && (
             <button
@@ -655,20 +661,20 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
                 setRackQuery("");
                 setRackStatus("");
               }}
-              className="text-xs text-slate-500 hover:text-slate-700 transition"
+              className="text-xs text-subtle hover:text-dark transition"
             >
               Clear
             </button>
           )}
           <button
             type="submit"
-            className="rounded-xl bg-gradient-to-r from-primary to-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+            className="rounded-xl bg-gradient-to-r from-primary to-secondary px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
           >
             Search
           </button>
         </div>
-        <p className="text-[11px] text-slate-500">Known racks: {rackHintString || "n/a"}</p>
-        {rackStatus && <p className="text-[12px] text-teal-800">{rackStatus}</p>}
+        <p className="text-[11px] text-subtle">Known racks: {rackHintString || "n/a"}</p>
+        {rackStatus && <p className="text-[12px] text-primary">{rackStatus}</p>}
       </form>
     </motion.div>
   );
@@ -723,6 +729,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
     }
     if (!datasets.length || !canvasRef.current) return;
 
+    const theme = chartTheme(isLight);
     chartRef.current = new Chart(canvasRef.current, {
       type: "line",
       data: { datasets },
@@ -735,15 +742,15 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
           x: {
             type: "time",
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
-            grid: { color: "rgba(148,163,184,0.15)" },
-            ticks: { color: "#475569" },
-            title: { display: true, text: "Measurement date", color: "#0f172a" },
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks },
+            title: { display: true, text: "Measurement date", color: theme.axis },
           },
           y: {
             beginAtZero: true,
-            grid: { color: "rgba(148,163,184,0.12)" },
-            ticks: { color: "#475569" },
-            title: { display: true, text: "Height (mm)", color: "#0f172a" },
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks },
+            title: { display: true, text: "Height (mm)", color: theme.axis },
           },
         },
         plugins: {
@@ -754,7 +761,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
               usePointStyle: true,
               pointStyle: "line",
               padding: 16,
-              color: "#0f172a",
+              color: theme.axis,
             },
           },
           tooltip: {
@@ -773,22 +780,22 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
     return () => {
       chartRef.current?.destroy();
     };
-  }, [datasets]);
+  }, [datasets, isLight]);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Jar comparison</p>
-          <h3 className="text-xl font-normal text-black">Growth lines across selected jars</h3>
-          <p className="text-sm text-slate-600">Window: {compareWindow === "all" ? "All time" : compareWindow}</p>
+          <p className="kicker">Jar comparison</p>
+          <h3 className="text-xl font-semibold text-dark">Growth lines across selected jars</h3>
+          <p className="text-sm text-subtle">Window: {compareWindow === "all" ? "All time" : compareWindow}</p>
         </div>
-        <span className={`text-xs ${isLight ? "text-slate-700" : "text-slate-500"}`}>
+        <span className="text-xs text-subtle">
           {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : "Waiting for selection"}
         </span>
       </div>
@@ -844,6 +851,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
     }
     if (!datasets.length || !canvasRef.current) return;
 
+    const theme = chartTheme(isLight);
     chartRef.current = new Chart(canvasRef.current, {
       type: "line",
       data: { datasets },
@@ -856,19 +864,19 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
           x: {
             type: "time",
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
-            grid: { color: "rgba(148,163,184,0.25)" },
-            ticks: { color: "#334155" },
-            title: { display: true, text: "Measurement date", color: "#0f172a" },
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks },
+            title: { display: true, text: "Measurement date", color: theme.axis },
           },
           y: {
             beginAtZero: true,
-            grid: { color: "rgba(148,163,184,0.25)" },
-            ticks: { color: "#334155" },
-            title: { display: true, text: "Height (mm)", color: "#0f172a" },
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks },
+            title: { display: true, text: "Height (mm)", color: theme.axis },
           },
         },
         plugins: {
-          legend: { display: true, position: "bottom" },
+          legend: { display: true, position: "bottom", labels: { color: theme.axis } },
           tooltip: {
             callbacks: {
               label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
@@ -881,22 +889,22 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
     return () => {
       chartRef.current?.destroy();
     };
-  }, [datasets]);
+  }, [datasets, isLight]);
 
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-primary font-bold">Rack summary</p>
-          <h3 className="text-xl font-normal text-black">Growth by rack</h3>
-          <p className="text-sm text-slate-600">Lines show each jar found on the rack label you searched.</p>
+          <p className="kicker">Rack summary</p>
+          <h3 className="text-xl font-semibold text-dark">Growth by rack</h3>
+          <p className="text-sm text-subtle">Lines show each jar found on the rack label you searched.</p>
         </div>
-        <span className={`text-xs ${isLight ? "text-slate-700" : "text-slate-500"}`}>
+        <span className="text-xs text-subtle">
           {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : rackQuery ? "No matches" : "Waiting"}
         </span>
       </div>
@@ -915,7 +923,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
   );
 }
 
-function HistoryList({ history, isLight }) {
+function HistoryList({ history }) {
   const rows = [...history].reverse(); // newest first
 
   return (
@@ -923,26 +931,26 @@ function HistoryList({ history, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(13,148,136,0.28)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">History</p>
-          <h3 className="text-lg font-normal text-black">Logged measurements</h3>
+          <p className="kicker">History</p>
+          <h3 className="text-lg font-semibold text-dark">Logged measurements</h3>
         </div>
-        <span className="text-xs text-slate-500">{rows.length ? "Latest first" : "Waiting for selection"}</span>
+        <span className="text-xs text-subtle">{rows.length ? "Latest first" : "Waiting for selection"}</span>
       </div>
 
       {rows.length ? (
-        <div className="divide-y divide-slate-100">
+        <div className="divide-y divide-border/30">
           {rows.map((row, idx) => {
             const prev = rows[idx + 1];
             const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
             return (
-              <div key={row.ts} className="grid grid-cols-3 gap-3 py-3 text-sm text-slate-800">
+              <div key={row.ts} className="grid grid-cols-3 gap-3 py-3 text-sm text-dark">
                 <span className="font-medium">{formatDate(row.ts)}</span>
                 <span>{Number(row.height_mm).toFixed(1)} mm</span>
-                <span className="text-slate-500">
+                <span className="text-subtle">
                   {delta === null ? "-" : delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} mm vs prior`}
                 </span>
               </div>
@@ -956,7 +964,7 @@ function HistoryList({ history, isLight }) {
   );
 }
 // Summary card showing key metadata and simple stats, with conditional formatting for positive/negative change and graceful handling of missing data
-function SummaryCard({ record, history, isLight }) {
+function SummaryCard({ record, history }) {
   const latest = history.length ? history[history.length - 1] : null;
   const first = history[0];
   const avg = history.length ? history.reduce((sum, row) => sum + Number(row.height_mm), 0) / history.length : null;
@@ -976,18 +984,18 @@ function SummaryCard({ record, history, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-4 shadow-[0_18px_48px_-28px_rgba(13,148,136,0.24)] space-y-3 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel p-4 space-y-3"
     >
       <div className="space-y-1">
-        <p className="text-[11px] uppercase tracking-[0.3em] text-primary font-bold">Snapshot</p>
-        <h3 className="text-base font-semibold text-black">{record ? record.id : "Awaiting jar"}</h3>
+        <p className="kicker">Snapshot</p>
+        <h3 className="text-base font-semibold text-dark">{record ? record.id : "Awaiting jar"}</h3>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-2">
         {stats.map((item) => (
-          <div key={item.label} className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
-            <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">{item.label}</p>
-            <p className="text-sm font-semibold text-slate-900 mt-0.5">{item.value}</p>
+          <div key={item.label} className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">{item.label}</p>
+            <p className="text-sm font-semibold text-dark mt-0.5">{item.value}</p>
           </div>
         ))}
       </div>
@@ -995,19 +1003,19 @@ function SummaryCard({ record, history, isLight }) {
   );
 }
 
-function Hero({ isLight }) {
+function Hero() {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel relative overflow-hidden p-8"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 pointer-events-none " />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3">
-        <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Historical view</p>
-        <h1 className="text-3xl font-normal text-black">Jar height history</h1>
-        <p className="text-slate-700 text-sm md:text-base max-w-2xl">
+        <p className="kicker">Historical view</p>
+        <h1 className="title-lg">Jar height history</h1>
+        <p className="text-subtle text-sm md:text-base max-w-2xl">
           Query any Jar ID and review its recorded heights. The line chart uses Firebase data, with dates on the x-axis and height in millimeters on the y-axis.
         </p>
       </div>
@@ -1016,9 +1024,13 @@ function Hero({ isLight }) {
 }
 
 // Backdrop with layered gradients and patterns for visual interest, using pointer-events-none to avoid interfering with interactions
-function Backdrop() {
+function Backdrop({ isLight }) {
   return (
-    <div className="pointer-events-none absolute inset-0 -z-10">
+    <div
+      className={`pointer-events-none absolute inset-0 -z-10 transition-opacity duration-300 ${
+        isLight ? "opacity-100" : "opacity-0"
+      }`}
+    >
       <div className="absolute inset-0 bg-gradient-to-b from-cyan-50 via-white to-emerald-50" />
       <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(6,182,212,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(6,182,212,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(13,148,136,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(6,182,212,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(249,115,22,0.1),transparent_36%)]" />
@@ -1027,9 +1039,11 @@ function Backdrop() {
 }
 
 function EmptyState({ message }) {
-  return <div className="h-full flex items-center justify-center text-sm  text-teal-800 bg-slate-50 rounded-2xl border border-slate-200">{message}
-  
-  </div>;
+  return (
+    <div className="h-full flex items-center justify-center text-sm text-subtle bg-paper/60 rounded-2xl border border-border/35">
+      {message}
+    </div>
+  );
 }
  
 

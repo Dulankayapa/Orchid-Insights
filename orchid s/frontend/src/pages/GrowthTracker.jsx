@@ -3,7 +3,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
 import { ref, onValue, query, limitToLast } from "firebase/database";
-import { useTheme } from "../context/ThemeContext";
 
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -100,8 +99,6 @@ const resolveCurrentHeight = (plant) => {
 };
 
 export default function GrowthTracker() {
-  const { theme } = useTheme();
-  const isLight = theme === "light";
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [plantRecords, setPlantRecords] = useState([]);
   const [plantFetchError, setPlantFetchError] = useState("");
@@ -251,22 +248,20 @@ export default function GrowthTracker() {
   }, [result]);
 
   const predictedPillClass = useMemo(() => {
-    if (!displayLabel) return "border-emerald-100 bg-emerald-50 text-emerald-700";
+    if (!displayLabel) return "border-border/45 bg-paper/70 text-subtle";
     const label = String(displayLabel).toLowerCase();
-    if (label.includes("below")) return "border-amber-200 bg-amber-50 text-amber-800";
-    if (label.includes("within") || label.includes("normal")) return "border-emerald-200 bg-emerald-50 text-emerald-800";
-    if (label.includes("above")) return "border-sky-200 bg-sky-50 text-sky-800";
-    return "border-slate-200 bg-slate-50 text-slate-700";
+    if (label.includes("below")) return "border-accent/25 bg-accent/10 text-accent";
+    if (label.includes("within") || label.includes("normal")) return "border-primary/25 bg-primary/10 text-primary";
+    if (label.includes("above")) return "border-secondary/25 bg-secondary/10 text-secondary";
+    return "border-border/45 bg-paper/70 text-subtle";
   }, [displayLabel]);
 
   return (
-    <div className="space-y-8 relative text-slate-900">
-      <BackgroundGrid />
+    <div className="space-y-8">
       <Hero />
-      <div className="grid lg:grid-cols-5 gap-6 items-start relative">
+      <div className="grid lg:grid-cols-5 gap-6 items-start">
         <div className="lg:col-span-2 space-y-4">
           <FormCard
-            isLight={isLight}
             onSubmit={submit}
             jarId={jarId}
             setJarId={setJarId}
@@ -285,11 +280,10 @@ export default function GrowthTracker() {
             demoIdHint={demoIdHint}
             plantFetchError={plantFetchError}
           />
-          <PlantHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
-          <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError} />
+          <PlantHistoryCard plantRecord={plantRecord} demoIdHint={demoIdHint} />
+          <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
-          isLight={isLight}
           result={result}
           jarId={analyzedJarId}
           currentHeight={analyzedHeight}
@@ -314,35 +308,24 @@ function normalizeSensor(val) {
   };
 }
 
-function BackgroundGrid() {
-  return (
-    <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 bg-gradient-to-b from-emerald-50 via-white to-cyan-50" />
-      <div className="absolute inset-0 opacity-70 bg-[linear-gradient(90deg,rgba(13,148,136,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(6,182,212,0.06)_1px,transparent_1px)] bg-[size:56px_56px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(6,182,212,0.15),transparent_32%),radial-gradient(circle_at_78%_12%,rgba(13,148,136,0.15),transparent_28%),radial-gradient(circle_at_50%_82%,rgba(6,182,212,0.1),transparent_36%)]" />
-    </div>
-  );
-}
-
 function Hero() {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className="relative overflow-hidden rounded-3xl border border-teal-100 bg-white/90 p-8 shadow-[0_25px_60px_-25px_rgba(13,148,136,0.15)]"
+      className="panel relative overflow-hidden"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-teal-50 via-emerald-50 to-cyan-50 pointer-events-none" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3 max-w-3xl">
-        <p className="text-xs uppercase tracking-[0.3em] text-primary">Growth insight</p>
-        <h2 className="text-3xl font-semibold leading-tight text-slate-900">Orchid growth tracker</h2>
+        <p className="kicker">Growth insight</p>
+        <h2 className="title-lg">Orchid growth tracker</h2>
       </div>
     </motion.div>
   );
 }
 
 function FormCard({
-  isLight,
   onSubmit,
   jarId,
   setJarId,
@@ -367,12 +350,12 @@ function FormCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`space-y-6 rounded-3xl text-slate-900 p-6 shadow-[0_28px_72px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-6"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-primary">Input</p>
-          <h3 className="text-xl font-semibold mt-1 text-slate-900">Enter plant details</h3>
+          <p className="kicker">Input</p>
+          <h3 className="text-lg font-semibold mt-1 text-dark">Enter plant details</h3>
         </div>
         <StatusDot online />
       </div>
@@ -383,7 +366,7 @@ function FormCard({
             value={jarId}
             onChange={(e) => setJarId(e.target.value)}
             placeholder={demoIds.length ? `e.g. ${demoIds[0]}` : "Enter Jar ID"}
-            className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary transition"
+            className="input-shell"
           />
         </Field>
         <Field label="Planting date (auto from DB)">
@@ -393,7 +376,7 @@ function FormCard({
             readOnly
             disabled
             placeholder="Choose a Jar/Plant ID to load"
-            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            className="input-shell bg-paper/70 text-subtle"
           />
         </Field>
         <Field label="Current height (mm) *">
@@ -404,7 +387,7 @@ function FormCard({
             readOnly
             disabled
             placeholder="Auto-filled from plant record"
-            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            className="input-shell bg-paper/70 text-subtle"
           />
         </Field>
         <Field label="Age (days) - optional override">
@@ -414,7 +397,7 @@ function FormCard({
             readOnly
             disabled
             placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : "Auto-calculated once ID loads"}
-            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            className="input-shell bg-paper/70 text-subtle"
           />
         </Field>
       </div>
@@ -429,14 +412,14 @@ function FormCard({
           Plant records unavailable: {plantFetchError}
         </p>
       )}
-      <p className="text-xs text-slate-600">Today: {today}</p>
+      <p className="text-xs text-subtle">Today: {today}</p>
       {plantRecord && (
-        <p className="text-xs text-teal-800 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">
+        <p className="text-xs text-primary rounded-lg border border-primary/25 bg-primary/10 px-3 py-2">
           Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
         </p>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-cyan-50/60 border border-cyan-100 rounded-2xl p-3">
+      <div className="panel-muted grid sm:grid-cols-2 gap-3 p-3 text-xs text-subtle">
         <p>Tip: current date defaults to today automatically.</p>
         <p>Units: millimeters.</p>
       </div>
@@ -444,7 +427,7 @@ function FormCard({
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex items-center justify-center w-full gap-2 rounded-xl bg-gradient-to-r from-primary to-cyan-500 text-white font-semibold py-3 shadow-glow disabled:opacity-60 disabled:cursor-not-allowed"
+        className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed"
       >
         {loading ? (
           <span className="flex items-center gap-2">
@@ -461,7 +444,7 @@ function FormCard({
             initial={{ opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 8 }}
-            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+            className="rounded-xl border border-rose-200/60 bg-rose-500/10 px-4 py-3 text-sm text-rose-700"
           >
             Error: {error}
           </motion.div>
@@ -471,22 +454,22 @@ function FormCard({
   );
 }
 
-function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities, isLight }) {
+function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayLabel, displayProbabilities }) {
   return (
     <div className="lg:col-span-3 space-y-6">
       <motion.div
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className={`rounded-3xl p-6 space-y-6 shadow-[0_28px_72px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
+        className="panel space-y-6"
       >
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-[0.3em] text-primary">Prediction</p>
-            <h3 className="text-xl font-semibold text-slate-900">Model output</h3>
+            <p className="kicker">Prediction</p>
+            <h3 className="text-lg font-semibold text-dark">Model output</h3>
           </div>
-          <div className="flex items-center gap-2 text-xs text-teal-600">
-            <span className="h-2 w-2 rounded-full bg-teal-400 shadow shadow-teal-400/40" />
+          <div className="flex items-center gap-2 rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs text-primary">
+            <span className="h-2 w-2 rounded-full bg-primary shadow shadow-primary/40" />
             Live from FastAPI
           </div>
         </div>
@@ -494,7 +477,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
         {!result && (
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             {[1, 2, 3].map((item) => (
-              <div key={item} className="h-24 rounded-2xl border border-teal-100 bg-teal-50/60 animate-pulse" />
+              <div key={item} className="h-24 rounded-2xl border border-border/35 bg-paper/60 animate-pulse" />
             ))}
           </div>
         )}
@@ -507,11 +490,11 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
                 {displayLabel || "-"}
               </div>
               {jarId && (
-                <div className="text-xs text-slate-600 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
+                <div className="text-xs text-subtle px-3 py-1 rounded-full border border-border/45 bg-paper/70">
                   Jar/Plant: {jarId}
                 </div>
               )}
-              <div className="text-xs text-slate-600 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
+              <div className="text-xs text-subtle px-3 py-1 rounded-full border border-border/45 bg-paper/70">
                 Age: {result.age_days} days
               </div>
             </div>
@@ -527,8 +510,8 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
             </div>
 
             {displayProbabilities && (
-              <div className="rounded-2xl border border-teal-100 bg-gradient-to-br from-white via-teal-50/60 to-cyan-50 p-5 space-y-4">
-                <p className="text-sm text-slate-800 font-semibold">Probability breakdown</p>
+              <div className="panel-muted p-5 space-y-4">
+                <p className="text-sm text-dark font-semibold">Probability breakdown</p>
                 <div className="grid gap-4">
                   {Object.entries(displayProbabilities).map(([label, prob]) => (
                     <ProbabilityBar key={label} label={label} value={prob} />
@@ -537,7 +520,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
               </div>
             )}
 
-            <div className="rounded-2xl border border-teal-100 bg-white/90 px-5 py-4 text-sm text-slate-700">
+            <div className="panel-muted px-5 py-4 text-sm text-subtle">
               The model compares age-adjusted expected height range with your measurement to classify growth. Use the probability spread to judge confidence and watch for consistent shifts over time.
             </div>
           </div>
@@ -547,7 +530,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
   );
 }
 // SensorPanel component to display live Firebase data and recent history
-function SensorPanel({ latest, history, error, isLight }) {
+function SensorPanel({ latest, history, error }) {
   const recent = (history || []).slice(0, 8);
   const formatTs = (ts) => {
     const d = new Date(ts);
@@ -559,46 +542,46 @@ function SensorPanel({ latest, history, error, isLight }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.08 }}
-      className={`rounded-3xl p-5 space-y-4 shadow-[0_24px_60px_-30px_rgba(13,148,136,0.26)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-primary">Sensor feed</p>
-          <h4 className="text-lg font-semibold text-slate-900">Live Firebase data</h4>
+          <p className="kicker">Sensor feed</p>
+          <h4 className="text-lg font-semibold text-dark">Live Firebase data</h4>
         </div>
-        <span className="text-xs text-teal-700 px-3 py-1 rounded-full border border-teal-100 bg-teal-50">
+        <span className="text-xs text-primary px-3 py-1 rounded-full border border-primary/25 bg-primary/10">
           {latest ? "Streaming" : "Waiting..."}
         </span>
       </div>
 
       {error && (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">Sensor error: {error}</div>
+        <div className="rounded-xl border border-rose-200/60 bg-rose-500/10 px-3 py-2 text-sm text-rose-700">Sensor error: {error}</div>
       )}
 
       {latest ? (
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} °C`} />
+          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} \u00b0C`} />
           <SensorStat label="Humidity" value={`${latest.humidity?.toFixed?.(1) ?? latest.humidity ?? "-"} %`} />
           <SensorStat label="Light" value={`${latest.lux ?? "-"} lx`} />
           <SensorStat label="MQ135" value={latest.mq135 ?? "-"} />
           <SensorStat label="Timestamp" value={formatTs(latest.timestamp)} className="col-span-2" />
         </div>
       ) : (
-        <p className="text-sm text-slate-700">No live sensor reading yet. Confirm Firebase env vars or data feed.</p>
+        <p className="text-sm text-subtle">No live sensor reading yet. Confirm Firebase env vars or data feed.</p>
       )}
 
       {recent.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.2em] text-primary">Recent logs</p>
+          <p className="kicker">Recent logs</p>
           <div className="space-y-2 max-h-56 overflow-auto pr-1">
             {recent.map((row, idx) => (
               <div
                 key={`${row.timestamp}-${idx}`}
-                className="flex items-center justify-between rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-xs text-slate-800"
+                className="flex items-center justify-between rounded-xl border border-border/45 bg-paper/70 px-3 py-2 text-xs text-dark"
               >
-                <span className="text-slate-600">{formatTs(row.timestamp)}</span>
-                <span className="text-slate-900">
-                  {row.temperature ?? "-"}°C · {row.humidity ?? "-"}% · {row.lux ?? "-"} lx · MQ {row.mq135 ?? "-"}
+                <span className="text-subtle">{formatTs(row.timestamp)}</span>
+                <span className="text-dark">
+                  {row.temperature ?? "-"}\u00b0C \u00b7 {row.humidity ?? "-"}% \u00b7 {row.lux ?? "-"} lx \u00b7 MQ {row.mq135 ?? "-"}
                 </span>
               </div>
             ))}
@@ -610,21 +593,21 @@ function SensorPanel({ latest, history, error, isLight }) {
 }
 
 // PlantHistoryCard component to display plant history from Firebase-backed data
-function PlantHistoryCard({ plantRecord, isLight, demoIdHint }) {
+function PlantHistoryCard({ plantRecord, demoIdHint }) {
   const heights = plantRecord?.heights || [];
   return (
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(13,148,136,0.26)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Plant history</p>
-          <h4 className="text-lg font-semibold text-slate-900">Plant profile & history</h4>
+          <p className="kicker">Plant history</p>
+          <h4 className="text-lg font-semibold text-dark">Plant profile & history</h4>
         </div>
-        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">Firebase</span>
+        <span className="text-xs text-primary px-3 py-1 rounded-full border border-primary/25 bg-primary/10">Firebase</span>
       </div>
 
       {plantRecord && heights.length ? (
@@ -632,30 +615,31 @@ function PlantHistoryCard({ plantRecord, isLight, demoIdHint }) {
           {heights.map((row) => (
             <div
               key={`${plantRecord.id}-${row.date}`}
-              className="flex items-center justify-between rounded-xl border border-emerald-100 bg-emerald-50/60 px-3 py-2 text-sm text-slate-800"
+              className="flex items-center justify-between rounded-xl border border-border/45 bg-paper/70 px-3 py-2 text-sm text-dark"
             >
-              <span className="text-slate-600">{row.date}</span>
-              <span className="font-semibold text-slate-900">{row.height_mm} mm</span>
+              <span className="text-subtle">{row.date}</span>
+              <span className="font-semibold text-dark">{row.height_mm} mm</span>
             </div>
           ))}
         </div>
       ) : plantRecord ? (
-        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
+        <div className="panel-muted px-4 py-3 text-sm text-subtle">
           No height history found for this Jar ID yet.
         </div>
       ) : (
-        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
+        <div className="panel-muted px-4 py-3 text-sm text-subtle">
           Enter a Jar/Plant ID to auto-fill planting date and latest height. Known IDs: {demoIdHint || "n/a"}.
         </div>
       )}
     </motion.div>
   );
 }
+
 // Reusable Field component for form inputs
 function Field({ label, children }) {
   return (
-    <label className="block text-sm text-slate-800 space-y-2">
-      <span className="text-slate-700">{label}</span>
+    <label className="block text-sm text-subtle space-y-2">
+      <span className="text-dark">{label}</span>
       {children}
     </label>
   );
@@ -663,10 +647,10 @@ function Field({ label, children }) {
 
 function StatCard({ title, value, hint }) {
   return (
-    <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
-      <p className="text-xs uppercase tracking-[0.25em] text-emerald-500">{title}</p>
-      <p className="text-2xl font-semibold mt-2 text-slate-900">{value}</p>
-      {hint && <p className="text-xs text-slate-600 mt-1">{hint}</p>}
+    <div className="panel-muted p-4">
+      <p className="text-[11px] uppercase tracking-[0.22em] font-semibold text-primary/85">{title}</p>
+      <p className="text-2xl font-semibold mt-2 text-dark">{value}</p>
+      {hint && <p className="text-xs text-subtle mt-1">{hint}</p>}
     </div>
   );
 }
@@ -675,16 +659,16 @@ function ProbabilityBar({ label, value }) {
   const pct = Math.max(0, Math.min(100, (value || 0) * 100));
   return (
     <div className="space-y-2">
-      <div className="flex items-center justify-between text-xs text-slate-700">
-        <span className="font-semibold capitalize">{label.replace(/_/g, " ")}</span>
-        <span className="text-slate-500">{pct.toFixed(1)}%</span>
+      <div className="flex items-center justify-between text-xs text-subtle">
+        <span className="font-semibold text-dark capitalize">{label.replace(/_/g, " ")}</span>
+        <span>{pct.toFixed(1)}%</span>
       </div>
-      <div className="h-2 rounded-full bg-emerald-100 overflow-hidden">
+      <div className="h-2 rounded-full bg-border/30 overflow-hidden">
         <motion.div
           initial={{ width: 0 }}
           animate={{ width: `${pct}%` }}
           transition={{ duration: 0.35 }}
-          className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-rose-300 to-sky-400 shadow-[0_0_18px_rgba(16,185,129,0.25)]"
+          className="h-full rounded-full bg-gradient-to-r from-primary via-secondary to-accent shadow-[0_0_18px_rgba(13,148,136,0.25)]"
         />
       </div>
     </div>
@@ -694,7 +678,7 @@ function ProbabilityBar({ label, value }) {
 function Spinner() {
   return (
     <motion.span
-      className="inline-flex h-4 w-4 rounded-full border-2 border-slate-900 border-t-slate-900/20"
+      className="inline-flex h-4 w-4 rounded-full border-2 border-white border-t-white/30"
       animate={{ rotate: 360 }}
       transition={{ repeat: Infinity, duration: 0.8, ease: "linear" }}
     />
@@ -703,8 +687,8 @@ function Spinner() {
 // StatusDot component to indicate API connection status
 function StatusDot({ online }) {
   return (
-    <div className="flex items-center gap-2 text-xs text-emerald-700">
-      <span className={`h-2.5 w-2.5 rounded-full ${online ? "bg-emerald-400 shadow-[0_0_10px_rgba(16,185,129,0.7)]" : "bg-slate-300"}`} />
+    <div className="flex items-center gap-2 text-xs text-primary">
+      <span className={`h-2.5 w-2.5 rounded-full ${online ? "bg-primary shadow-[0_0_10px_rgba(13,148,136,0.7)]" : "bg-border"}`} />
       {online ? "API ready" : "Offline"}
     </div>
   );
@@ -712,9 +696,9 @@ function StatusDot({ online }) {
 
 function SensorStat({ label, value, className = "" }) {
   return (
-    <div className={`rounded-xl border border-emerald-100 bg-white px-3 py-2 ${className}`}>
-      <p className="text-[11px] uppercase tracking-[0.2em] text-emerald-500">{label}</p>
-      <p className="text-sm font-semibold text-slate-900 mt-1">{value}</p>
+    <div className={`panel-muted px-3 py-2 ${className}`}>
+      <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">{label}</p>
+      <p className="text-sm font-semibold text-dark mt-1">{value}</p>
     </div>
   );
 }

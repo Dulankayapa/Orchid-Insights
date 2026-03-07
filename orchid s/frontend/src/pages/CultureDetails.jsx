@@ -2,15 +2,11 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { onValue, ref, set } from "firebase/database";
 import { db } from "../lib/firebase";
-import { useTheme } from "../context/ThemeContext";
 
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
 
 export default function CultureDetails() {
-  const { theme } = useTheme();
-  const isLight = theme === "light";
-
   const [form, setForm] = useState({
     jarId: "",
     cultureDate: "",
@@ -164,14 +160,12 @@ export default function CultureDetails() {
   };
 
   return (
-    <div className="relative space-y-8 text-slate-900">
-      <Backdrop />
-      <Hero isLight={isLight} />
+    <div className="space-y-8">
+      <Hero />
 
       <div className="grid lg:grid-cols-3 gap-6 relative">
         <div className="lg:col-span-2 space-y-6">
           <FormCard
-            isLight={isLight}
             form={form}
             onFieldChange={handleField}
             onRecultureChange={handleRecultureChange}
@@ -186,33 +180,32 @@ export default function CultureDetails() {
             saving={saving}
           />
         </div>
-        <JarList isLight={isLight} entries={entries} selectedId={selectedId} onSelect={loadEntry} />
+        <JarList entries={entries} selectedId={selectedId} onSelect={loadEntry} />
       </div>
 
-      {selectedEntry && <Timeline isLight={isLight} entry={selectedEntry} />}
+      {selectedEntry && <Timeline entry={selectedEntry} />}
     </div>
   );
 }
 
-function Hero({ isLight }) {
+function Hero() {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel relative overflow-hidden"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 pointer-events-none" />
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3">
-        <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Re-culture planner</p>
-        <h1 className="text-3xl font-semibold text-slate-900">Jar Meta Data</h1>
+        <p className="kicker">Re-culture planner</p>
+        <h1 className="title-lg">Jar Meta Data</h1>
       </div>
     </motion.div>
   );
 }
 
 function FormCard({
-  isLight,
   form,
   onFieldChange,
   onRecultureChange,
@@ -232,14 +225,14 @@ function FormCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`space-y-6 rounded-3xl p-6 shadow-[0_30px_78px_-30px_rgba(13,148,136,0.32)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-6"
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Jar details</p>
-          <h2 className="text-xl font-semibold text-slate-900">Create or update a jar</h2>
+          <p className="kicker">Jar details</p>
+          <h2 className="text-lg font-semibold text-dark">Create or update a jar</h2>
         </div>
-        <span className="text-xs text-slate-500">Firebase</span>
+        <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
@@ -248,7 +241,7 @@ function FormCard({
             value={form.jarId}
             onChange={onFieldChange("jarId")}
             placeholder="e.g. Jar-42"
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary"
+            className="input-shell"
           />
         </Field>
         <Field label="Culture date *">
@@ -256,16 +249,16 @@ function FormCard({
             type="date"
             value={form.cultureDate}
             onChange={onFieldChange("cultureDate")}
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary"
+            className="input-shell"
           />
-          <p className="text-[11px] text-slate-500 mt-1">Entry date can differ from planting/culture date.</p>
+          <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
         </Field>
         <Field label="Rack number *">
           <input
             value={form.rackNo}
             onChange={onFieldChange("rackNo")}
             placeholder="Rack or shelf location"
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary"
+            className="input-shell"
           />
         </Field>
         <Field label="Orchid type *">
@@ -273,7 +266,7 @@ function FormCard({
             value={form.orchidType}
             onChange={onFieldChange("orchidType")}
             placeholder="e.g. Phalaenopsis"
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary"
+            className="input-shell"
           />
         </Field>
         <Field label="Nutrition / medium *">
@@ -282,18 +275,18 @@ function FormCard({
             value={form.nutrition}
             onChange={onFieldChange("nutrition")}
             placeholder="e.g. MS + 3% sucrose + BA. Add additives, hormones, notes."
-            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary/60 focus:border-primary min-h-[96px] resize-vertical"
+            className="input-shell min-h-[96px] resize-y"
           />
         </Field>
       </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-slate-900">Re-culture dates (optional)</p>
+          <p className="text-sm font-semibold text-dark">Re-culture dates (optional)</p>
           <button
             type="button"
             onClick={addRecultureRow}
-            className="text-xs rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-primary hover:border-primary hover:bg-primary/10 transition"
+            className="btn-soft text-xs px-3 py-1.5"
           >
             Add re-culture details
           </button>
@@ -301,38 +294,38 @@ function FormCard({
 
         <div className="space-y-3">
           {form.recultures.length === 0 && (
-            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-600">
+            <div className="panel-muted border-dashed px-4 py-3 text-xs text-subtle">
               No re-culture dates yet. You can save the jar now and add dates later.
             </div>
           )}
           {form.recultures.map((row, idx) => (
             <div
               key={idx}
-              className={`grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-center rounded-2xl border px-4 py-3 shadow-sm ${isLight ? "border-emerald-100 bg-slate-50/60" : "border-emerald-100 bg-slate-50/60"}`}
+              className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-center rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm"
             >
               <div className="space-y-1">
-                <label className="text-xs text-slate-600">Re-culture date {idx + 1}</label>
+                <label className="text-xs text-subtle">Re-culture date {idx + 1}</label>
                 <input
                   type="date"
                   value={row.date}
                   onChange={(e) => onRecultureChange(idx, "date", e.target.value)}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                  className="input-shell py-2"
                 />
               </div>
               <div className="space-y-1">
-                <label className="text-xs text-slate-600">Notes (optional)</label>
+                <label className="text-xs text-subtle">Notes (optional)</label>
                 <input
                   value={row.note || ""}
                   onChange={(e) => onRecultureChange(idx, "note", e.target.value)}
                   placeholder="Media change, split count, etc."
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary"
+                  className="input-shell py-2"
                 />
               </div>
               <div className="flex justify-end sm:justify-center items-center h-full">
                 <button
                   type="button"
                   onClick={() => removeRecultureRow(idx)}
-                  className="text-xs text-rose-700 border border-rose-200 bg-rose-50 px-3 py-1.5 rounded-lg hover:border-rose-300 transition"
+                  className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-300 transition"
                 >
                   Remove
                 </button>
@@ -346,24 +339,24 @@ function FormCard({
         <button
           type="submit"
           disabled={saving}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-cyan-500 text-white font-semibold px-4 py-3 shadow-glow disabled:opacity-60 disabled:cursor-not-allowed"
+          className="btn-primary px-4 py-3 disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {saving ? "Saving..." : "Save jar"}
         </button>
         <button
           type="button"
           onClick={clearForm}
-          className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 py-3 text-sm text-slate-700 hover:border-slate-300"
+          className="btn-soft px-4 py-3"
         >
           Clear
         </button>
       </div>
 
       {loadingEntries && !entriesError && (
-        <p className="text-xs text-slate-500">Loading Firebase entries...</p>
+        <p className="text-xs text-subtle">Loading Firebase entries...</p>
       )}
       {entriesError && (
-        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2">
           Firebase error: {entriesError}
         </p>
       )}
@@ -374,7 +367,7 @@ function FormCard({
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
-            className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800"
+            className="rounded-xl border border-primary/25 bg-primary/10 px-4 py-3 text-sm text-primary"
           >
             {status}
           </motion.div>
@@ -386,7 +379,7 @@ function FormCard({
             initial={{ opacity: 0, y: 6 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
-            className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700"
+            className="rounded-xl border border-rose-200/60 bg-rose-500/10 px-4 py-3 text-sm text-rose-700"
           >
             {error}
           </motion.div>
@@ -396,7 +389,7 @@ function FormCard({
   );
 }
 
-function JarList({ entries, selectedId, onSelect, isLight }) {
+function JarList({ entries, selectedId, onSelect }) {
   const [query, setQuery] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
 
@@ -431,45 +424,41 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(13,148,136,0.28)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-slate-500">Jars</p>
-          <h3 className="text-lg font-semibold text-slate-900">Saved records</h3>
+          <p className="kicker">Jars</p>
+          <h3 className="text-lg font-semibold text-dark">Saved records</h3>
         </div>
-        <span className="text-xs text-slate-500">{entries.length} total</span>
+        <span className="text-xs text-subtle">{entries.length} total</span>
       </div>
 
       <form onSubmit={handleSearch} className="space-y-2">
-        <div
-          className={`flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-sm ${
-            isLight ? "border-emerald-100 bg-slate-50" : "border-emerald-100 bg-slate-50/60"
-          }`}
-        >
+        <div className="flex items-center gap-2">
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search Jar ID (e.g. Jar-12)"
-            className="w-full bg-transparent text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none"
+            className="input-shell flex-1"
           />
           {query && (
             <button
               type="button"
               onClick={() => setQuery("")}
-              className="text-xs text-slate-500 hover:text-slate-700 transition"
+              className="btn-soft text-xs px-3 py-1.5"
             >
               Clear
             </button>
           )}
           <button
             type="submit"
-            className="rounded-xl bg-gradient-to-r from-primary to-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+            className="btn-primary text-xs px-3 py-1.5"
           >
             Search
           </button>
         </div>
-        {searchMessage && <p className="text-[11px] text-slate-600 px-1">{searchMessage}</p>}
+        {searchMessage && <p className="text-[11px] text-subtle px-1">{searchMessage}</p>}
       </form>
 
       {entries.length ? (
@@ -477,30 +466,31 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
           <div className="space-y-2 max-h-[24rem] overflow-auto pr-1">
             {filteredEntries.map((entry) => {
               const nextReculture = entry.recultures.find((r) => new Date(r.date) >= new Date());
+              const isSelected = selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase();
               return (
                 <button
                   key={entry.jarId}
                   onClick={() => onSelect(entry)}
                   className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm ${
-                    selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase()
-                      ? "border-emerald-300 bg-primary/10 text-primary shadow-md"
-                      : `${isLight ? "border-emerald-100 bg-slate-50" : "border-emerald-100 bg-slate-50/60"} hover:border-emerald-300 hover:bg-primary/5 hover:shadow-md`
+                    isSelected
+                      ? "border-primary/35 bg-primary/10 text-primary shadow-md"
+                      : "border-border/45 bg-paper/70 text-dark hover:border-primary/35 hover:bg-primary/5"
                   }`}
                 >
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-sm font-semibold">{entry.jarId}</p>
-                      <p className="text-xs text-slate-600">
+                      <p className="text-xs text-subtle">
                         Culture: {entry.cultureDate} - Rack: {entry.rackNo || "---"} - {entry.orchidType || "Type N/A"}
                       </p>
-                      <p className="text-[11px] text-slate-500">Nutrition: {entry.nutrition || "Not noted"}</p>
+                      <p className="text-[11px] text-subtle">Nutrition: {entry.nutrition || "Not noted"}</p>
                     </div>
-                    <span className="text-[11px] uppercase tracking-[0.16em] text-slate-500">
+                    <span className="text-[11px] uppercase tracking-[0.16em] text-subtle">
                       {entry.recultures.length} dates
                     </span>
                   </div>
                   {nextReculture && (
-                    <p className="text-xs text-emerald-700 mt-1">
+                    <p className="text-xs text-primary mt-1">
                       Next re-culture: {nextReculture.date}
                       {nextReculture.note ? ` - ${nextReculture.note}` : ""}
                     </p>
@@ -519,61 +509,55 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
   );
 }
 
-function Timeline({ entry, isLight }) {
+function Timeline({ entry }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_26px_70px_-30px_rgba(13,148,136,0.28)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
+      className="panel space-y-4"
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.24em] text-emerald-500">Timeline</p>
-          <h3 className="text-lg font-semibold text-slate-900">Re-culture trail for {entry.jarId}</h3>
+          <p className="kicker">Timeline</p>
+          <h3 className="text-lg font-semibold text-dark">Re-culture trail for {entry.jarId}</h3>
         </div>
-        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-200 bg-emerald-50">
+        <span className="text-xs text-primary px-3 py-1 rounded-full border border-primary/25 bg-primary/10">
           {entry.recultures.length} planned
         </span>
       </div>
 
       {entry.recultures.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div className="panel-muted border-dashed px-4 py-3 text-sm text-subtle">
           No re-culture dates logged yet. Add them later without changing the jar ID.
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {entry.recultures.map((row, idx) => (
-            <div key={`${entry.jarId}-${row.date}-${idx}`} className="rounded-2xl border border-emerald-100 bg-emerald-50/70 px-4 py-3">
-              <p className="text-xs uppercase tracking-[0.2em] text-emerald-600">Re-culture {idx + 1}</p>
-              <p className="text-lg font-semibold text-slate-900 mt-1">{row.date}</p>
-              {row.note ? <p className="text-sm text-slate-700 mt-1">{row.note}</p> : <p className="text-sm text-slate-500 mt-1">No notes</p>}
+            <div key={`${entry.jarId}-${row.date}-${idx}`} className="panel-muted px-4 py-3">
+              <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">Re-culture {idx + 1}</p>
+              <p className="text-lg font-semibold text-dark mt-1">{row.date}</p>
+              {row.note ? (
+                <p className="text-sm text-subtle mt-1">{row.note}</p>
+              ) : (
+                <p className="text-sm text-subtle mt-1">No notes</p>
+              )}
             </div>
           ))}
         </div>
       )}
 
-      <div className="rounded-2xl border border-emerald-100 bg-white px-4 py-3 text-sm text-slate-700">
+      <div className="panel-muted px-4 py-3 text-sm text-subtle">
         Culture date: {entry.cultureDate} - Rack: {entry.rackNo || "---"} - Orchid: {entry.orchidType || "Not specified"} - Nutrition: {entry.nutrition || "Not noted"}
       </div>
     </motion.div>
   );
 }
 
-function Backdrop() {
-  return (
-    <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 bg-gradient-to-b from-cyan-50 via-white to-emerald-50" />
-      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(6,182,212,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(6,182,212,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(13,148,136,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(6,182,212,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(249,115,22,0.1),transparent_36%)]" />
-    </div>
-  );
-}
-
 function Field({ label, children }) {
   return (
-    <label className="block text-sm text-slate-800 space-y-2">
-      <span className="text-slate-700">{label}</span>
+    <label className="block text-sm text-subtle space-y-2">
+      <span className="text-dark">{label}</span>
       {children}
     </label>
   );
@@ -581,7 +565,7 @@ function Field({ label, children }) {
 
 function EmptyState({ message }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-8 text-center text-sm text-slate-600">
+    <div className="panel-muted px-4 py-8 text-center text-sm text-subtle">
       {message}
     </div>
   );
