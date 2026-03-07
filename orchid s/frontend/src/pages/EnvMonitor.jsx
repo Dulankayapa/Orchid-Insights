@@ -32,6 +32,44 @@ const EnvMonitor = () => {
   const safeHistory = Array.isArray(history)
     ? history.filter((row) => row && Number.isFinite(Number(row.ts ?? row.timestamp)))
     : [];
+  const recentReadings = safeHistory.slice(-12).reverse();
+
+  const toNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
+  const formatDate = (timestamp) => {
+    const ts = toNumber(timestamp);
+    if (ts === null) return '--';
+    return new Date(ts).toLocaleDateString([], {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit'
+    });
+  };
+
+  const formatTime = (timestamp) => {
+    const ts = toNumber(timestamp);
+    if (ts === null) return '--';
+    return new Date(ts).toLocaleTimeString([], {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+  };
+
+  const formatFixed = (value, unit, digits = 1) => {
+    const num = toNumber(value);
+    if (num === null) return '--';
+    return `${num.toFixed(digits)} ${unit}`;
+  };
+
+  const formatInt = (value, unit) => {
+    const num = toNumber(value);
+    if (num === null) return '--';
+    return `${Math.round(num)} ${unit}`;
+  };
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
@@ -161,30 +199,78 @@ const EnvMonitor = () => {
         </motion.div>
       )}
 
-      {/* Key Metrics Grid */}
-      <section>
-        <div className="flex items-center gap-2 mb-4">
-          <h2 className="text-xl font-bold text-dark">Current Status</h2>
-        </div>
-        <SectionErrorBoundary>
-          <OverviewCards data={latest} lastUpdate={lastUpdate} />
-        </SectionErrorBoundary>
-      </section>
+      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_340px] gap-6 items-start">
+        <div className="space-y-6">
+          {/* Key Metrics Grid */}
+          <section>
+            <div className="flex items-center gap-2 mb-4">
+              <h2 className="text-xl font-bold text-dark">Current Status</h2>
+            </div>
+            <SectionErrorBoundary>
+              <OverviewCards data={latest} lastUpdate={lastUpdate} />
+            </SectionErrorBoundary>
+          </section>
 
-      {/* Charts */}
-      <section className="panel">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-xl font-bold text-dark">Analytics Trends</h2>
-          <select className="bg-paper border border-border text-sm font-medium rounded-lg px-3 py-1.5 text-subtle outline-none focus:ring-2 focus:ring-primary/20">
-            <option>Last Hour</option>
-            <option>Last 6 Hours</option>
-            <option>Last 24 Hours</option>
-          </select>
+          {/* Charts */}
+          <section className="panel">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-xl font-bold text-dark">Analytics Trends</h2>
+              <select className="bg-paper border border-border text-sm font-medium rounded-lg px-3 py-1.5 text-subtle outline-none focus:ring-2 focus:ring-primary/20">
+                <option>Last Hour</option>
+                <option>Last 6 Hours</option>
+                <option>Last 24 Hours</option>
+              </select>
+            </div>
+            <SectionErrorBoundary>
+              <MonitorCharts history={safeHistory} />
+            </SectionErrorBoundary>
+          </section>
         </div>
-        <SectionErrorBoundary>
-          <MonitorCharts history={safeHistory} />
-        </SectionErrorBoundary>
-      </section>
+
+        <aside className="panel xl:sticky xl:top-4">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-bold text-dark">Reading Data</h2>
+            <span className="text-xs text-subtle">{recentReadings.length} latest</span>
+          </div>
+
+          {recentReadings.length === 0 ? (
+            <p className="text-sm text-subtle">No sensor readings yet.</p>
+          ) : (
+            <div className="space-y-3 max-h-[760px] overflow-y-auto pr-1">
+              {recentReadings.map((reading, index) => {
+                const readingTs = reading.timestamp ?? reading.ts;
+                return (
+                  <div
+                    key={`${readingTs}-${index}`}
+                    className="rounded-xl border border-border/80 bg-paper/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3 mb-2">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-subtle">
+                        Sensor reading
+                      </p>
+                      <div className="text-right">
+                        <p className="text-xs font-medium text-dark">{formatTime(readingTs)}</p>
+                        <p className="text-[11px] text-subtle">{formatDate(readingTs)}</p>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
+                      <p className="text-subtle">Temp</p>
+                      <p className="text-dark font-medium">{formatFixed(reading.temperature, 'C', 1)}</p>
+                      <p className="text-subtle">Humidity</p>
+                      <p className="text-dark font-medium">{formatFixed(reading.humidity, '%', 1)}</p>
+                      <p className="text-subtle">Light</p>
+                      <p className="text-dark font-medium">{formatInt(reading.lux, 'lx')}</p>
+                      <p className="text-subtle">Air (MQ135)</p>
+                      <p className="text-dark font-medium">{formatInt(reading.mq135, 'AQI')}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </aside>
+      </div>
 
     </div>
   );
