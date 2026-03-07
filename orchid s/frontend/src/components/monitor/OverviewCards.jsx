@@ -1,40 +1,20 @@
 ﻿import React from 'react';
 import { motion } from 'framer-motion';
 
-const LIMITS = {
-    temperature: { min: 18, max: 35 },
-    humidity: { min: 40, max: 80 },
-    lux: { min: 50, max: 800 },
-    mq135: { min: 0, max: 2500 }
-};
+const OverviewCards = ({ data, lastUpdate }) => {
+    if (!data) return (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map(i => (
+                <div key={i} className="bg-white/80 animate-pulse rounded-2xl h-32 border border-slate-100 shadow-sm" />
+            ))}
+        </div>
+    );
 
-const formatFixed = (value, digits = 1) => {
-    if (value === undefined || value === null || Number.isNaN(Number(value))) return '--';
-    return Number(value).toFixed(digits);
-};
-
-const formatInt = (value) => {
-    if (value === undefined || value === null || Number.isNaN(Number(value))) return '--';
-    return String(Math.round(Number(value)));
-};
-
-const getLevel = (value, limits) => {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return 'unknown';
-    if (limits?.min !== undefined && n < limits.min) return 'low';
-    if (limits?.max !== undefined && n > limits.max) return 'high';
-    return 'safe';
-};
-
-const LEVEL_STYLES = {
-    safe: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Safe' },
-    low: { dot: 'bg-rose-500', text: 'text-rose-600', label: 'Low' },
-    high: { dot: 'bg-blue-500', text: 'text-blue-600', label: 'High' },
-    unknown: { dot: 'bg-slate-400', text: 'text-slate-500', label: 'Waiting' }
-};
-
-const OverviewCards = ({ data }) => {
-    if (!data) return <div className="text-slate-500">Waiting for data...</div>;
+    const formatTime = (ts) => {
+        if (!ts) return '';
+        const date = new Date(ts);
+        return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
 
     const cards = [
         {
@@ -76,38 +56,53 @@ const OverviewCards = ({ data }) => {
     ];
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            {cards.map((card, idx) => (
-                <motion.div
-                    key={idx}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: idx * 0.1 }}
-                    className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative overflow-hidden"
-                >
-                    <div className={`absolute top-0 right-0 p-4 opacity-10 text-6xl ${card.color}`}>
-                        {card.icon}
-                    </div>
-
-                    <div>
-                        <div className="flex items-center gap-2 mb-2">
-                            <span className={`p-2 rounded-lg ${card.bg} ${card.color} text-lg`}>{card.icon}</span>
-                            <span className="text-slate-500 font-medium text-sm uppercase tracking-wider">{card.title}</span>
+        <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {cards.map((card, idx) => (
+                    <motion.div
+                        key={idx}
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="bg-white dark:bg-slate-900 rounded-2xl p-5 border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between hover:shadow-md transition-shadow relative overflow-hidden"
+                    >
+                        <div className={`absolute -top-2 -right-2 p-4 opacity-5 text-7xl ${card.color}`}>
+                            {card.icon}
                         </div>
-                        <div className="flex items-baseline gap-1 relative z-10">
-                            <span className="text-3xl font-bold text-slate-800">{card.value}</span>
-                            <span className="text-sm text-slate-400 font-semibold">{card.unit}</span>
-                        </div>
-                    </div>
 
-                    <div className="mt-4 flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${LEVEL_STYLES[card.level].dot}`}></span>
-                        <span className={`text-xs font-bold ${LEVEL_STYLES[card.level].text}`}>
-                            {LEVEL_STYLES[card.level].label}
-                        </span>
-                    </div>
-                </motion.div>
-            ))}
+                        <div>
+                            <div className="flex items-center gap-2 mb-2">
+                                <span className={`p-2 rounded-lg ${card.bg} ${card.color} text-lg`}>{card.icon}</span>
+                                <span className="text-slate-500 dark:text-slate-400 font-medium text-xs uppercase tracking-wider">{card.title}</span>
+                            </div>
+                            <div className="flex items-baseline gap-1 relative z-10">
+                                <motion.span
+                                    key={card.value}
+                                    initial={{ opacity: 0.5 }}
+                                    animate={{ opacity: 1 }}
+                                    className="text-3xl font-bold text-slate-800 dark:text-white"
+                                >
+                                    {card.value}
+                                </motion.span>
+                                <span className="text-sm text-slate-400 font-semibold">{card.unit}</span>
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <span className={`w-2 h-2 rounded-full ${card.status === 'good' ? 'bg-emerald-500' : card.status === 'warning' ? 'bg-amber-500' : 'bg-rose-500'}`}></span>
+                                <span className={`text-[10px] font-bold uppercase tracking-tight ${card.status === 'good' ? 'text-emerald-600' : card.status === 'warning' ? 'text-amber-600' : 'text-rose-600'}`}>
+                                    {card.status === 'good' ? 'Optimal' : 'Checking'}
+                                </span>
+                            </div>
+                            {lastUpdate && (
+                                <span className="text-[10px] text-slate-400 font-medium">
+                                    {formatTime(lastUpdate)}
+                                </span>
+                            )}
+                        </div>
+                    </motion.div>
+                ))}
+            </div>
         </div>
     );
 };

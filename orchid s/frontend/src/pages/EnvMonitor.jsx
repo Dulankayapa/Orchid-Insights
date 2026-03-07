@@ -167,9 +167,7 @@ const EnvMonitor = () => {
         <div className="flex items-center gap-2 mb-4">
           <h2 className="text-xl font-bold text-dark">Current Status</h2>
         </div>
-        <SectionErrorBoundary>
-          <OverviewCards data={latest} lastUpdate={lastUpdate} />
-        </SectionErrorBoundary>
+        <OverviewCards data={latest} lastUpdate={lastUpdate} />
       </section>
 
       {/* Charts */}
@@ -182,9 +180,7 @@ const EnvMonitor = () => {
             <option>Last 24 Hours</option>
           </select>
         </div>
-        <SectionErrorBoundary>
-          <MonitorCharts history={safeHistory} />
-        </SectionErrorBoundary>
+        <MonitorCharts history={history} />
       </section>
 
     </div>

@@ -1,55 +1,32 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ref, onValue, query, limitToLast } from 'firebase/database';
-import { db, resolvedDatabaseURL } from '../lib/firebase';
-
-const LIVE_PATHS = ['Jar1', 'Jar2', 'Jar3', 'orchidData/latest'];
-
-const toNumber = (value) => {
-    if (value === undefined || value === null || value === '') return null;
-    const num = Number(value);
-    return Number.isFinite(num) ? num : null;
-};
+import { ref, onValue, query, limitToLast, orderByKey } from 'firebase/database';
+import { db } from '../lib/firebase'; // Correct path to firebase config
 
 const normalizeSensor = (val) => {
     if (!val) return null;
     let ts = Number(val.timestamp) || Number(val.ts) || Date.now();
 
-    // If timestamp is in seconds, convert to milliseconds.
+    // Heuristic: If timestamp is in seconds (less than 10 billion), convert to milliseconds
     if (ts < 10000000000) ts *= 1000;
 
-    const temp = toNumber(val.temperature ?? val.teperature ?? val.temp ?? val.t);
-    const hum = toNumber(val.humidity ?? val.hum ?? val.humidty ?? val.h);
-    const luxVal = toNumber(val.lux ?? val.light ?? val.lx);
-    const mqVal = toNumber(val.mq135 ?? val.mq ?? val.gas);
+    const temp = Number(val.temperature ?? val.temp ?? val.t ?? 0);
+    const hum = Number(val.humidity ?? val.hum ?? val.h ?? 0);
+    const luxVal = Number(val.lux ?? val.light ?? val.lx ?? 0);
+    const mqVal = Number(val.mq135 ?? val.mq ?? 0);
 
     return {
         ...val,
         timestamp: ts,
-        ts: ts,
+        ts: ts, // for chart compatibility
         temperature: temp,
         humidity: hum,
         lux: luxVal,
         mq135: mqVal,
-        t: temp,
+        t: temp, // shorthand for charts
         h: hum,
         lx: luxVal,
         mq: mqVal
     };
-};
-
-const extractLiveCandidate = (raw) => {
-    if (!raw || typeof raw !== 'object') return null;
-    // If payload already looks like a sensor object, use it directly.
-    if (
-        raw.temperature !== undefined || raw.teperature !== undefined || raw.temp !== undefined ||
-        raw.humidity !== undefined || raw.hum !== undefined || raw.humidty !== undefined ||
-        raw.lux !== undefined || raw.light !== undefined || raw.lx !== undefined ||
-        raw.mq135 !== undefined || raw.mq !== undefined || raw.gas !== undefined
-    ) {
-        return raw;
-    }
-    // Common nested live keys.
-    return raw.latest ?? raw.current ?? raw.live ?? null;
 };
 
 export const useMonitorData = (settings) => {
@@ -61,27 +38,26 @@ export const useMonitorData = (settings) => {
     const [alerts, setAlerts] = useState([]);
     const [aiTip, setAiTip] = useState(null);
 
+    // Constants representing the "safe" ranges (can be passed via settings or hardcoded defaults)
     const SAFETY_DEFAULTS = useMemo(() => ({
-        tMin: 18, tMax: 35,
-        hMin: 40, hMax: 80,
-        lMin: 50, lMax: 800,
-        mqWarn: 2500,
-        staleSec: 25
+        tMin: 18, tMax: 28,
+        hMin: 40, hMax: 70,
+        lMin: 1000, lMax: 25000,
+        mqWarn: 150,
+        staleSec: 15
     }), []);
 
     const config = useMemo(() => ({ ...SAFETY_DEFAULTS, ...settings }), [SAFETY_DEFAULTS, settings]);
 
-    // Fallback polling uses the same resolved RTDB URL as realtime listeners.
-    const DB_URL = resolvedDatabaseURL;
-
     // Stitch the latest live point into history for ultra-real-time graphs
     const liveHistory = useMemo(() => {
         if (!latest) return history;
+        // Don't duplicate if the latest point is already the last one in history
         if (history.length > 0 && history[history.length - 1].timestamp === latest.timestamp) {
             return history;
         }
         const combined = [...history, latest];
-        return combined.slice(-100);
+        return combined.slice(-100); // Keep last 100
     }, [history, latest]);
 
     useEffect(() => {
@@ -91,37 +67,33 @@ export const useMonitorData = (settings) => {
             setConnectionStatus(isConnected ? 'connected' : 'offline');
         });
 
-        const unsubsLive = LIVE_PATHS.map((path) =>
-            onValue(ref(db, path), (snap) => {
-                const data = snap.val();
-                const candidate = extractLiveCandidate(data);
-                if (!candidate) return;
-                const normalized = normalizeSensor(candidate);
-                if (!normalized) return;
-
-                setConnectionStatus('connected');
+        // 2. Latest Data (Live Feed - updates cards every second/reading)
+        const latestRef = ref(db, 'orchidData/latest');
+        const unsubLatest = onValue(latestRef, (snap) => {
+            const data = snap.val();
+            console.log('Firebase latest data received:', data);
+            if (data) {
+                const normalized = normalizeSensor(data);
+                setLatest(normalized);
                 setLastUpdate(Date.now());
+            }
+        });
 
-                // Keep the freshest point across all known live paths.
-                setLatest((prev) => {
-                    if (!prev || normalized.timestamp >= prev.timestamp) return normalized;
-                    return prev;
-                });
-            })
-        );
-
+        // 3. History (Historical Logs - used for the bulk of the graph)
         const historyRef = query(ref(db, 'orchidData/logs'), limitToLast(100));
         const unsubHistory = onValue(historyRef, (snap) => {
             const data = snap.val();
             if (data) {
                 const rows = Object.values(data)
                     .map(normalizeSensor)
-                    .filter((row) => row && row.timestamp > 1735689600000)
+                    // Filter out 1970/junk data (Only keep points from 2025 onwards)
+                    .filter(row => row.timestamp > 1735689600000)
                     .sort((a, b) => a.timestamp - b.timestamp);
                 setHistory(rows);
             }
         });
 
+        // 4. Growth Logs
         const growthRef = query(ref(db, 'growthLogs'), limitToLast(20));
         const unsubGrowth = onValue(growthRef, (snap) => {
             const data = snap.val();
@@ -133,7 +105,7 @@ export const useMonitorData = (settings) => {
 
         return () => {
             unsubConnected();
-            unsubsLive.forEach((unsub) => unsub());
+            unsubLatest();
             unsubHistory();
             unsubGrowth();
         };
@@ -240,60 +212,43 @@ export const useMonitorData = (settings) => {
             if (lastUpdate && (Date.now() - lastUpdate) > (config.staleSec * 1000)) {
                 setConnectionStatus('stale');
             } else {
-                setConnectionStatus((prev) => (prev === 'stale' ? 'connected' : prev));
+                setConnectionStatus(prev => prev === 'stale' ? 'connected' : prev);
             }
         }, 1000);
         return () => clearInterval(interval);
     }, [lastUpdate, config.staleSec]);
 
-    // Compute alerts
+    // Compute Alerts
     useEffect(() => {
         if (!latest) return;
 
         const newAlerts = [];
 
-        if (typeof latest.temperature === 'number') {
-            if (latest.temperature < config.tMin) {
-                newAlerts.push({
-                    type: 'danger',
-                    icon: 'Temperature',
-                    title: 'Temperature Low',
-                    message: `${latest.temperature.toFixed(1)}°C is below safe range (${config.tMin}-${config.tMax}°C)`
-                });
-            } else if (latest.temperature > config.tMax) {
-                newAlerts.push({
-                    type: 'info',
-                    icon: 'Temperature',
-                    title: 'Temperature High',
-                    message: `${latest.temperature.toFixed(1)}°C is above safe range (${config.tMin}-${config.tMax}°C)`
-                });
-            }
+        // Temperature
+        if (latest.temperature < config.tMin || latest.temperature > config.tMax) {
+            newAlerts.push({
+                type: 'danger',
+                icon: '🌡️',
+                title: 'Temperature Alert',
+                message: `${latest.temperature.toFixed(1)}°C is outside safe range (${config.tMin}-${config.tMax}°C)`
+            });
         }
 
-        if (typeof latest.humidity === 'number') {
-            if (latest.humidity < config.hMin) {
-                newAlerts.push({
-                    type: 'danger',
-                    icon: 'Humidity',
-                    title: 'Humidity Low',
-                    message: `${latest.humidity.toFixed(1)}% is below safe range (${config.hMin}-${config.hMax}%)`
-                });
-            } else if (latest.humidity > config.hMax) {
-                newAlerts.push({
-                    type: 'info',
-                    icon: 'Humidity',
-                    title: 'Humidity High',
-                    message: `${latest.humidity.toFixed(1)}% is above safe range (${config.hMin}-${config.hMax}%)`
-                });
-            }
+        // Humidity
+        if (latest.humidity < config.hMin || latest.humidity > config.hMax) {
+            newAlerts.push({
+                type: 'warning',
+                icon: '💧',
+                title: 'Humidity Alert',
+                message: `${latest.humidity.toFixed(1)}% is outside safe range (${config.hMin}-${config.hMax}%)`
+            });
         }
 
-        if (typeof latest.lux === 'number') {
-            if (latest.lux < config.lMin) {
-                newAlerts.push({ type: 'danger', icon: 'Light', title: 'Light Low', message: 'Light level is below safe range.' });
-            } else if (latest.lux > config.lMax) {
-                newAlerts.push({ type: 'info', icon: 'Light', title: 'Light High', message: 'Light level is above safe range.' });
-            }
+        // Light
+        if (latest.lux < config.lMin) {
+            newAlerts.push({ type: 'info', icon: '☀️', title: 'Low Light', message: 'Light levels are low.' });
+        } else if (latest.lux > config.lMax) {
+            newAlerts.push({ type: 'warning', icon: '☀️', title: 'High Light', message: 'Risk of leaf burn.' });
         }
 
         if (typeof latest.mq135 === 'number') {

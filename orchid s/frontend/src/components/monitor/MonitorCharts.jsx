@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -7,40 +7,22 @@ import {
     LineElement,
     Title,
     Tooltip,
-    Legend
+    Legend,
+    TimeScale,
+    Filler
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
 
 ChartJS.register(
-    CategoryScale,
     LinearScale,
     PointElement,
     LineElement,
     Title,
     Tooltip,
-    Legend
+    Legend,
+    TimeScale,
+    Filler
 );
-
-const toNumber = (value) => {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-};
-
-const pickValue = (row, keys) => {
-    for (const key of keys) {
-        const n = toNumber(row?.[key]);
-        if (n !== null) return n;
-    }
-    return null;
-};
-
-const toTimeLabel = (ts) => {
-    const n = toNumber(ts);
-    if (n === null) return '--:--:--';
-    const d = new Date(n);
-    if (Number.isNaN(d.getTime())) return '--:--:--';
-    return d.toLocaleTimeString();
-};
 
 const MonitorCharts = ({ history }) => {
     if (!history || history.length === 0) {
@@ -83,13 +65,9 @@ const MonitorCharts = ({ history }) => {
         },
         scales: {
             x: {
+                type: 'time',
                 grid: { display: false },
-                offset: true,
-                ticks: {
-                    color: '#94a3b8',
-                    font: { size: 10 },
-                    maxTicksLimit: 6
-                }
+                ticks: { color: '#94a3b8', font: { size: 10 }, maxRotation: 0, autoSkip: true }
             },
             y: {
                 grid: { color: '#f1f5f9' },
@@ -107,44 +85,63 @@ const MonitorCharts = ({ history }) => {
         }
     };
 
-    const createDataset = (label, values, color, bgColor) => ({
-        labels,
-        datasets: [{
-            label,
-            data: values,
-            borderColor: color,
-            backgroundColor: bgColor,
-            borderWidth: 2,
-            fill: true,
-            spanGaps: true
-        }]
-    });
+    // Memoize datasets to prevent unnecessary re-renders
+    const datasets = useMemo(() => ({
+        temp: {
+            datasets: [{
+                label: 'Temperature',
+                data: history.map(h => ({ x: h.ts, y: h.t })),
+                borderColor: '#f97316',
+                backgroundColor: 'rgba(249, 115, 22, 0.1)',
+                borderWidth: 2,
+                fill: true
+            }]
+        },
+        hum: {
+            datasets: [{
+                label: 'Humidity',
+                data: history.map(h => ({ x: h.ts, y: h.h })),
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                borderWidth: 2,
+                fill: true
+            }]
+        },
+        light: {
+            datasets: [{
+                label: 'Light',
+                data: history.map(h => ({ x: h.ts, y: h.lx })),
+                borderColor: '#f59e0b',
+                backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                borderWidth: 2,
+                fill: true
+            }]
+        },
+        air: {
+            datasets: [{
+                label: 'Air Quality',
+                data: history.map(h => ({ x: h.ts, y: h.mq })),
+                borderColor: '#10b981',
+                backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                borderWidth: 2,
+                fill: true
+            }]
+        }
+    }), [history]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ChartCard title="Temperature Trend" icon="T">
-                <Line
-                    data={createDataset('Temperature', points.map((p) => p.temperature), '#f97316', 'rgba(249, 115, 22, 0.1)')}
-                    options={commonOptions}
-                />
+            <ChartCard title="Temperature Trend" icon="🌡️">
+                <Line data={datasets.temp} options={commonOptions} />
             </ChartCard>
-            <ChartCard title="Humidity Trend" icon="H">
-                <Line
-                    data={createDataset('Humidity', points.map((p) => p.humidity), '#3b82f6', 'rgba(59, 130, 246, 0.1)')}
-                    options={commonOptions}
-                />
+            <ChartCard title="Humidity Trend" icon="💧">
+                <Line data={datasets.hum} options={commonOptions} />
             </ChartCard>
-            <ChartCard title="Light Intensity" icon="L">
-                <Line
-                    data={createDataset('Light', points.map((p) => p.light), '#f59e0b', 'rgba(245, 158, 11, 0.1)')}
-                    options={commonOptions}
-                />
+            <ChartCard title="Light Intensity" icon="☀️">
+                <Line data={datasets.light} options={commonOptions} />
             </ChartCard>
-            <ChartCard title="Gas (MQ135)" icon="G">
-                <Line
-                    data={createDataset('Air Quality', points.map((p) => p.gas), '#10b981', 'rgba(16, 185, 129, 0.1)')}
-                    options={commonOptions}
-                />
+            <ChartCard title="Air Quality (MQ135)" icon="💨">
+                <Line data={datasets.air} options={commonOptions} />
             </ChartCard>
         </div>
     );
