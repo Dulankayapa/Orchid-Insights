@@ -11,6 +11,20 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const normalizeId = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw.replace(/[\s_-]+/g, "").toLowerCase();
+};
+
+const canonicalJarKey = (value) => {
+  const norm = normalizeId(value);
+  if (!norm) return "";
+  const match = norm.match(/^jar(\d+)$/);
+  if (match) return `Jar${match[1]}`;
+  return value?.toString()?.trim() || "";
+};
+
 const coerceTimestamp = (value) => {
   const num = toNumber(value);
   if (num === null) return null;
@@ -117,6 +131,7 @@ export default function GrowthTracker() {
   const [analyzedHeight, setAnalyzedHeight] = useState(null);
   const [analyzedJarId, setAnalyzedJarId] = useState("");
   const [sensorLatest, setSensorLatest] = useState(null);
+  const [jarLive, setJarLive] = useState(null);
   const [sensorHistory, setSensorHistory] = useState([]);
   const [sensorError, setSensorError] = useState("");
   const [heightLogError, setHeightLogError] = useState("");
@@ -125,8 +140,8 @@ export default function GrowthTracker() {
 
   const plantRecord = useMemo(() => {
     if (!jarId) return null;
-    const id = jarId.trim().toLowerCase();
-    return plantRecords.find((p) => String(p.id).toLowerCase() === id) || null;
+    const idNorm = normalizeId(jarId);
+    return plantRecords.find((p) => normalizeId(p.id) === idNorm) || null;
   }, [jarId, plantRecords]);
 
   useEffect(() => {
@@ -183,22 +198,46 @@ export default function GrowthTracker() {
     };
   }, []);
 
+  // Listen to per-jar RTDB nodes (e.g., Jar1, Jar2...) to capture live height for that jar.
+  useEffect(() => {
+    if (!jarId) {
+      setJarLive(null);
+      return undefined;
+    }
+    const jarKey = canonicalJarKey(jarId);
+    if (!jarKey) return undefined;
+
+    const jarRef = ref(db, jarKey);
+    const off = onValue(
+      jarRef,
+      (snap) => {
+        const val = snap.val();
+        const normalized = val ? normalizeSensor({ ...val, jarId: jarKey }) : null;
+        setJarLive(normalized);
+      },
+      (err) => setSensorError(err.message || "Failed to read jar live data")
+    );
+    return () => off();
+  }, [jarId]);
+
   // Autofill the current height field from the latest live sensor reading when a Jar is selected.
   useEffect(() => {
     if (!jarId) return;
-    const liveHeight = toNumber(sensorLatest?.height_mm ?? sensorLatest?.height);
+    const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
     if (liveHeight === null) return;
     setCurrentHeight(String(liveHeight));
-  }, [jarId, sensorLatest]);
+  }, [jarId, sensorLatest, jarLive]);
 
   // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
   useEffect(() => {
     setHeightLogError("");
-    if (!sensorLatest) return;
-    const liveHeight = toNumber(sensorLatest.height_mm ?? sensorLatest.height);
+    const liveSource = jarLive || sensorLatest;
+    if (!liveSource) return;
+
+    const liveHeight = toNumber(liveSource.height_mm ?? liveSource.height);
     if (liveHeight === null) return;
 
-    const ts = Number(sensorLatest.timestamp) || Date.now();
+    const ts = Number(liveSource.timestamp) || Date.now();
 
     if (!hasSeededHeightRef.current) {
       hasSeededHeightRef.current = true;
@@ -214,7 +253,7 @@ export default function GrowthTracker() {
       height_mm: liveHeight,
       height_cm: Number((liveHeight / 10).toFixed(1)),
       timestamp: ts,
-      jarId: jarId || sensorLatest.jarId || sensorLatest.jar_id || null,
+      jarId: jarId || liveSource.jarId || liveSource.jar_id || liveSource.id || canonicalJarKey(jarId) || null,
       source: "sensor",
     };
 
@@ -223,7 +262,7 @@ export default function GrowthTracker() {
         lastHeightLoggedRef.current = { ts, height: liveHeight };
       })
       .catch((err) => setHeightLogError(err?.message || "Failed to write live height to Firebase"));
-  }, [sensorLatest, jarId]);
+  }, [sensorLatest, jarLive, jarId]);
 
   const derivedAgeDays = useMemo(() => {
     if (!plantingDate) return null;
@@ -304,6 +343,38 @@ export default function GrowthTracker() {
     return "border-slate-200 bg-slate-50 text-slate-700";
   }, [displayLabel]);
 
+  const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
+  const liveTimestamp = jarLive?.timestamp ?? sensorLatest?.timestamp ?? null;
+
+  // Listen directly to Firebase plants/{id} for real-time planting date/height updates
+  useEffect(() => {
+    if (!jarId) return undefined;
+    const key = normalizeId(jarId);
+    if (!key) return undefined;
+    const plantRef = ref(db, `plants/${key}`);
+    const off = onValue(
+      plantRef,
+      (snap) => {
+        const val = snap.val();
+        if (!val) return;
+        const planted = val.planting_date || val.plantingDate;
+        if (planted) setPlantingDate(planted);
+        const h = toNumber(val.height_mm ?? val.height ?? val.current_height);
+        if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
+          setCurrentHeight(String(h));
+        }
+      },
+      (err) => setPlantFetchError(err?.message || "Failed to read plant record from Firebase")
+    );
+    return () => off();
+  }, [jarId, liveHeight]);
+
+  useEffect(() => {
+    if (liveHeight !== null && liveHeight !== undefined) {
+      setCurrentHeight(String(liveHeight));
+    }
+  }, [liveHeight]);
+
   return (
     <div className="space-y-8 relative text-slate-900">
       <BackgroundGrid />
@@ -329,9 +400,9 @@ export default function GrowthTracker() {
             demoIds={demoIds}
             demoIdHint={demoIdHint}
             plantFetchError={plantFetchError}
+            liveHeight={liveHeight}
+            liveTimestamp={liveTimestamp}
           />
-          <PlantHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
-          <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError || heightLogError} />
         </div>
         <ResultCard
           isLight={isLight}
@@ -421,6 +492,8 @@ function FormCard({
   demoIds,
   demoIdHint,
   plantFetchError,
+  liveHeight,
+  liveTimestamp,
 }) {
   return (
     <motion.form
@@ -458,15 +531,22 @@ function FormCard({
           />
         </Field>
         <Field label="Current height (mm) *">
-          <input
-            type="number"
-            step="0.1"
-            value={currentHeight}
-            readOnly
-            disabled
-            placeholder="Auto-filled from plant record"
-            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
-          />
+          <div className="space-y-1">
+            <input
+              type="number"
+              step="0.1"
+              value={currentHeight}
+              readOnly
+              disabled
+              placeholder={liveHeight !== null && liveHeight !== undefined ? `Live: ${liveHeight} mm` : "Auto-filled from plant record"}
+              className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            />
+            <p className="text-xs text-emerald-700">
+              {liveHeight !== null && liveHeight !== undefined
+                ? `Live: ${liveHeight} mm${liveTimestamp ? ` • ${new Date(liveTimestamp).toLocaleTimeString()}` : ""}`
+                : "Waiting for live height from Firebase…"}
+            </p>
+          </div>
         </Field>
         <Field label="Age (days) - optional override">
           <input
@@ -638,7 +718,7 @@ function SensorPanel({ latest, history, error, isLight }) {
       )}
 
       <p className="text-[11px] text-slate-600">
-        Live height readings stream here and are mirrored to Firebase <code className="font-mono text-[10px]">growthLogs</code> automatically.
+        Live height readings stream here and mirror to Firebase <code className="font-mono text-[10px]">growthLogs</code> automatically.
       </p>
 
       {latest ? (
