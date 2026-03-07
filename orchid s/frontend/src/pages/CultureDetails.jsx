@@ -1,10 +1,56 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { onValue, ref, set } from "firebase/database";
+import { onValue, ref, remove, set, update } from "firebase/database";
 import { db } from "../lib/firebase";
 
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
+const OPTIONS_PATH = "recultureOptions";
+
+const normalizeOption = (value) => (value || "").trim();
+const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
+
+const uniqueSortedOptions = (values) => {
+  const map = new Map();
+  (values || []).forEach((value) => {
+    const cleaned = normalizeOption(value);
+    if (!cleaned) return;
+    map.set(normalizeOptionKey(cleaned), cleaned);
+  });
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
+};
+
+const buildOptionsFromSnapshot = (data) => {
+  const racksRaw = Array.isArray(data?.racks) ? data.racks : Object.values(data?.racks || {});
+  const orchidsRaw = Array.isArray(data?.orchids) ? data.orchids : Object.values(data?.orchids || {});
+  return {
+    racks: uniqueSortedOptions(racksRaw),
+    orchids: uniqueSortedOptions(orchidsRaw),
+  };
+};
+
+const normalizeJarIdInput = (value) => {
+  const next = (value || "").trimStart();
+  if (!next) return value || "";
+  return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
+};
+
+const buildOptionsFromEntries = (entries) => {
+  const racks = new Map();
+  const orchids = new Map();
+
+  entries.forEach((entry) => {
+    const rack = normalizeOption(entry.rackNo);
+    if (rack) racks.set(normalizeOptionKey(rack), rack);
+    const orchid = normalizeOption(entry.orchidType);
+    if (orchid) orchids.set(normalizeOptionKey(orchid), orchid);
+  });
+
+  return {
+    racks: Array.from(racks.values()).sort((a, b) => a.localeCompare(b)),
+    orchids: Array.from(orchids.values()).sort((a, b) => a.localeCompare(b)),
+  };
+};
 
 export default function CultureDetails() {
   const [form, setForm] = useState({
@@ -16,12 +62,38 @@ export default function CultureDetails() {
     recultures: [newRecultureRow()],
   });
   const [entries, setEntries] = useState([]);
+  const [optionStore, setOptionStore] = useState({ racks: [], orchids: [] });
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [optionsError, setOptionsError] = useState("");
+  const [optionsSeeded, setOptionsSeeded] = useState(false);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [entriesError, setEntriesError] = useState("");
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const isEditing = Boolean(selectedId);
+
+  useEffect(() => {
+    setOptionsLoading(true);
+    setOptionsError("");
+    const optionsRef = ref(db, OPTIONS_PATH);
+    const unsubscribe = onValue(
+      optionsRef,
+      (snap) => {
+        const next = buildOptionsFromSnapshot(snap.val() || {});
+        setOptionStore(next);
+        setOptionsLoading(false);
+        setOptionsError("");
+      },
+      (err) => {
+        setOptionsError(err?.message || "Failed to load Firebase options");
+        setOptionsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     setLoadingEntries(true);
@@ -58,13 +130,130 @@ export default function CultureDetails() {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (optionsSeeded || optionsLoading) return;
+    if (!entries.length) return;
+    if (optionStore.racks.length || optionStore.orchids.length) {
+      setOptionsSeeded(true);
+      return;
+    }
+
+    const seeded = buildOptionsFromEntries(entries);
+    if (!seeded.racks.length && !seeded.orchids.length) {
+      setOptionsSeeded(true);
+      return;
+    }
+
+    const updates = {};
+    seeded.racks.forEach((rack) => {
+      updates[`${OPTIONS_PATH}/racks/${normalizeOptionKey(rack)}`] = rack;
+    });
+    seeded.orchids.forEach((orchid) => {
+      updates[`${OPTIONS_PATH}/orchids/${normalizeOptionKey(orchid)}`] = orchid;
+    });
+
+    update(ref(db), updates)
+      .catch((err) => {
+        setOptionsError(err?.message || "Failed to seed Firebase options");
+      })
+      .finally(() => {
+        setOptionsSeeded(true);
+      });
+  }, [entries, optionStore, optionsLoading, optionsSeeded]);
+
   const selectedEntry = useMemo(() => {
     if (!selectedId) return null;
     return entries.find((e) => e.jarId.toLowerCase() === selectedId.toLowerCase()) || null;
   }, [entries, selectedId]);
 
+  const rackOptions = optionStore.racks;
+  const orchidOptions = optionStore.orchids;
+
   const handleField = (key) => (e) => {
-    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+    const nextValue = key === "jarId" ? normalizeJarIdInput(e.target.value) : e.target.value;
+    setForm((prev) => ({ ...prev, [key]: nextValue }));
+  };
+
+  const applyOption = (key, value) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setStatus("");
+    setError("");
+  };
+
+  const addRackOption = (value) => {
+    const cleaned = normalizeOption(value);
+    if (!cleaned) return;
+    setOptionsError("");
+    set(ref(db, `${OPTIONS_PATH}/racks/${normalizeOptionKey(cleaned)}`), cleaned).catch((err) => {
+      setOptionsError(err?.message || "Failed to save rack option");
+    });
+  };
+
+  const updateRackOption = (fromValue, toValue) => {
+    const cleaned = normalizeOption(toValue);
+    if (!cleaned) return;
+    const fromKey = normalizeOptionKey(fromValue);
+    const toKey = normalizeOptionKey(cleaned);
+    setOptionsError("");
+    if (fromKey === toKey) {
+      set(ref(db, `${OPTIONS_PATH}/racks/${toKey}`), cleaned).catch((err) => {
+        setOptionsError(err?.message || "Failed to update rack option");
+      });
+      return;
+    }
+    update(ref(db), {
+      [`${OPTIONS_PATH}/racks/${toKey}`]: cleaned,
+      [`${OPTIONS_PATH}/racks/${fromKey}`]: null,
+    }).catch((err) => {
+      setOptionsError(err?.message || "Failed to update rack option");
+    });
+  };
+
+  const deleteRackOption = (value) => {
+    const key = normalizeOptionKey(value);
+    if (!key) return;
+    setOptionsError("");
+    remove(ref(db, `${OPTIONS_PATH}/racks/${key}`)).catch((err) => {
+      setOptionsError(err?.message || "Failed to delete rack option");
+    });
+  };
+
+  const addOrchidOption = (value) => {
+    const cleaned = normalizeOption(value);
+    if (!cleaned) return;
+    setOptionsError("");
+    set(ref(db, `${OPTIONS_PATH}/orchids/${normalizeOptionKey(cleaned)}`), cleaned).catch((err) => {
+      setOptionsError(err?.message || "Failed to save orchid option");
+    });
+  };
+
+  const updateOrchidOption = (fromValue, toValue) => {
+    const cleaned = normalizeOption(toValue);
+    if (!cleaned) return;
+    const fromKey = normalizeOptionKey(fromValue);
+    const toKey = normalizeOptionKey(cleaned);
+    setOptionsError("");
+    if (fromKey === toKey) {
+      set(ref(db, `${OPTIONS_PATH}/orchids/${toKey}`), cleaned).catch((err) => {
+        setOptionsError(err?.message || "Failed to update orchid option");
+      });
+      return;
+    }
+    update(ref(db), {
+      [`${OPTIONS_PATH}/orchids/${toKey}`]: cleaned,
+      [`${OPTIONS_PATH}/orchids/${fromKey}`]: null,
+    }).catch((err) => {
+      setOptionsError(err?.message || "Failed to update orchid option");
+    });
+  };
+
+  const deleteOrchidOption = (value) => {
+    const key = normalizeOptionKey(value);
+    if (!key) return;
+    setOptionsError("");
+    remove(ref(db, `${OPTIONS_PATH}/orchids/${key}`)).catch((err) => {
+      setOptionsError(err?.message || "Failed to delete orchid option");
+    });
   };
 
   const handleRecultureChange = (idx, key, value) => {
@@ -111,7 +300,7 @@ export default function CultureDetails() {
     setError("");
     setStatus("");
 
-    const jarId = form.jarId.trim();
+    const jarId = normalizeJarIdInput(form.jarId).trim();
     if (!jarId) {
       setError("Jar ID is required.");
       return;
@@ -151,6 +340,8 @@ export default function CultureDetails() {
     try {
       await set(ref(db, `recultureEntries/${jarId}`), payload);
       setSelectedId(jarId);
+      addRackOption(form.rackNo);
+      addOrchidOption(form.orchidType);
       setStatus(`Saved ${jarId} with ${payload.recultures.length} re-culture dates.`);
     } catch (err) {
       setError(err?.message || "Failed to save to Firebase.");
@@ -165,9 +356,28 @@ export default function CultureDetails() {
 
       <div className="grid lg:grid-cols-3 gap-6 relative">
         <div className="lg:col-span-2 space-y-6">
+          <OptionsPanel
+            rackOptions={rackOptions}
+            orchidOptions={orchidOptions}
+            currentRack={form.rackNo}
+            currentOrchid={form.orchidType}
+            onSelectRack={(value) => applyOption("rackNo", value)}
+            onSelectOrchid={(value) => applyOption("orchidType", value)}
+            onAddRack={addRackOption}
+            onUpdateRack={updateRackOption}
+            onDeleteRack={deleteRackOption}
+            onAddOrchid={addOrchidOption}
+            onUpdateOrchid={updateOrchidOption}
+            onDeleteOrchid={deleteOrchidOption}
+            optionsLoading={optionsLoading}
+            optionsError={optionsError}
+          />
           <FormCard
             form={form}
             onFieldChange={handleField}
+            rackOptions={rackOptions}
+            orchidOptions={orchidOptions}
+            isEditing={isEditing}
             onRecultureChange={handleRecultureChange}
             addRecultureRow={addRecultureRow}
             removeRecultureRow={removeRecultureRow}
@@ -198,8 +408,8 @@ function Hero() {
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3">
-        <p className="kicker">Re-culture planner</p>
-        <h1 className="title-lg">Jar Meta Data</h1>
+        <p className="kicker">Orchid Culture Manager</p>
+        <h1 className="title-lg">OrchiLab</h1>
       </div>
     </motion.div>
   );
@@ -208,6 +418,9 @@ function Hero() {
 function FormCard({
   form,
   onFieldChange,
+  rackOptions,
+  orchidOptions,
+  isEditing,
   onRecultureChange,
   addRecultureRow,
   removeRecultureRow,
@@ -241,7 +454,8 @@ function FormCard({
             value={form.jarId}
             onChange={onFieldChange("jarId")}
             placeholder="e.g. Jar-42"
-            className="input-shell"
+            disabled={isEditing}
+            className={`input-shell ${isEditing ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
           />
         </Field>
         <Field label="Culture date *">
@@ -249,7 +463,8 @@ function FormCard({
             type="date"
             value={form.cultureDate}
             onChange={onFieldChange("cultureDate")}
-            className="input-shell"
+            disabled={isEditing}
+            className={`input-shell ${isEditing ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
           />
           <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
         </Field>
@@ -258,16 +473,28 @@ function FormCard({
             value={form.rackNo}
             onChange={onFieldChange("rackNo")}
             placeholder="Rack or shelf location"
+            list="rack-options"
             className="input-shell"
           />
+          <datalist id="rack-options">
+            {rackOptions.map((rack) => (
+              <option key={rack} value={rack} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Orchid type *">
           <input
             value={form.orchidType}
             onChange={onFieldChange("orchidType")}
             placeholder="e.g. Phalaenopsis"
+            list="orchid-options"
             className="input-shell"
           />
+          <datalist id="orchid-options">
+            {orchidOptions.map((orchid) => (
+              <option key={orchid} value={orchid} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Nutrition / medium *">
           <textarea
@@ -351,6 +578,12 @@ function FormCard({
           Clear
         </button>
       </div>
+
+      {isEditing && (
+        <p className="text-xs text-subtle">
+          Jar ID and culture date are locked while editing. Use “Clear” to create a new jar.
+        </p>
+      )}
 
       {loadingEntries && !entriesError && (
         <p className="text-xs text-subtle">Loading Firebase entries...</p>
@@ -560,6 +793,273 @@ function Field({ label, children }) {
       <span className="text-dark">{label}</span>
       {children}
     </label>
+  );
+}
+
+function OptionsPanel({
+  rackOptions,
+  orchidOptions,
+  currentRack,
+  currentOrchid,
+  onSelectRack,
+  onSelectOrchid,
+  onAddRack,
+  onUpdateRack,
+  onDeleteRack,
+  onAddOrchid,
+  onUpdateOrchid,
+  onDeleteOrchid,
+  optionsLoading,
+  optionsError,
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="panel space-y-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="kicker">Options</p>
+          <h2 className="text-lg font-semibold text-dark">Rack & orchid categories</h2>
+          <p className="text-sm text-subtle">
+            Pick from saved values, or type a new one in the form below.
+          </p>
+        </div>
+        <span className="text-xs text-subtle">
+          {rackOptions.length + orchidOptions.length} total
+        </span>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4">
+        <OptionGroup
+          label="Rack list"
+          options={rackOptions}
+          currentValue={currentRack}
+          emptyMessage="No racks saved yet."
+          onSelect={onSelectRack}
+          onAdd={onAddRack}
+          onUpdate={onUpdateRack}
+          onDelete={onDeleteRack}
+          inputPlaceholder="Add rack (e.g. R-3A)"
+        />
+        <OptionGroup
+          label="Orchid category"
+          options={orchidOptions}
+          currentValue={currentOrchid}
+          emptyMessage="No orchid types saved yet."
+          onSelect={onSelectOrchid}
+          onAdd={onAddOrchid}
+          onUpdate={onUpdateOrchid}
+          onDelete={onDeleteOrchid}
+          inputPlaceholder="Add orchid (e.g. Phalaenopsis)"
+        />
+      </div>
+
+      {optionsLoading && !optionsError && (
+        <p className="text-xs text-subtle">Loading options from Firebase...</p>
+      )}
+      {optionsError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2">
+          Firebase options error: {optionsError}
+        </p>
+      )}
+    </motion.div>
+  );
+}
+
+function OptionGroup({
+  label,
+  options,
+  currentValue,
+  emptyMessage,
+  onSelect,
+  onAdd,
+  onUpdate,
+  onDelete,
+  inputPlaceholder,
+}) {
+  const [draft, setDraft] = useState("");
+  const [filter, setFilter] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [editingOriginal, setEditingOriginal] = useState("");
+  const [editingValue, setEditingValue] = useState("");
+  const [addError, setAddError] = useState("");
+  const [updateError, setUpdateError] = useState("");
+
+  const normalizedFilter = filter.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!normalizedFilter) return options;
+    return options.filter((option) => option.toLowerCase().includes(normalizedFilter));
+  }, [options, normalizedFilter]);
+
+  const startEdit = (value) => {
+    setEditingOriginal(value);
+    setEditingValue(value);
+  };
+
+  const cancelEdit = () => {
+    setEditingOriginal("");
+    setEditingValue("");
+  };
+
+  const submitAdd = () => {
+    const cleaned = normalizeOption(draft);
+    if (!cleaned) return;
+    if (options.some((item) => normalizeOptionKey(item) === normalizeOptionKey(cleaned))) {
+      setAddError("Already exists.");
+      return;
+    }
+    onAdd(cleaned);
+    setDraft("");
+    setAddError("");
+  };
+
+  const submitUpdate = () => {
+    const cleaned = normalizeOption(editingValue);
+    if (!cleaned) return;
+    if (normalizeOptionKey(cleaned) !== normalizeOptionKey(editingOriginal)) {
+      if (options.some((item) => normalizeOptionKey(item) === normalizeOptionKey(cleaned))) {
+        setUpdateError("Already exists.");
+        return;
+      }
+    }
+    onUpdate(editingOriginal, cleaned);
+    cancelEdit();
+    setUpdateError("");
+  };
+
+  const selectOption = (value) => {
+    onSelect(value);
+    setIsOpen(false);
+    setFilter("");
+  };
+
+  return (
+    <div className="panel-muted px-4 py-3 space-y-2">
+      <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">{label}</p>
+      <div className="flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (addError) setAddError("");
+          }}
+          placeholder={inputPlaceholder}
+          className="input-shell py-2"
+        />
+        <button type="button" onClick={submitAdd} className="btn-primary text-xs px-3 py-2">
+          Add
+        </button>
+      </div>
+      {addError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5">
+          {addError}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-sm text-dark transition hover:border-primary/35"
+      >
+        <span className="text-left">
+          <span className="block font-medium">{label}</span>
+          {currentValue?.trim() && (
+            <span className="block text-xs text-subtle">{currentValue}</span>
+          )}
+        </span>
+        <span className="text-xs text-subtle">{isOpen ? "Hide" : "Show"}</span>
+      </button>
+
+      {isOpen && (
+        <div className="rounded-xl border border-border/45 bg-paper/70 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search..."
+              className="input-shell py-2"
+            />
+            <button type="button" onClick={() => setFilter("")} className="btn-soft text-xs px-3 py-2">
+              Clear
+            </button>
+          </div>
+
+          {filteredOptions.length ? (
+            <div className="space-y-2 max-h-56 overflow-auto pr-1">
+              {filteredOptions.map((option) =>
+                editingOriginal === option ? (
+                  <div
+                    key={option}
+                    className="flex flex-wrap sm:flex-nowrap items-center gap-2 rounded-xl border border-border/45 bg-paper/80 px-3 py-2"
+                  >
+                    <input
+                      value={editingValue}
+                      onChange={(e) => {
+                        setEditingValue(e.target.value);
+                        if (updateError) setUpdateError("");
+                      }}
+                      className="input-shell py-2 flex-1"
+                    />
+                    <button type="button" onClick={submitUpdate} className="btn-primary text-xs px-3 py-2">
+                      Update
+                    </button>
+                    <button type="button" onClick={cancelEdit} className="btn-soft text-xs px-3 py-2">
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDelete(option);
+                        cancelEdit();
+                        setUpdateError("");
+                      }}
+                      className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 hover:border-rose-300 transition"
+                    >
+                      Delete
+                    </button>
+                    {updateError && (
+                      <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 w-full">
+                        {updateError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    key={option}
+                    className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 rounded-xl border border-border/45 bg-paper/80 px-3 py-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectOption(option)}
+                      className="text-sm font-semibold text-dark hover:text-primary transition"
+                    >
+                      {option}
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => startEdit(option)} className="btn-soft text-xs px-3 py-2">
+                        Update
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(option)}
+                        className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 hover:border-rose-300 transition"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-subtle">{options.length ? "No matches." : emptyMessage}</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
