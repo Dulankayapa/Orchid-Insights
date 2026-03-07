@@ -6,11 +6,11 @@
 
 @layer base {
   :root {
-    --background: 238 245 241;
+    --background: 240 246 242;
     --paper: 255 255 255;
-    --primary: 13 148 136;
-    --secondary: 6 182 212;
-    --accent: 249 115 22;
+    --primary: 16 185 129;
+    --secondary: 14 165 233;
+    --accent: 244 114 182;
     --dark: 15 23 42;
     --subtle: 71 85 105;
     --border: 148 163 184;
@@ -36,9 +36,10 @@
   body {
     font-family: "Manrope", "Segoe UI", sans-serif;
     background-image:
-      radial-gradient(circle at 14% 9%, rgba(13, 148, 136, 0.14), transparent 26%),
-      radial-gradient(circle at 88% 12%, rgba(6, 182, 212, 0.1), transparent 24%),
-      radial-gradient(circle at 52% 88%, rgba(249, 115, 22, 0.08), transparent 30%);
+      radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.12), transparent 24%),
+      radial-gradient(circle at 82% 12%, rgba(14, 165, 233, 0.12), transparent 24%),
+      radial-gradient(circle at 46% 90%, rgba(244, 114, 182, 0.08), transparent 30%),
+      linear-gradient(135deg, rgba(255,255,255,0.85), rgba(245,250,247,0.9));
     background-attachment: fixed;
     @apply bg-background text-dark antialiased transition-colors duration-300;
   }
@@ -56,19 +57,19 @@
 
 @layer components {
   .glass {
-    @apply bg-paper/80 backdrop-blur-xl border border-border/45 shadow-[0_24px_65px_-35px_rgba(15,23,42,0.35)] transition-colors duration-300;
+    @apply bg-paper/80 backdrop-blur-2xl border border-white/60 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.45)] transition-colors duration-300;
   }
 
   .panel {
-    @apply rounded-3xl glass p-6;
+    @apply rounded-[28px] glass p-6;
   }
 
   .panel-muted {
-    @apply rounded-2xl border border-border/35 bg-paper/60 backdrop-blur-sm;
+    @apply rounded-2xl border border-white/70 bg-white/70 backdrop-blur-md shadow-[0_18px_42px_-30px_rgba(15,23,42,0.4)];
   }
 
   .kicker {
-    @apply text-[11px] uppercase tracking-[0.26em] font-semibold text-primary/85;
+    @apply text-[11px] uppercase tracking-[0.26em] font-semibold text-primary/90;
   }
 
   .title-lg {
@@ -76,15 +77,15 @@
   }
 
   .input-shell {
-    @apply w-full rounded-xl border border-border/45 bg-paper px-3 py-2.5 text-sm text-dark placeholder:text-subtle/80 focus:outline-none focus:ring-2 focus:ring-primary/35 focus:border-primary/45;
+    @apply w-full rounded-2xl border border-border/40 bg-paper/80 px-3.5 py-3 text-sm text-dark placeholder:text-subtle/70 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 shadow-[0_10px_28px_-20px_rgba(15,23,42,0.35)];
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-secondary px-4 py-2.5 text-sm font-semibold text-white shadow-[0_16px_35px_-18px_rgba(13,148,136,0.85)] transition hover:brightness-105;
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary to-secondary px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_45px_-18px_rgba(13,148,136,0.9)] transition hover:brightness-105;
   }
 
   .btn-soft {
-    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-border/45 bg-paper/80 px-4 py-2.5 text-sm font-medium text-dark transition hover:border-primary/35 hover:text-primary;
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-border/45 bg-paper/85 px-4 py-3 text-sm font-medium text-dark transition hover:border-primary/35 hover:text-primary shadow-[0_12px_32px_-24px_rgba(15,23,42,0.28)];
   }
 }
 

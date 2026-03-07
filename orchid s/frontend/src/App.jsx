@@ -70,8 +70,8 @@ export default function App() {
           <aside className="hidden lg:flex lg:w-80 lg:flex-col px-6 py-7">
             <div className="panel space-y-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-secondary text-sm font-bold text-white shadow-[0_18px_32px_-20px_rgba(13,148,136,0.9)] ring-4 ring-primary/10">
-                  OI
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-secondary text-lg shadow-[0_18px_32px_-20px_rgba(13,148,136,0.9)] ring-4 ring-primary/10">
+                  🌸
                 </div>
                 <div>
                   <p className="kicker text-[12px] tracking-[0.28em] text-primary/80">ORCHID INSIGHTS</p>
@@ -82,11 +82,10 @@ export default function App() {
                 <p className="text-[11px] uppercase tracking-[0.22em] text-primary/75">Today</p>
                 <div className="mt-2 space-y-1">
                   <p className="text-base font-semibold text-dark">{todayLabel}</p>
-                  <p className="text-[12px] text-subtle">
+                  <p className="text-[13px] font-medium leading-5 text-dark/80 [font-variant-numeric:tabular-nums]">
                     {timeLabel}
-                    <span className="mx-1.5 text-border">•</span>
-                    {LOCATION_LABEL}
                   </p>
+                  <p className="text-[12px] leading-5 text-subtle">{LOCATION_LABEL}</p>
                 </div>
               </div>
 
