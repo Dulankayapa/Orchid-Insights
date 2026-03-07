@@ -89,6 +89,167 @@ const chartTheme = (isLight) => ({
   grid: isLight ? "rgba(148,163,184,0.25)" : "rgba(51,65,85,0.45)",
 });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const escapeHtml = (value) =>
+  String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+
+const formatReportDate = () =>
+  new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date());
+
+const renderKeyValueTable = (rows) => {
+  if (!rows || !rows.length) return "";
+  const body = rows
+    .map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`)
+    .join("");
+  return `<table class="kv"><tbody>${body}</tbody></table>`;
+};
+
+const renderDataTable = (headers, rows) => {
+  if (!rows || !rows.length) return "<p class=\"muted\">No data available.</p>";
+  const head = `<tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join("")}</tr>`;
+  const body = rows
+    .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+    .join("");
+  return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+};
+
+const openReportWindow = ({ title, subtitle, chartImage, sections }) => {
+  const reportWindow = window.open("", "_blank");
+  if (!reportWindow) return;
+
+  const sectionsHtml = (sections || [])
+    .map((section) => {
+      const heading = section.heading ? `<h2>${escapeHtml(section.heading)}</h2>` : "";
+      return `<section>${heading}${section.content || ""}</section>`;
+    })
+    .join("");
+
+  const html = `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>${escapeHtml(title || "Report")}</title>
+    <style>
+      body { font-family: "Manrope", Arial, sans-serif; color: #0f172a; padding: 32px; }
+      h1 { margin: 0 0 6px; font-size: 24px; }
+      h2 { margin: 20px 0 8px; font-size: 16px; }
+      p { margin: 6px 0; }
+      .muted { color: #64748b; font-size: 12px; }
+      .chart { margin: 16px 0; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
+      .chart img { width: 100%; height: auto; display: block; }
+      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+      table.kv td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
+      table.kv td:first-child { color: #64748b; width: 180px; }
+      table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: left; }
+      table.data th { color: #475569; font-weight: 600; background: #f8fafc; }
+      .footer { margin-top: 32px; }
+      .signature { margin-top: 24px; }
+      .signature-line { margin-top: 32px; border-bottom: 1px solid #94a3b8; width: 240px; }
+    </style>
+  </head>
+  <body>
+    <h1>${escapeHtml(title || "Report")}</h1>
+    ${subtitle ? `<p class="muted">${escapeHtml(subtitle)}</p>` : ""}
+    ${chartImage ? `<div class="chart"><img src="${chartImage}" alt="Chart" /></div>` : ""}
+    ${sectionsHtml}
+    <div class="footer">
+      <p class="muted">Generated: ${escapeHtml(formatReportDate())}</p>
+      <div class="signature">
+        <p class="muted">Signature</p>
+        <div class="signature-line"></div>
+      </div>
+    </div>
+  </body>
+</html>`;
+
+  reportWindow.document.write(html);
+  reportWindow.document.close();
+  reportWindow.focus();
+};
+
+const computeSeriesStats = (points) => {
+  if (!points || points.length === 0) return null;
+  let sum = 0;
+  let min = Number.POSITIVE_INFINITY;
+  let max = Number.NEGATIVE_INFINITY;
+
+  points.forEach((point) => {
+    const y = Number(point.y);
+    if (!Number.isFinite(y)) return;
+    sum += y;
+    min = Math.min(min, y);
+    max = Math.max(max, y);
+  });
+
+  const first = points[0];
+  const last = points[points.length - 1];
+  const delta = Number(last.y) - Number(first.y);
+  const days = (Number(last.x) - Number(first.x)) / DAY_MS;
+  const rate = days > 0 ? delta / days : null;
+
+  return {
+    avg: sum / points.length,
+    min: Number.isFinite(min) ? min : null,
+    max: Number.isFinite(max) ? max : null,
+    first: Number(first.y),
+    last: Number(last.y),
+    delta,
+    days: days > 0 ? days : null,
+    rate,
+    count: points.length,
+  };
+};
+
+const computeRegressionLine = (points) => {
+  if (!points || points.length < 2) return null;
+  const n = points.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+
+  points.forEach((point) => {
+    const x = Number(point.x);
+    const y = Number(point.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+    sumX += x;
+    sumY += y;
+    sumXY += x * y;
+    sumXX += x * x;
+  });
+
+  const denom = n * sumXX - sumX * sumX;
+  if (denom === 0) return null;
+  const slope = (n * sumXY - sumX * sumY) / denom;
+  const intercept = (sumY - slope * sumX) / n;
+  return { slope, intercept };
+};
+
+const buildTrendlinePoints = (points) => {
+  const regression = computeRegressionLine(points);
+  if (!regression || points.length < 2) return null;
+  const start = points[0];
+  const end = points[points.length - 1];
+  const y1 = regression.slope * start.x + regression.intercept;
+  const y2 = regression.slope * end.x + regression.intercept;
+  return [
+    { x: start.x, y: y1 },
+    { x: end.x, y: y2 },
+  ];
+};
+
 export default function GrowthHistory() {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -271,7 +432,7 @@ export default function GrowthHistory() {
         <ComparePanel
           combinedRecords={combinedRecords}
           compareIds={compareIds}
-          setCompareIds={setCompareIds}
+          setCompare Ids={setCompareIds}
           compareWindow={compareWindow}
           setCompareWindow={setCompareWindow}
         />
@@ -329,8 +490,8 @@ function LookupCard({
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="kicker">Growth history</p>
-          <h2 className="text-2xl font-semibold text-dark">Find a jar and see its trail</h2>
-          <p className="text-sm text-subtle mt-1">Type a Jar ID to load measurements from Firebase.</p>
+          <h3 className="text-2xl font-semibold text-dark">Find a jar and see its Growth</h3>
+          <p className="text-sm text-subtle mt-1">Type a Jar ID </p> 
         </div>
         <span className="h-2.5 w-2.5 rounded-full bg-primary shadow-[0_0_12px_rgba(13,148,136,0.4)] mt-1" aria-hidden />
       </div>
@@ -395,6 +556,40 @@ function LookupCard({
 function ChartCard({ record, history, isLight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const seriesStats = useMemo(() => {
+    const points = history.map((row) => ({ x: row.ts, y: Number(row.height_mm) }));
+    return computeSeriesStats(points);
+  }, [history]);
+  const reportDateRows = useMemo(
+    () =>
+      history.map((row) => [formatDate(row.ts), `${Number(row.height_mm).toFixed(1)} mm`]),
+    [history]
+  );
+  const handleReport = () => {
+    if (!history.length) return;
+    const chartImage = chartRef.current?.toBase64Image?.();
+    const statsRows = [
+      ["Jar ID", record?.id || "-"],
+      ["Planting date", record?.planting_date || "-"],
+      ["Location", record?.location || "-"],
+      ["Cultivar", record?.cultivar || "-"],
+      ["Nutrition", record?.nutrition || "-"],
+      ["Measurements", history.length ? `${history.length} entries` : "0"],
+      ["Average height", seriesStats?.avg !== null ? `${seriesStats.avg.toFixed(1)} mm` : "-"],
+      ["Change", seriesStats?.delta !== null ? `${seriesStats.delta >= 0 ? "+" : ""}${seriesStats.delta.toFixed(1)} mm` : "-"],
+      ["Growth rate", seriesStats?.rate !== null ? `${seriesStats.rate.toFixed(2)} mm/day` : "-"],
+    ];
+
+    openReportWindow({
+      title: `Jar History Report - ${record?.id || "Unknown"}`,
+      subtitle: "Height over time",
+      chartImage,
+      sections: [
+        { heading: "Summary", content: renderKeyValueTable(statsRows) },
+        { heading: "Measurements", content: renderDataTable(["Date", "Height"], reportDateRows) },
+      ],
+    });
+  };
 
   useEffect(() => {
     if (chartRef.current) {
@@ -473,8 +668,41 @@ function ChartCard({ record, history, isLight }) {
           <p className="kicker">Trend line</p>
           <h3 className="text-xl font-semibold text-dark">Height over time</h3>
         </div>
-        <span className="text-xs text-subtle">{history.length} points</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-subtle">{history.length} points</span>
+          <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
+            Report
+          </button>
+        </div>
       </div>
+      {seriesStats && (
+        <div className="grid sm:grid-cols-4 gap-2">
+          <div className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Time span</p>
+            <p className="text-sm font-semibold text-dark">
+              {seriesStats.days !== null ? `${seriesStats.days.toFixed(0)} days` : "-"}
+            </p>
+          </div>
+          <div className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Avg height</p>
+            <p className="text-sm font-semibold text-dark">
+              {Number.isFinite(seriesStats.avg) ? `${seriesStats.avg.toFixed(1)} mm` : "-"}
+            </p>
+          </div>
+          <div className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Change</p>
+            <p className="text-sm font-semibold text-dark">
+              {Number.isFinite(seriesStats.delta) ? `${seriesStats.delta >= 0 ? "+" : ""}${seriesStats.delta.toFixed(1)} mm` : "-"}
+            </p>
+          </div>
+          <div className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Growth rate</p>
+            <p className="text-sm font-semibold text-dark">
+              {seriesStats.rate !== null ? `${seriesStats.rate.toFixed(2)} mm/day` : "-"}
+            </p>
+          </div>
+        </div>
+      )}
       <div className="h-80">
         {history.length ? (
           <canvas ref={canvasRef} />
@@ -684,7 +912,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
-  const datasets = useMemo(() => {
+  const { datasets, metrics } = useMemo(() => {
     const palette = ["#e64cc3", "#4f46e5", "#22c55e", "#f59e0b", "#0ea5e9", "#ef4444"];
     const cutoffMs = (() => {
       const now = Date.now();
@@ -694,33 +922,90 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
       return null;
     })();
 
-    return compareIds
-      .map((id, idx) => {
-        const plant = combinedRecords.find((p) => p.id === id);
-        if (!plant) return null;
-        const sorted = (plant.heights || [])
-          .map((h) => {
-            const ts = Date.parse(h.date);
-            return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
-          })
-          .filter((p) => p.x !== null && (cutoffMs === null || p.x >= cutoffMs))
-          .sort((a, b) => a.x - b.x);
-        if (!sorted.length) return null;
-        const color = palette[idx % palette.length];
-        return {
-          label: id,
-          data: sorted,
+    const nextDatasets = [];
+    const nextMetrics = [];
+
+    compareIds.forEach((id, idx) => {
+      const plant = combinedRecords.find((p) => p.id === id);
+      if (!plant) return;
+      const sorted = (plant.heights || [])
+        .map((h) => {
+          const ts = Date.parse(h.date);
+          return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
+        })
+        .filter((p) => p.x !== null && (cutoffMs === null || p.x >= cutoffMs))
+        .sort((a, b) => a.x - b.x);
+      if (!sorted.length) return;
+
+      const color = palette[idx % palette.length];
+      nextDatasets.push({
+        label: id,
+        data: sorted,
+        borderColor: color,
+        backgroundColor: `${color}33`,
+        tension: 0.25,
+        borderWidth: 2.2,
+        pointRadius: 4,
+        pointBackgroundColor: color,
+        fill: false,
+      });
+
+      const stats = computeSeriesStats(sorted);
+      if (stats) {
+        nextMetrics.push({
+          id,
+          rate: stats.rate,
+          delta: stats.delta,
+          avg: stats.avg,
+          count: stats.count,
+        });
+      }
+
+      const trendPoints = buildTrendlinePoints(sorted);
+      if (trendPoints) {
+        nextDatasets.push({
+          label: `${id} trend`,
+          data: trendPoints,
           borderColor: color,
-          backgroundColor: `${color}33`,
-          tension: 0.25,
-          borderWidth: 2.2,
-          pointRadius: 4,
-          pointBackgroundColor: color,
+          borderDash: [6, 6],
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0,
           fill: false,
-        };
-      })
-      .filter(Boolean);
+        });
+      }
+    });
+
+    return { datasets: nextDatasets, metrics: nextMetrics };
   }, [compareIds, combinedRecords, compareWindow]);
+
+  const handleReport = () => {
+    if (!metrics.length) return;
+    const chartImage = chartRef.current?.toBase64Image?.();
+    const windowLabel = compareWindow === "all" ? "All time" : compareWindow;
+    const metricRows = metrics.map((item) => [
+      item.id,
+      item.rate !== null ? `${item.rate.toFixed(2)} mm/day` : "n/a",
+      Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a",
+      Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a",
+      `${item.count} pts`,
+    ]);
+
+    openReportWindow({
+      title: "Jar Comparison Report",
+      subtitle: `Window: ${windowLabel}`,
+      chartImage,
+      sections: [
+        {
+          heading: "Growth metrics",
+          content: renderDataTable(
+            ["Jar ID", "Growth rate", "Change", "Avg height", "Points"],
+            metricRows
+          ),
+        },
+      ],
+    });
+  };
 
   useEffect(() => {
     if (chartRef.current) {
@@ -795,10 +1080,36 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
           <h3 className="text-xl font-semibold text-dark">Growth lines across selected jars</h3>
           <p className="text-sm text-subtle">Window: {compareWindow === "all" ? "All time" : compareWindow}</p>
         </div>
-        <span className="text-xs text-subtle">
-          {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : "Waiting for selection"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-subtle">
+            {metrics.length ? `${metrics.length} jar${metrics.length > 1 ? "s" : ""}` : "Waiting for selection"}
+          </span>
+          <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
+            Report
+          </button>
+        </div>
       </div>
+      {metrics.length ? (
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+          {metrics.map((item) => (
+            <div key={item.id} className="panel-muted px-3 py-2 text-sm">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-dark">{item.id}</span>
+                <span className="text-[11px] text-subtle">{item.count} pts</span>
+              </div>
+              <p className="text-xs text-subtle mt-1">
+                Growth rate: {item.rate !== null ? `${item.rate.toFixed(2)} mm/day` : "n/a"}
+              </p>
+              <p className="text-xs text-subtle">
+                Change: {Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a"}
+              </p>
+              <p className="text-xs text-subtle">
+                Avg height: {Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a"}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : null}
       <div className="h-72">
         {datasets.length ? (
           <canvas ref={canvasRef} />
@@ -813,6 +1124,59 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
 function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+
+  const rackStats = useMemo(() => {
+    if (!rackPlants.length) return [];
+    const stats = rackPlants.map((plant) => {
+      const points = (plant.heights || [])
+        .map((h) => {
+          const ts = Date.parse(h.date);
+          return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
+        })
+        .filter((p) => p.x !== null)
+        .sort((a, b) => a.x - b.x);
+      const summary = computeSeriesStats(points);
+      return {
+        id: plant.id,
+        avg: summary?.avg ?? null,
+        count: summary?.count ?? 0,
+      };
+    });
+
+    const valid = stats.filter((item) => item.avg !== null);
+    if (!valid.length) return stats.map((item) => ({ ...item, rank: null }));
+    const maxAvg = Math.max(...valid.map((item) => item.avg));
+    const minAvg = Math.min(...valid.map((item) => item.avg));
+    return stats.map((item) => {
+      if (item.avg === null) return { ...item, rank: null };
+      if (item.avg === maxAvg) return { ...item, rank: "Best" };
+      if (item.avg === minAvg) return { ...item, rank: "Worst" };
+      return { ...item, rank: null };
+    });
+  }, [rackPlants]);
+
+  const handleReport = () => {
+    if (!rackStats.length || !rackQuery) return;
+    const chartImage = chartRef.current?.toBase64Image?.();
+    const rows = rackStats.map((item) => [
+      item.id,
+      item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a",
+      `${item.count} pts`,
+      item.rank || "-",
+    ]);
+
+    openReportWindow({
+      title: `Rack Summary Report - ${rackQuery}`,
+      subtitle: "Average height per jar",
+      chartImage,
+      sections: [
+        {
+          heading: "Rack metrics",
+          content: renderDataTable(["Jar ID", "Avg height", "Points", "Rank"], rows),
+        },
+      ],
+    });
+  };
 
   const datasets = useMemo(() => {
     const palette = ["#d946ef", "#a855f7", "#6366f1", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#0ea5e9"];
@@ -904,10 +1268,46 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
           <h3 className="text-xl font-semibold text-dark">Growth by rack</h3>
           <p className="text-sm text-subtle">Lines show each jar found on the rack label you searched.</p>
         </div>
-        <span className="text-xs text-subtle">
-          {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : rackQuery ? "No matches" : "Waiting"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-subtle">
+            {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : rackQuery ? "No matches" : "Waiting"}
+          </span>
+          <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
+            Report
+          </button>
+        </div>
       </div>
+      {rackQuery && rackStats.length ? (
+        <div className="panel-muted px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-subtle">Average height per jar</p>
+            <span className="text-[11px] text-subtle">Best/Worst marked</span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2 max-h-40 overflow-auto pr-1">
+            {rackStats.map((item) => (
+              <div key={item.id} className="rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-xs text-dark">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold">{item.id}</span>
+                  {item.rank && (
+                    <span
+                      className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] ${
+                        item.rank === "Best"
+                          ? "border-primary/35 bg-primary/10 text-primary"
+                          : "border-rose-200/60 bg-rose-500/10 text-rose-700"
+                      }`}
+                    >
+                      {item.rank}
+                    </span>
+                  )}
+                </div>
+                <p className="text-[11px] text-subtle mt-1">
+                  Avg: {item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a"} · {item.count} pts
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="h-72">
         {rackQuery ? (
           datasets.length ? (
@@ -1016,7 +1416,7 @@ function Hero() {
         <p className="kicker">Historical view</p>
         <h1 className="title-lg">Jar height history</h1>
         <p className="text-subtle text-sm md:text-base max-w-2xl">
-          Query any Jar ID and review its recorded heights. The line chart uses Firebase data, with dates on the x-axis and height in millimeters on the y-axis.
+          Explore growth trends for any jar using time-stamped measurements from Firebase. The chart plots dates on the x-axis and height in millimeters on the y-axis, while the sections below support jar comparison, rack-level filtering, and detailed measurement review.
         </p>
       </div>
     </motion.div>

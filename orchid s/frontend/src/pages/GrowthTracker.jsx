@@ -102,7 +102,14 @@ export default function GrowthTracker() {
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [plantRecords, setPlantRecords] = useState([]);
   const [plantFetchError, setPlantFetchError] = useState("");
-  const demoIds = useMemo(() => plantRecords.map((p) => p.id).filter(Boolean), [plantRecords]);
+  const [cultureEntries, setCultureEntries] = useState([]);
+  const [cultureError, setCultureError] = useState("");
+  const demoIds = useMemo(() => {
+    const ids = new Set();
+    plantRecords.forEach((p) => p.id && ids.add(p.id));
+    cultureEntries.forEach((e) => e.jarId && ids.add(e.jarId));
+    return Array.from(ids);
+  }, [plantRecords, cultureEntries]);
   const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
   const [jarId, setJarId] = useState("");
   const [plantingDate, setPlantingDate] = useState("");
@@ -122,6 +129,12 @@ export default function GrowthTracker() {
     const id = jarId.trim().toLowerCase();
     return plantRecords.find((p) => String(p.id).toLowerCase() === id) || null;
   }, [jarId, plantRecords]);
+
+  const cultureRecord = useMemo(() => {
+    if (!jarId) return null;
+    const id = jarId.trim().toLowerCase();
+    return cultureEntries.find((entry) => String(entry.jarId).toLowerCase() === id) || null;
+  }, [jarId, cultureEntries]);
 
   useEffect(() => {
     let active = true;
@@ -145,6 +158,38 @@ export default function GrowthTracker() {
     return () => {
       active = false;
     };
+  }, []);
+
+  useEffect(() => {
+    const entriesRef = ref(db, "recultureEntries");
+    const unsubscribe = onValue(
+      entriesRef,
+      (snap) => {
+        const data = snap.val() || {};
+        const next = Object.entries(data)
+          .map(([key, value]) => {
+            const entry = value && typeof value === "object" ? value : {};
+            return {
+              jarId: entry.jarId || key,
+              cultureDate: entry.cultureDate,
+              rackNo: entry.rackNo,
+              orchidType: entry.orchidType,
+              nutrition: entry.nutrition,
+              recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+              updatedAt: entry.updatedAt,
+            };
+          })
+          .filter((entry) => entry.jarId);
+        setCultureEntries(next);
+        setCultureError("");
+      },
+      (err) => {
+        setCultureError(err?.message || "Failed to load culture entries");
+        setCultureEntries([]);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -186,14 +231,27 @@ export default function GrowthTracker() {
   }, [plantingDate]);
 
   useEffect(() => {
-    if (plantRecord) {
-      if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
-      const latestHeight = resolveCurrentHeight(plantRecord);
-      if (latestHeight !== undefined && latestHeight !== null) {
-        setCurrentHeight(String(latestHeight));
-      }
+    if (!jarId.trim()) {
+      setPlantingDate("");
+      setCurrentHeight("");
+      return;
     }
-  }, [plantRecord]);
+
+    if (cultureRecord?.cultureDate) {
+      setPlantingDate(cultureRecord.cultureDate);
+    } else if (plantRecord?.planting_date) {
+      setPlantingDate(plantRecord.planting_date);
+    } else {
+      setPlantingDate("");
+    }
+
+    const latestHeight = resolveCurrentHeight(plantRecord);
+    if (latestHeight !== undefined && latestHeight !== null) {
+      setCurrentHeight(String(latestHeight));
+    } else {
+      setCurrentHeight("");
+    }
+  }, [jarId, plantRecord, cultureRecord]);
 
   useEffect(() => {
     if (derivedAgeDays === null) {
@@ -210,8 +268,8 @@ export default function GrowthTracker() {
     setAnalyzedJarId("");
     setAnalyzedHeight(null);
 
-    if (!plantRecord || !plantingDate) {
-      setError("Select a valid Jar/Plant ID so planting date can be loaded from the database.");
+    if (!plantingDate) {
+      setError("Select a Jar/Plant ID that has culture data so planting date can be loaded.");
       return;
     }
 
@@ -276,9 +334,11 @@ export default function GrowthTracker() {
             loading={loading}
             error={error}
             plantRecord={plantRecord}
+            cultureRecord={cultureRecord}
             demoIds={demoIds}
             demoIdHint={demoIdHint}
             plantFetchError={plantFetchError}
+            cultureError={cultureError}
           />
           <PlantHistoryCard plantRecord={plantRecord} demoIdHint={demoIdHint} />
           <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
@@ -340,9 +400,11 @@ function FormCard({
   loading,
   error,
   plantRecord,
+  cultureRecord,
   demoIds,
   demoIdHint,
   plantFetchError,
+  cultureError,
 }) {
   return (
     <motion.form
@@ -369,7 +431,7 @@ function FormCard({
             className="input-shell"
           />
         </Field>
-        <Field label="Planting date (auto from DB)">
+        <Field label="Planting date (from culture data)">
           <input
             type="text"
             value={plantingDate}
@@ -402,20 +464,42 @@ function FormCard({
         </Field>
       </div>
 
+      {!cultureRecord && jarId && (
+        <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
+          No culture entry found for "{jarId}". Planting date and age come from the culture table. Try {demoIdHint || "a known ID"}.
+        </p>
+      )}
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
+          No plant height record found for "{jarId}". Current height is pulled from the plant record.
         </p>
+      )}
+      {cultureRecord && (
+        <div className="panel-muted grid sm:grid-cols-2 gap-3 p-3 text-xs text-subtle">
+          <p>Rack: {cultureRecord.rackNo || "-"}</p>
+          <p>Orchid: {cultureRecord.orchidType || "-"}</p>
+          <p className="sm:col-span-2">Nutrition: {cultureRecord.nutrition || "-"}</p>
+        </div>
       )}
       {plantFetchError && (
         <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
           Plant records unavailable: {plantFetchError}
         </p>
       )}
+      {cultureError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Culture entries unavailable: {cultureError}
+        </p>
+      )}
       <p className="text-xs text-subtle">Today: {today}</p>
-      {plantRecord && (
+      {cultureRecord && plantRecord && (
         <p className="text-xs text-primary rounded-lg border border-primary/25 bg-primary/10 px-3 py-2">
-          Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
+          Planting date and age from culture data; latest height from plant record.
+        </p>
+      )}
+      {cultureRecord && !plantRecord && (
+        <p className="text-xs text-primary rounded-lg border border-primary/25 bg-primary/10 px-3 py-2">
+          Planting date and age loaded from culture data. Height is missing for this jar.
         </p>
       )}
 

@@ -5,6 +5,75 @@ import { db } from "../lib/firebase";
 
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
+const OPTIONS_STORAGE_KEY = "orchid-insights-reculture-options-v1";
+
+const normalizeOption = (value) => (value || "").trim();
+const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
+
+const readOptionStore = () => {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(OPTIONS_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      racks: Array.isArray(parsed.racks) ? parsed.racks : [],
+      orchids: Array.isArray(parsed.orchids) ? parsed.orchids : [],
+    };
+  } catch {
+    return null;
+  }
+};
+
+const writeOptionStore = (store) => {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(store));
+  } catch {
+    // ignore storage failures
+  }
+};
+
+const buildOptionsFromEntries = (entries) => {
+  const racks = new Map();
+  const orchids = new Map();
+
+  entries.forEach((entry) => {
+    const rack = normalizeOption(entry.rackNo);
+    if (rack) racks.set(normalizeOptionKey(rack), rack);
+    const orchid = normalizeOption(entry.orchidType);
+    if (orchid) orchids.set(normalizeOptionKey(orchid), orchid);
+  });
+
+  return {
+    racks: Array.from(racks.values()).sort((a, b) => a.localeCompare(b)),
+    orchids: Array.from(orchids.values()).sort((a, b) => a.localeCompare(b)),
+  };
+};
+
+const addOptionValue = (list, value) => {
+  const cleaned = normalizeOption(value);
+  if (!cleaned) return list;
+  const key = normalizeOptionKey(cleaned);
+  if (list.some((item) => normalizeOptionKey(item) === key)) return list;
+  return [...list, cleaned].sort((a, b) => a.localeCompare(b));
+};
+
+const updateOptionValue = (list, fromValue, toValue) => {
+  const cleaned = normalizeOption(toValue);
+  if (!cleaned) return list;
+  const fromKey = normalizeOptionKey(fromValue);
+  const nextKey = normalizeOptionKey(cleaned);
+  const filtered = list.filter((item) => normalizeOptionKey(item) !== fromKey);
+  if (filtered.some((item) => normalizeOptionKey(item) === nextKey)) {
+    return filtered.sort((a, b) => a.localeCompare(b));
+  }
+  return [...filtered, cleaned].sort((a, b) => a.localeCompare(b));
+};
+
+const removeOptionValue = (list, value) =>
+  list.filter((item) => normalizeOptionKey(item) !== normalizeOptionKey(value));
 
 export default function CultureDetails() {
   const [form, setForm] = useState({
@@ -16,12 +85,23 @@ export default function CultureDetails() {
     recultures: [newRecultureRow()],
   });
   const [entries, setEntries] = useState([]);
+  const [optionStore, setOptionStore] = useState({ racks: [], orchids: [] });
+  const [optionsReady, setOptionsReady] = useState(false);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [entriesError, setEntriesError] = useState("");
   const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const isEditing = Boolean(selectedId);
+
+  useEffect(() => {
+    const stored = readOptionStore();
+    if (stored) {
+      setOptionStore(stored);
+      setOptionsReady(true);
+    }
+  }, []);
 
   useEffect(() => {
     setLoadingEntries(true);
@@ -58,13 +138,81 @@ export default function CultureDetails() {
     return () => unsubscribe();
   }, []);
 
+  useEffect(() => {
+    if (optionsReady) return;
+    if (loadingEntries) return;
+    const seeded = buildOptionsFromEntries(entries);
+    setOptionStore(seeded);
+    writeOptionStore(seeded);
+    setOptionsReady(true);
+  }, [entries, loadingEntries, optionsReady]);
+
   const selectedEntry = useMemo(() => {
     if (!selectedId) return null;
     return entries.find((e) => e.jarId.toLowerCase() === selectedId.toLowerCase()) || null;
   }, [entries, selectedId]);
 
+  const rackOptions = optionStore.racks;
+  const orchidOptions = optionStore.orchids;
+
+  const updateOptionStore = (updater) => {
+    setOptionStore((prev) => {
+      const next = updater(prev);
+      writeOptionStore(next);
+      return next;
+    });
+  };
+
   const handleField = (key) => (e) => {
     setForm((prev) => ({ ...prev, [key]: e.target.value }));
+  };
+
+  const applyOption = (key, value) => {
+    setForm((prev) => ({ ...prev, [key]: value }));
+    setStatus("");
+    setError("");
+  };
+
+  const addRackOption = (value) => {
+    updateOptionStore((prev) => ({
+      ...prev,
+      racks: addOptionValue(prev.racks, value),
+    }));
+  };
+
+  const updateRackOption = (fromValue, toValue) => {
+    updateOptionStore((prev) => ({
+      ...prev,
+      racks: updateOptionValue(prev.racks, fromValue, toValue),
+    }));
+  };
+
+  const deleteRackOption = (value) => {
+    updateOptionStore((prev) => ({
+      ...prev,
+      racks: removeOptionValue(prev.racks, value),
+    }));
+  };
+
+  const addOrchidOption = (value) => {
+    updateOptionStore((prev) => ({
+      ...prev,
+      orchids: addOptionValue(prev.orchids, value),
+    }));
+  };
+
+  const updateOrchidOption = (fromValue, toValue) => {
+    updateOptionStore((prev) => ({
+      ...prev,
+      orchids: updateOptionValue(prev.orchids, fromValue, toValue),
+    }));
+  };
+
+  const deleteOrchidOption = (value) => {
+    updateOptionStore((prev) => ({
+      ...prev,
+      orchids: removeOptionValue(prev.orchids, value),
+    }));
   };
 
   const handleRecultureChange = (idx, key, value) => {
@@ -151,6 +299,11 @@ export default function CultureDetails() {
     try {
       await set(ref(db, `recultureEntries/${jarId}`), payload);
       setSelectedId(jarId);
+      updateOptionStore((prev) => ({
+        ...prev,
+        racks: addOptionValue(prev.racks, form.rackNo),
+        orchids: addOptionValue(prev.orchids, form.orchidType),
+      }));
       setStatus(`Saved ${jarId} with ${payload.recultures.length} re-culture dates.`);
     } catch (err) {
       setError(err?.message || "Failed to save to Firebase.");
@@ -165,9 +318,26 @@ export default function CultureDetails() {
 
       <div className="grid lg:grid-cols-3 gap-6 relative">
         <div className="lg:col-span-2 space-y-6">
+          <OptionsPanel
+            rackOptions={rackOptions}
+            orchidOptions={orchidOptions}
+            currentRack={form.rackNo}
+            currentOrchid={form.orchidType}
+            onSelectRack={(value) => applyOption("rackNo", value)}
+            onSelectOrchid={(value) => applyOption("orchidType", value)}
+            onAddRack={addRackOption}
+            onUpdateRack={updateRackOption}
+            onDeleteRack={deleteRackOption}
+            onAddOrchid={addOrchidOption}
+            onUpdateOrchid={updateOrchidOption}
+            onDeleteOrchid={deleteOrchidOption}
+          />
           <FormCard
             form={form}
             onFieldChange={handleField}
+            rackOptions={rackOptions}
+            orchidOptions={orchidOptions}
+            isEditing={isEditing}
             onRecultureChange={handleRecultureChange}
             addRecultureRow={addRecultureRow}
             removeRecultureRow={removeRecultureRow}
@@ -208,6 +378,9 @@ function Hero() {
 function FormCard({
   form,
   onFieldChange,
+  rackOptions,
+  orchidOptions,
+  isEditing,
   onRecultureChange,
   addRecultureRow,
   removeRecultureRow,
@@ -241,7 +414,8 @@ function FormCard({
             value={form.jarId}
             onChange={onFieldChange("jarId")}
             placeholder="e.g. Jar-42"
-            className="input-shell"
+            disabled={isEditing}
+            className={`input-shell ${isEditing ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
           />
         </Field>
         <Field label="Culture date *">
@@ -249,7 +423,8 @@ function FormCard({
             type="date"
             value={form.cultureDate}
             onChange={onFieldChange("cultureDate")}
-            className="input-shell"
+            disabled={isEditing}
+            className={`input-shell ${isEditing ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
           />
           <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
         </Field>
@@ -258,16 +433,28 @@ function FormCard({
             value={form.rackNo}
             onChange={onFieldChange("rackNo")}
             placeholder="Rack or shelf location"
+            list="rack-options"
             className="input-shell"
           />
+          <datalist id="rack-options">
+            {rackOptions.map((rack) => (
+              <option key={rack} value={rack} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Orchid type *">
           <input
             value={form.orchidType}
             onChange={onFieldChange("orchidType")}
             placeholder="e.g. Phalaenopsis"
+            list="orchid-options"
             className="input-shell"
           />
+          <datalist id="orchid-options">
+            {orchidOptions.map((orchid) => (
+              <option key={orchid} value={orchid} />
+            ))}
+          </datalist>
         </Field>
         <Field label="Nutrition / medium *">
           <textarea
@@ -351,6 +538,12 @@ function FormCard({
           Clear
         </button>
       </div>
+
+      {isEditing && (
+        <p className="text-xs text-subtle">
+          Jar ID and culture date are locked while editing. Use “Clear” to create a new jar.
+        </p>
+      )}
 
       {loadingEntries && !entriesError && (
         <p className="text-xs text-subtle">Loading Firebase entries...</p>
@@ -560,6 +753,262 @@ function Field({ label, children }) {
       <span className="text-dark">{label}</span>
       {children}
     </label>
+  );
+}
+
+function OptionsPanel({
+  rackOptions,
+  orchidOptions,
+  currentRack,
+  currentOrchid,
+  onSelectRack,
+  onSelectOrchid,
+  onAddRack,
+  onUpdateRack,
+  onDeleteRack,
+  onAddOrchid,
+  onUpdateOrchid,
+  onDeleteOrchid,
+}) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="panel space-y-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="kicker">Options</p>
+          <h2 className="text-lg font-semibold text-dark">Rack & orchid categories</h2>
+          <p className="text-sm text-subtle">
+            Pick from saved values, or type a new one in the form below.
+          </p>
+        </div>
+        <span className="text-xs text-subtle">
+          {rackOptions.length + orchidOptions.length} total
+        </span>
+      </div>
+
+      <div className="grid sm:grid-cols-2 gap-4">
+        <OptionGroup
+          label="Rack list"
+          options={rackOptions}
+          currentValue={currentRack}
+          emptyMessage="No racks saved yet."
+          onSelect={onSelectRack}
+          onAdd={onAddRack}
+          onUpdate={onUpdateRack}
+          onDelete={onDeleteRack}
+          inputPlaceholder="Add rack (e.g. R-3A)"
+        />
+        <OptionGroup
+          label="Orchid category"
+          options={orchidOptions}
+          currentValue={currentOrchid}
+          emptyMessage="No orchid types saved yet."
+          onSelect={onSelectOrchid}
+          onAdd={onAddOrchid}
+          onUpdate={onUpdateOrchid}
+          onDelete={onDeleteOrchid}
+          inputPlaceholder="Add orchid (e.g. Phalaenopsis)"
+        />
+      </div>
+    </motion.div>
+  );
+}
+
+function OptionGroup({
+  label,
+  options,
+  currentValue,
+  emptyMessage,
+  onSelect,
+  onAdd,
+  onUpdate,
+  onDelete,
+  inputPlaceholder,
+}) {
+  const [draft, setDraft] = useState("");
+  const [filter, setFilter] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [editingOriginal, setEditingOriginal] = useState("");
+  const [editingValue, setEditingValue] = useState("");
+  const [addError, setAddError] = useState("");
+  const [updateError, setUpdateError] = useState("");
+
+  const normalizedFilter = filter.trim().toLowerCase();
+  const filteredOptions = useMemo(() => {
+    if (!normalizedFilter) return options;
+    return options.filter((option) => option.toLowerCase().includes(normalizedFilter));
+  }, [options, normalizedFilter]);
+
+  const startEdit = (value) => {
+    setEditingOriginal(value);
+    setEditingValue(value);
+  };
+
+  const cancelEdit = () => {
+    setEditingOriginal("");
+    setEditingValue("");
+  };
+
+  const submitAdd = () => {
+    const cleaned = normalizeOption(draft);
+    if (!cleaned) return;
+    if (options.some((item) => normalizeOptionKey(item) === normalizeOptionKey(cleaned))) {
+      setAddError("Already exists.");
+      return;
+    }
+    onAdd(cleaned);
+    setDraft("");
+    setAddError("");
+  };
+
+  const submitUpdate = () => {
+    const cleaned = normalizeOption(editingValue);
+    if (!cleaned) return;
+    if (normalizeOptionKey(cleaned) !== normalizeOptionKey(editingOriginal)) {
+      if (options.some((item) => normalizeOptionKey(item) === normalizeOptionKey(cleaned))) {
+        setUpdateError("Already exists.");
+        return;
+      }
+    }
+    onUpdate(editingOriginal, cleaned);
+    cancelEdit();
+    setUpdateError("");
+  };
+
+  const selectOption = (value) => {
+    onSelect(value);
+    setIsOpen(false);
+    setFilter("");
+  };
+
+  return (
+    <div className="panel-muted px-4 py-3 space-y-2">
+      <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">{label}</p>
+      <div className="flex items-center gap-2">
+        <input
+          value={draft}
+          onChange={(e) => {
+            setDraft(e.target.value);
+            if (addError) setAddError("");
+          }}
+          placeholder={inputPlaceholder}
+          className="input-shell py-2"
+        />
+        <button type="button" onClick={submitAdd} className="btn-primary text-xs px-3 py-2">
+          Add
+        </button>
+      </div>
+      {addError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5">
+          {addError}
+        </p>
+      )}
+
+      <button
+        type="button"
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="w-full flex items-center justify-between rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-sm text-dark transition hover:border-primary/35"
+      >
+        <span className="text-left">
+          <span className="block font-medium">{label}</span>
+          {currentValue?.trim() && (
+            <span className="block text-xs text-subtle">{currentValue}</span>
+          )}
+        </span>
+        <span className="text-xs text-subtle">{isOpen ? "Hide" : "Show"}</span>
+      </button>
+
+      {isOpen && (
+        <div className="rounded-xl border border-border/45 bg-paper/70 p-3 space-y-2">
+          <div className="flex items-center gap-2">
+            <input
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Search..."
+              className="input-shell py-2"
+            />
+            <button type="button" onClick={() => setFilter("")} className="btn-soft text-xs px-3 py-2">
+              Clear
+            </button>
+          </div>
+
+          {filteredOptions.length ? (
+            <div className="space-y-2 max-h-56 overflow-auto pr-1">
+              {filteredOptions.map((option) =>
+                editingOriginal === option ? (
+                  <div
+                    key={option}
+                    className="flex flex-wrap sm:flex-nowrap items-center gap-2 rounded-xl border border-border/45 bg-paper/80 px-3 py-2"
+                  >
+                    <input
+                      value={editingValue}
+                      onChange={(e) => {
+                        setEditingValue(e.target.value);
+                        if (updateError) setUpdateError("");
+                      }}
+                      className="input-shell py-2 flex-1"
+                    />
+                    <button type="button" onClick={submitUpdate} className="btn-primary text-xs px-3 py-2">
+                      Update
+                    </button>
+                    <button type="button" onClick={cancelEdit} className="btn-soft text-xs px-3 py-2">
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onDelete(option);
+                        cancelEdit();
+                        setUpdateError("");
+                      }}
+                      className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 hover:border-rose-300 transition"
+                    >
+                      Delete
+                    </button>
+                    {updateError && (
+                      <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 w-full">
+                        {updateError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div
+                    key={option}
+                    className="flex flex-wrap sm:flex-nowrap items-center justify-between gap-2 rounded-xl border border-border/45 bg-paper/80 px-3 py-2"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectOption(option)}
+                      className="text-sm font-semibold text-dark hover:text-primary transition"
+                    >
+                      {option}
+                    </button>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={() => startEdit(option)} className="btn-soft text-xs px-3 py-2">
+                        Update
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDelete(option)}
+                        className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2 text-xs text-rose-700 hover:border-rose-300 transition"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                )
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-subtle">{options.length ? "No matches." : emptyMessage}</p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
