@@ -121,7 +121,7 @@ export default function PlantDatabase() {
               <h3 className="text-xl font-semibold text-dark">{selected.id}</h3>
             </div>
             <span className="rounded-full border border-secondary/25 bg-secondary/10 px-3 py-1 text-xs font-semibold text-secondary">
-              Mock/Live mix
+              Firebase
             </span>
           </div>
           <div className="mt-4 grid gap-4 sm:grid-cols-3">

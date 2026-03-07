@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { onValue, ref, set } from "firebase/database";
+import { db } from "../lib/firebase";
 import { useTheme } from "../context/ThemeContext";
-import { mockRecultureData } from "../data/mockReculture";
 
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
@@ -18,23 +19,48 @@ export default function CultureDetails() {
     nutrition: "",
     recultures: [newRecultureRow()],
   });
-  const [entries, setEntries] = useState(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const raw = localStorage.getItem("reculture-entries");
-      if (raw) return JSON.parse(raw);
-      return mockRecultureData;
-    } catch {
-      return mockRecultureData;
-    }
-  });
+  const [entries, setEntries] = useState([]);
+  const [loadingEntries, setLoadingEntries] = useState(false);
+  const [entriesError, setEntriesError] = useState("");
+  const [saving, setSaving] = useState(false);
   const [selectedId, setSelectedId] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
-    localStorage.setItem("reculture-entries", JSON.stringify(entries));
-  }, [entries]);
+    setLoadingEntries(true);
+    const entriesRef = ref(db, "recultureEntries");
+    const unsubscribe = onValue(
+      entriesRef,
+      (snap) => {
+        const data = snap.val() || {};
+        const next = Object.entries(data)
+          .map(([key, value]) => {
+            const entry = value && typeof value === "object" ? value : {};
+            return {
+              jarId: entry.jarId || key,
+              cultureDate: entry.cultureDate,
+              rackNo: entry.rackNo,
+              orchidType: entry.orchidType,
+              nutrition: entry.nutrition,
+              recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+              updatedAt: entry.updatedAt,
+            };
+          })
+          .filter((entry) => entry.jarId);
+        setEntries(next);
+        setEntriesError("");
+        setLoadingEntries(false);
+      },
+      (err) => {
+        setEntriesError(err?.message || "Failed to load Firebase entries");
+        setEntries([]);
+        setLoadingEntries(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   const selectedEntry = useMemo(() => {
     if (!selectedId) return null;
@@ -84,7 +110,7 @@ export default function CultureDetails() {
     setError("");
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setStatus("");
@@ -125,18 +151,16 @@ export default function CultureDetails() {
       updatedAt: new Date().toISOString(),
     };
 
-    setEntries((prev) => {
-      const idx = prev.findIndex((e) => e.jarId.toLowerCase() === jarId.toLowerCase());
-      if (idx >= 0) {
-        const next = [...prev];
-        next[idx] = payload;
-        return next;
-      }
-      return [...prev, payload];
-    });
-
-    setSelectedId(jarId);
-    setStatus(`Saved ${jarId} with ${payload.recultures.length} re-culture dates.`);
+    setSaving(true);
+    try {
+      await set(ref(db, `recultureEntries/${jarId}`), payload);
+      setSelectedId(jarId);
+      setStatus(`Saved ${jarId} with ${payload.recultures.length} re-culture dates.`);
+    } catch (err) {
+      setError(err?.message || "Failed to save to Firebase.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -157,6 +181,9 @@ export default function CultureDetails() {
             clearForm={clearForm}
             status={status}
             error={error}
+            entriesError={entriesError}
+            loadingEntries={loadingEntries}
+            saving={saving}
           />
         </div>
         <JarList isLight={isLight} entries={entries} selectedId={selectedId} onSelect={loadEntry} />
@@ -195,6 +222,9 @@ function FormCard({
   clearForm,
   status,
   error,
+  entriesError,
+  loadingEntries,
+  saving,
 }) {
   return (
     <motion.form
@@ -209,7 +239,7 @@ function FormCard({
           <p className="text-xs uppercase tracking-[0.28em] text-primary font-bold">Jar details</p>
           <h2 className="text-xl font-semibold text-slate-900">Create or update a jar</h2>
         </div>
-        <span className="text-xs text-slate-500">Local only</span>
+        <span className="text-xs text-slate-500">Firebase</span>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
@@ -315,9 +345,10 @@ function FormCard({
       <div className="flex flex-wrap gap-3">
         <button
           type="submit"
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-cyan-500 text-white font-semibold px-4 py-3 shadow-glow"
+          disabled={saving}
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-cyan-500 text-white font-semibold px-4 py-3 shadow-glow disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          Save jar
+          {saving ? "Saving..." : "Save jar"}
         </button>
         <button
           type="button"
@@ -327,6 +358,15 @@ function FormCard({
           Clear
         </button>
       </div>
+
+      {loadingEntries && !entriesError && (
+        <p className="text-xs text-slate-500">Loading Firebase entries...</p>
+      )}
+      {entriesError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Firebase error: {entriesError}
+        </p>
+      )}
 
       <AnimatePresence>
         {status && (

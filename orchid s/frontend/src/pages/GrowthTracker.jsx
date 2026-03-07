@@ -1,16 +1,111 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
-import { mockPlants } from "../data/mockPlants";
 import { db } from "../lib/firebase";
 import { ref, onValue, query, limitToLast } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
+
+const toNumber = (value) => {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
+
+const coerceTimestamp = (value) => {
+  const num = toNumber(value);
+  if (num === null) return null;
+  return num < 10000000000 ? num * 1000 : num;
+};
+
+const normalizeHeightEntry = (entry) => {
+  if (entry === undefined || entry === null) return null;
+  if (typeof entry === "number") return { height_mm: entry };
+  if (typeof entry === "string") {
+    const num = toNumber(entry);
+    return num === null ? null : { height_mm: num };
+  }
+  if (typeof entry !== "object") return null;
+
+  const heightMm = toNumber(entry.height_mm ?? entry.height ?? entry.heightMm ?? entry.heightMM ?? entry.current_height);
+  const heightCm = toNumber(entry.height_cm ?? entry.heightCm);
+  const resolvedHeight = heightMm ?? (heightCm !== null ? heightCm * 10 : null);
+  if (resolvedHeight === null) return null;
+
+  const ts = coerceTimestamp(entry.timestamp ?? entry.ts ?? entry.time ?? entry.logged_at ?? entry.loggedAt);
+  const date = entry.date || entry.recorded_at || entry.recordedAt || (ts ? new Date(ts).toISOString().split("T")[0] : null);
+
+  return {
+    ...entry,
+    height_mm: resolvedHeight,
+    timestamp: ts,
+    date,
+  };
+};
+
+const normalizeHeights = (raw) => {
+  if (!raw) return [];
+  const list = Array.isArray(raw) ? raw : Object.values(raw);
+  return list.map(normalizeHeightEntry).filter(Boolean);
+};
+
+const normalizePlantRecord = (plant) => {
+  if (!plant) return null;
+  const extra = plant.extra || {};
+  const heights = normalizeHeights(
+    plant.heights ??
+      extra.heights ??
+      extra.height_history ??
+      extra.heightHistory ??
+      extra.growth_logs ??
+      extra.growthLogs
+  );
+  const planting_date =
+    plant.planting_date || plant.plantingDate || extra.planting_date || extra.plantingDate || "";
+  const height_mm = toNumber(
+    plant.height_mm ?? plant.height ?? plant.current_height ?? extra.height_mm ?? extra.height ?? extra.current_height
+  );
+
+  return {
+    ...plant,
+    id: plant.id ?? extra.id ?? "",
+    planting_date,
+    height_mm,
+    cultivar: plant.cultivar ?? extra.cultivar ?? extra.orchidType,
+    location: plant.location ?? extra.location ?? (extra.rackNo ? `Rack ${extra.rackNo}` : undefined),
+    heights,
+  };
+};
+
+const latestHeightFromHistory = (rows) => {
+  if (!rows || !rows.length) return null;
+  const enriched = rows
+    .map((row) => {
+      const ts = coerceTimestamp(row.timestamp ?? row.ts) ?? (row.date ? Date.parse(row.date) : null);
+      return { row, ts: Number.isFinite(ts) ? ts : null };
+    })
+    .filter((item) => item.ts !== null);
+
+  if (enriched.length) {
+    enriched.sort((a, b) => b.ts - a.ts);
+    return toNumber(enriched[0]?.row?.height_mm ?? enriched[0]?.row?.height);
+  }
+
+  return toNumber(rows[0]?.height_mm ?? rows[0]?.height);
+};
+
+const resolveCurrentHeight = (plant) => {
+  const fromHistory = latestHeightFromHistory(plant?.heights || []);
+  if (fromHistory !== null) return fromHistory;
+  return toNumber(plant?.height_mm ?? plant?.height ?? plant?.current_height);
+};
 
 export default function GrowthTracker() {
   const { theme } = useTheme();
   const isLight = theme === "light";
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
-  const demoIds = useMemo(() => mockPlants.map((p) => p.id), []);
+  const [plantRecords, setPlantRecords] = useState([]);
+  const [plantFetchError, setPlantFetchError] = useState("");
+  const demoIds = useMemo(() => plantRecords.map((p) => p.id).filter(Boolean), [plantRecords]);
   const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
   const [jarId, setJarId] = useState("");
   const [plantingDate, setPlantingDate] = useState("");
@@ -28,8 +123,32 @@ export default function GrowthTracker() {
   const plantRecord = useMemo(() => {
     if (!jarId) return null;
     const id = jarId.trim().toLowerCase();
-    return mockPlants.find((p) => p.id.toLowerCase() === id) || null;
-  }, [jarId]);
+    return plantRecords.find((p) => String(p.id).toLowerCase() === id) || null;
+  }, [jarId, plantRecords]);
+
+  useEffect(() => {
+    let active = true;
+    setPlantFetchError("");
+
+    api
+      .get("/env/plants")
+      .then((resp) => {
+        if (!active) return;
+        const data = Array.isArray(resp.data) ? resp.data : [];
+        const normalized = data.map(normalizePlantRecord).filter(Boolean);
+        setPlantRecords(normalized);
+      })
+      .catch((err) => {
+        if (!active) return;
+        const message = err.response?.data?.detail || err.message || "Failed to load plant records";
+        setPlantFetchError(typeof message === "string" ? message : "Failed to load plant records");
+        setPlantRecords([]);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     // Live latest
@@ -72,7 +191,7 @@ export default function GrowthTracker() {
   useEffect(() => {
     if (plantRecord) {
       if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
-      const latestHeight = plantRecord.heights?.[0]?.height_mm;
+      const latestHeight = resolveCurrentHeight(plantRecord);
       if (latestHeight !== undefined && latestHeight !== null) {
         setCurrentHeight(String(latestHeight));
       }
@@ -164,8 +283,9 @@ export default function GrowthTracker() {
             plantRecord={plantRecord}
             demoIds={demoIds}
             demoIdHint={demoIdHint}
+            plantFetchError={plantFetchError}
           />
-          <MockHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
+          <PlantHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
           <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
@@ -239,6 +359,7 @@ function FormCard({
   plantRecord,
   demoIds,
   demoIdHint,
+  plantFetchError,
 }) {
   return (
     <motion.form
@@ -300,7 +421,12 @@ function FormCard({
 
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known demo ID"}.
+          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
+        </p>
+      )}
+      {plantFetchError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Plant records unavailable: {plantFetchError}
         </p>
       )}
       <p className="text-xs text-slate-600">Today: {today}</p>
@@ -451,7 +577,7 @@ function SensorPanel({ latest, history, error, isLight }) {
 
       {latest ? (
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} °C`} />
+          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} Â°C`} />
           <SensorStat label="Humidity" value={`${latest.humidity?.toFixed?.(1) ?? latest.humidity ?? "-"} %`} />
           <SensorStat label="Light" value={`${latest.lux ?? "-"} lx`} />
           <SensorStat label="MQ135" value={latest.mq135 ?? "-"} />
@@ -472,7 +598,7 @@ function SensorPanel({ latest, history, error, isLight }) {
               >
                 <span className="text-slate-600">{formatTs(row.timestamp)}</span>
                 <span className="text-slate-900">
-                  {row.temperature ?? "-"}°C · {row.humidity ?? "-"}% · {row.lux ?? "-"} lx · MQ {row.mq135 ?? "-"}
+                  {row.temperature ?? "-"}Â°C Â· {row.humidity ?? "-"}% Â· {row.lux ?? "-"} lx Â· MQ {row.mq135 ?? "-"}
                 </span>
               </div>
             ))}
@@ -483,8 +609,8 @@ function SensorPanel({ latest, history, error, isLight }) {
   );
 }
 
-// MockHistoryCard component to display plant history from mockPlants data based on Jar/Plant ID input
-function MockHistoryCard({ plantRecord, isLight, demoIdHint }) {
+// PlantHistoryCard component to display plant history from Firebase-backed data
+function PlantHistoryCard({ plantRecord, isLight, demoIdHint }) {
   const heights = plantRecord?.heights || [];
   return (
     <motion.div
@@ -495,13 +621,13 @@ function MockHistoryCard({ plantRecord, isLight, demoIdHint }) {
     >
       <div className="flex items-center justify-between">
         <div>
-          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Mock DB lookup</p>
+          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Plant history</p>
           <h4 className="text-lg font-semibold text-slate-900">Plant profile & history</h4>
         </div>
-        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">Demo data</span>
+        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">Firebase</span>
       </div>
 
-      {plantRecord ? (
+      {plantRecord && heights.length ? (
         <div className="space-y-2">
           {heights.map((row) => (
             <div
@@ -513,9 +639,13 @@ function MockHistoryCard({ plantRecord, isLight, demoIdHint }) {
             </div>
           ))}
         </div>
+      ) : plantRecord ? (
+        <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
+          No height history found for this Jar ID yet.
+        </div>
       ) : (
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-slate-700">
-          Enter a mock Jar/Plant ID to auto-fill planting date and latest height. Available IDs: {demoIdHint}.
+          Enter a Jar/Plant ID to auto-fill planting date and latest height. Known IDs: {demoIdHint || "n/a"}.
         </div>
       )}
     </motion.div>
