@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import 'chartjs-adapter-date-fns';
 import {
     Chart as ChartJS,
     CategoryScale,
@@ -14,6 +15,7 @@ import {
 import { Line } from 'react-chartjs-2';
 
 ChartJS.register(
+    CategoryScale,
     LinearScale,
     PointElement,
     LineElement,
@@ -23,6 +25,14 @@ ChartJS.register(
     TimeScale,
     Filler
 );
+
+const pickValue = (row, keys) => {
+    for (const key of keys) {
+        const value = Number(row?.[key]);
+        if (Number.isFinite(value)) return value;
+    }
+    return null;
+};
 
 const MonitorCharts = ({ history }) => {
     if (!history || history.length === 0) {
@@ -43,8 +53,6 @@ const MonitorCharts = ({ history }) => {
     if (points.length === 0) {
         return <div className="text-center py-10 text-slate-400">Waiting for chart data...</div>;
     }
-
-    const labels = points.map((p) => toTimeLabel(p.ts));
 
     const commonOptions = {
         responsive: true,
@@ -90,7 +98,7 @@ const MonitorCharts = ({ history }) => {
         temp: {
             datasets: [{
                 label: 'Temperature',
-                data: history.map(h => ({ x: h.ts, y: h.t })),
+                data: points.filter((p) => p.temperature !== null).map((p) => ({ x: p.ts, y: p.temperature })),
                 borderColor: '#f97316',
                 backgroundColor: 'rgba(249, 115, 22, 0.1)',
                 borderWidth: 2,
@@ -100,7 +108,7 @@ const MonitorCharts = ({ history }) => {
         hum: {
             datasets: [{
                 label: 'Humidity',
-                data: history.map(h => ({ x: h.ts, y: h.h })),
+                data: points.filter((p) => p.humidity !== null).map((p) => ({ x: p.ts, y: p.humidity })),
                 borderColor: '#3b82f6',
                 backgroundColor: 'rgba(59, 130, 246, 0.1)',
                 borderWidth: 2,
@@ -110,7 +118,7 @@ const MonitorCharts = ({ history }) => {
         light: {
             datasets: [{
                 label: 'Light',
-                data: history.map(h => ({ x: h.ts, y: h.lx })),
+                data: points.filter((p) => p.light !== null).map((p) => ({ x: p.ts, y: p.light })),
                 borderColor: '#f59e0b',
                 backgroundColor: 'rgba(245, 158, 11, 0.1)',
                 borderWidth: 2,
@@ -120,14 +128,14 @@ const MonitorCharts = ({ history }) => {
         air: {
             datasets: [{
                 label: 'Air Quality',
-                data: history.map(h => ({ x: h.ts, y: h.mq })),
+                data: points.filter((p) => p.gas !== null).map((p) => ({ x: p.ts, y: p.gas })),
                 borderColor: '#10b981',
                 backgroundColor: 'rgba(16, 185, 129, 0.1)',
                 borderWidth: 2,
                 fill: true
             }]
         }
-    }), [history]);
+    }), [points]);
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

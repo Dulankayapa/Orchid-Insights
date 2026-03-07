@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ref, onValue, query, limitToLast, orderByKey } from 'firebase/database';
-import { db } from '../lib/firebase'; // Correct path to firebase config
+import { db, resolvedDatabaseURL } from '../lib/firebase'; // Correct path to firebase config
 
 const normalizeSensor = (val) => {
     if (!val) return null;
@@ -29,6 +29,41 @@ const normalizeSensor = (val) => {
     };
 };
 
+const LIVE_PATHS = ['orchidData/latest', 'Jar1', 'Jar2', 'Jar3'];
+const SENSOR_KEYS = ['temperature', 'temp', 't', 'humidity', 'hum', 'h', 'lux', 'light', 'lx', 'mq135', 'mq', 'gas'];
+
+const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+const hasSensorPayload = (value) => {
+    if (!isRecord(value)) return false;
+    return SENSOR_KEYS.some((key) => Number.isFinite(Number(value[key])));
+};
+
+const extractLiveCandidate = (payload) => {
+    if (hasSensorPayload(payload)) return payload;
+
+    if (Array.isArray(payload)) {
+        for (let i = payload.length - 1; i >= 0; i -= 1) {
+            if (hasSensorPayload(payload[i])) return payload[i];
+        }
+        return null;
+    }
+
+    if (!isRecord(payload)) return null;
+
+    const preferredKeys = ['latest', 'value', 'data', 'reading'];
+    for (const key of preferredKeys) {
+        if (hasSensorPayload(payload[key])) return payload[key];
+    }
+
+    const nested = Object.values(payload).filter(isRecord);
+    for (let i = nested.length - 1; i >= 0; i -= 1) {
+        if (hasSensorPayload(nested[i])) return nested[i];
+    }
+
+    return null;
+};
+
 export const useMonitorData = (settings) => {
     const [latest, setLatest] = useState(null);
     const [history, setHistory] = useState([]);
@@ -37,6 +72,7 @@ export const useMonitorData = (settings) => {
     const [lastUpdate, setLastUpdate] = useState(null);
     const [alerts, setAlerts] = useState([]);
     const [aiTip, setAiTip] = useState(null);
+    const DB_URL = resolvedDatabaseURL;
 
     // Constants representing the "safe" ranges (can be passed via settings or hardcoded defaults)
     const SAFETY_DEFAULTS = useMemo(() => ({
@@ -80,7 +116,7 @@ export const useMonitorData = (settings) => {
         });
 
         // 3. History (Historical Logs - used for the bulk of the graph)
-        const historyRef = query(ref(db, 'orchidData/logs'), limitToLast(100));
+        const historyRef = query(ref(db, 'orchidData/logs'), orderByKey(), limitToLast(100));
         const unsubHistory = onValue(historyRef, (snap) => {
             const data = snap.val();
             if (data) {
@@ -154,6 +190,7 @@ export const useMonitorData = (settings) => {
 
         const fetchLatestViaRest = async () => {
             try {
+                if (!DB_URL) return;
                 const base = DB_URL.replace(/\/$/, '');
                 for (const path of LIVE_PATHS) {
                     const res = await fetch(`${base}/${path}.json`);
@@ -171,6 +208,7 @@ export const useMonitorData = (settings) => {
                     });
                     setLastUpdate(Date.now());
                     setConnectionStatus('connected');
+                    break;
                 }
             } catch (err) {
                 // ignore network errors
@@ -179,6 +217,7 @@ export const useMonitorData = (settings) => {
 
         const fetchHistoryViaRest = async () => {
             try {
+                if (!DB_URL) return;
                 const base = DB_URL.replace(/\/$/, '');
                 const res = await fetch(`${base}/orchidData/logs.json?orderBy="$key"&limitToLast=100`);
                 if (!res.ok) return;

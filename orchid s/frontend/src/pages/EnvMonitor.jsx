@@ -1,4 +1,4 @@
-import React, { useRef } from 'react';
+import React from 'react';
 import { motion } from 'framer-motion';
 import { useMonitorData } from '../hooks/useMonitorData';
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
@@ -28,8 +28,7 @@ class SectionErrorBoundary extends React.Component {
 }
 
 const EnvMonitor = () => {
-  const { latest, history, growthLogs, connectionStatus, lastUpdate, alerts, aiTip } = useMonitorData();
-  const pdfRef = useRef();
+  const { latest, history, connectionStatus, lastUpdate, alerts, aiTip } = useMonitorData();
   const safeHistory = Array.isArray(history)
     ? history.filter((row) => row && Number.isFinite(Number(row.ts ?? row.timestamp)))
     : [];
@@ -167,7 +166,9 @@ const EnvMonitor = () => {
         <div className="flex items-center gap-2 mb-4">
           <h2 className="text-xl font-bold text-dark">Current Status</h2>
         </div>
-        <OverviewCards data={latest} lastUpdate={lastUpdate} />
+        <SectionErrorBoundary>
+          <OverviewCards data={latest} lastUpdate={lastUpdate} />
+        </SectionErrorBoundary>
       </section>
 
       {/* Charts */}
@@ -180,7 +181,9 @@ const EnvMonitor = () => {
             <option>Last 24 Hours</option>
           </select>
         </div>
-        <MonitorCharts history={history} />
+        <SectionErrorBoundary>
+          <MonitorCharts history={safeHistory} />
+        </SectionErrorBoundary>
       </section>
 
     </div>
