@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+﻿import { useEffect, useMemo, useState } from "react";
 import { onValue, ref } from "firebase/database";
 import { db } from "../lib/firebase";
 
@@ -12,10 +12,10 @@ const toNumber = (value) => {
 
 const normalizeJar = (jarKey, data) => ({
   id: jarKey,
-  temperature: toNumber(data?.temperature ?? data?.temp),
-  humidity: toNumber(data?.humidity ?? data?.hum),
+  temperature: toNumber(data?.temperature ?? data?.teperature ?? data?.temp),
+  humidity: toNumber(data?.humidity ?? data?.humidty ?? data?.hum),
   lux: toNumber(data?.lux ?? data?.light ?? data?.lx),
-  mq135: toNumber(data?.mq135 ?? data?.mq),
+  mq135: toNumber(data?.mq135 ?? data?.mq ?? data?.gas),
   height: toNumber(data?.height ?? data?.height_mm ?? data?.heightCm),
 });
 
@@ -34,6 +34,7 @@ export default function FirebaseTable() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const DB_URL = import.meta.env.VITE_FIREBASE_DB_URL || "https://orchid-insights-c2456-default-rtdb.firebaseio.com";
 
   const rows = useMemo(() => {
     return JAR_PATHS.map((jarKey) => jarReadings[jarKey] || emptyJar(jarKey));
@@ -67,6 +68,38 @@ export default function FirebaseTable() {
     );
     return () => unsubs.forEach((off) => off());
   }, [refreshKey]);
+
+  // REST polling safety-net so live table still updates even if realtime listener fails.
+  useEffect(() => {
+    let pollId = null;
+
+    const fetchJars = async () => {
+      try {
+        const base = DB_URL.replace(/\/$/, "");
+        const results = await Promise.all(
+          JAR_PATHS.map(async (jarKey) => {
+            const res = await fetch(`${base}/${jarKey}.json`);
+            if (!res.ok) return [jarKey, emptyJar(jarKey)];
+            const data = await res.json();
+            return [jarKey, data ? normalizeJar(jarKey, data) : emptyJar(jarKey)];
+          })
+        );
+
+        const next = Object.fromEntries(results);
+        setJarReadings((prev) => ({ ...prev, ...next }));
+        setLoading(false);
+      } catch (err) {
+        setError((prev) => prev || "Realtime fallback polling failed");
+      }
+    };
+
+    fetchJars();
+    pollId = setInterval(fetchJars, 5000);
+
+    return () => {
+      if (pollId) clearInterval(pollId);
+    };
+  }, [DB_URL]);
 
   return (
     <div className="space-y-6">
@@ -140,3 +173,4 @@ export default function FirebaseTable() {
     </div>
   );
 }
+

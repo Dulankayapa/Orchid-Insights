@@ -1,5 +1,37 @@
-import React from 'react';
+﻿import React from 'react';
 import { motion } from 'framer-motion';
+
+const LIMITS = {
+    temperature: { min: 18, max: 35 },
+    humidity: { min: 40, max: 80 },
+    lux: { min: 50, max: 800 },
+    mq135: { min: 0, max: 2500 }
+};
+
+const formatFixed = (value, digits = 1) => {
+    if (value === undefined || value === null || Number.isNaN(Number(value))) return '--';
+    return Number(value).toFixed(digits);
+};
+
+const formatInt = (value) => {
+    if (value === undefined || value === null || Number.isNaN(Number(value))) return '--';
+    return String(Math.round(Number(value)));
+};
+
+const getLevel = (value, limits) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 'unknown';
+    if (limits?.min !== undefined && n < limits.min) return 'low';
+    if (limits?.max !== undefined && n > limits.max) return 'high';
+    return 'safe';
+};
+
+const LEVEL_STYLES = {
+    safe: { dot: 'bg-emerald-500', text: 'text-emerald-600', label: 'Safe' },
+    low: { dot: 'bg-rose-500', text: 'text-rose-600', label: 'Low' },
+    high: { dot: 'bg-blue-500', text: 'text-blue-600', label: 'High' },
+    unknown: { dot: 'bg-slate-400', text: 'text-slate-500', label: 'Waiting' }
+};
 
 const OverviewCards = ({ data }) => {
     if (!data) return <div className="text-slate-500">Waiting for data...</div>;
@@ -7,40 +39,40 @@ const OverviewCards = ({ data }) => {
     const cards = [
         {
             title: 'Temperature',
-            value: data.temperature?.toFixed(1) || '--',
-            unit: '°C',
-            icon: '🌡️',
-            status: data.temperature > 28 || data.temperature < 18 ? 'warning' : 'good',
+            value: formatFixed(data.temperature, 1),
+            unit: 'C',
+            icon: 'T',
+            level: getLevel(data.temperature, LIMITS.temperature),
             color: 'text-orange-500',
             bg: 'bg-orange-50'
         },
         {
             title: 'Humidity',
-            value: data.humidity?.toFixed(1) || '--',
+            value: formatFixed(data.humidity, 1),
             unit: '%',
-            icon: '💧',
-            status: data.humidity < 40 ? 'warning' : 'good',
+            icon: 'H',
+            level: getLevel(data.humidity, LIMITS.humidity),
             color: 'text-blue-500',
             bg: 'bg-blue-50'
         },
         {
             title: 'Light Level',
-            value: Math.round(data.lux) || '--',
+            value: formatInt(data.lux),
             unit: 'lx',
-            icon: '☀️',
-            status: 'good',
+            icon: 'L',
+            level: getLevel(data.lux, LIMITS.lux),
             color: 'text-amber-500',
             bg: 'bg-amber-50'
         },
         {
             title: 'Air Quality',
-            value: data.mq135 || '--',
+            value: formatInt(data.mq135),
             unit: 'AQI',
-            icon: '🌬️',
-            status: data.mq135 > 150 ? 'danger' : 'good',
+            icon: 'G',
+            level: getLevel(data.mq135, LIMITS.mq135),
             color: 'text-emerald-500',
             bg: 'bg-emerald-50'
-        },
+        }
     ];
 
     return (
@@ -69,9 +101,9 @@ const OverviewCards = ({ data }) => {
                     </div>
 
                     <div className="mt-4 flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${card.status === 'good' ? 'bg-emerald-500' : card.status === 'warning' ? 'bg-amber-500' : 'bg-rose-500'}`}></span>
-                        <span className={`text-xs font-bold ${card.status === 'good' ? 'text-emerald-600' : card.status === 'warning' ? 'text-amber-600' : 'text-rose-600'}`}>
-                            {card.status === 'good' ? 'Optimal Range' : 'Attention Needed'}
+                        <span className={`w-2 h-2 rounded-full ${LEVEL_STYLES[card.level].dot}`}></span>
+                        <span className={`text-xs font-bold ${LEVEL_STYLES[card.level].text}`}>
+                            {LEVEL_STYLES[card.level].label}
                         </span>
                     </div>
                 </motion.div>

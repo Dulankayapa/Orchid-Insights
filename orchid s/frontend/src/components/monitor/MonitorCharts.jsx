@@ -7,11 +7,9 @@ import {
     LineElement,
     Title,
     Tooltip,
-    Legend,
-    TimeScale
+    Legend
 } from 'chart.js';
 import { Line } from 'react-chartjs-2';
-import 'chartjs-adapter-date-fns';
 
 ChartJS.register(
     CategoryScale,
@@ -20,12 +18,51 @@ ChartJS.register(
     LineElement,
     Title,
     Tooltip,
-    Legend,
-    TimeScale
+    Legend
 );
 
+const toNumber = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+};
+
+const pickValue = (row, keys) => {
+    for (const key of keys) {
+        const n = toNumber(row?.[key]);
+        if (n !== null) return n;
+    }
+    return null;
+};
+
+const toTimeLabel = (ts) => {
+    const n = toNumber(ts);
+    if (n === null) return '--:--:--';
+    const d = new Date(n);
+    if (Number.isNaN(d.getTime())) return '--:--:--';
+    return d.toLocaleTimeString();
+};
+
 const MonitorCharts = ({ history }) => {
-    if (!history || history.length === 0) return <div className="text-center py-10 text-slate-400">Loading charts...</div>;
+    if (!history || history.length === 0) {
+        return <div className="text-center py-10 text-slate-400">Loading charts...</div>;
+    }
+
+    const points = history
+        .map((row) => ({
+            ts: pickValue(row, ['timestamp', 'ts']),
+            temperature: pickValue(row, ['temperature', 'temp', 't']),
+            humidity: pickValue(row, ['humidity', 'hum', 'h']),
+            light: pickValue(row, ['lux', 'light', 'lx']),
+            gas: pickValue(row, ['mq135', 'mq', 'gas'])
+        }))
+        .filter((row) => row.ts !== null)
+        .slice(-60);
+
+    if (points.length === 0) {
+        return <div className="text-center py-10 text-slate-400">Waiting for chart data...</div>;
+    }
+
+    const labels = points.map((p) => toTimeLabel(p.ts));
 
     const commonOptions = {
         responsive: true,
@@ -41,15 +78,18 @@ const MonitorCharts = ({ history }) => {
                 borderColor: '#e2e8f0',
                 borderWidth: 1,
                 padding: 10,
-                displayColors: false,
+                displayColors: false
             }
         },
         scales: {
             x: {
-                type: 'time',
-                time: { unit: 'minute' },
                 grid: { display: false },
-                ticks: { color: '#94a3b8', font: { size: 10 } }
+                offset: true,
+                ticks: {
+                    color: '#94a3b8',
+                    font: { size: 10 },
+                    maxTicksLimit: 6
+                }
             },
             y: {
                 grid: { color: '#f1f5f9' },
@@ -67,31 +107,44 @@ const MonitorCharts = ({ history }) => {
         }
     };
 
-    const createDataset = (label, dataKey, color, bgColor) => ({
-        labels: history.map(h => h.ts),
+    const createDataset = (label, values, color, bgColor) => ({
+        labels,
         datasets: [{
             label,
-            data: history.map(h => ({ x: h.ts, y: h[dataKey] })),
+            data: values,
             borderColor: color,
             backgroundColor: bgColor,
             borderWidth: 2,
-            fill: true
+            fill: true,
+            spanGaps: true
         }]
     });
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ChartCard title="Temperature Trend" icon="🌡️">
-                <Line data={createDataset('Temperature', 't', '#f97316', 'rgba(249, 115, 22, 0.1)')} options={commonOptions} />
+            <ChartCard title="Temperature Trend" icon="T">
+                <Line
+                    data={createDataset('Temperature', points.map((p) => p.temperature), '#f97316', 'rgba(249, 115, 22, 0.1)')}
+                    options={commonOptions}
+                />
             </ChartCard>
-            <ChartCard title="Humidity Trend" icon="💧">
-                <Line data={createDataset('Humidity', 'h', '#3b82f6', 'rgba(59, 130, 246, 0.1)')} options={commonOptions} />
+            <ChartCard title="Humidity Trend" icon="H">
+                <Line
+                    data={createDataset('Humidity', points.map((p) => p.humidity), '#3b82f6', 'rgba(59, 130, 246, 0.1)')}
+                    options={commonOptions}
+                />
             </ChartCard>
-            <ChartCard title="Light Intensity" icon="☀️">
-                <Line data={createDataset('Light', 'lx', '#f59e0b', 'rgba(245, 158, 11, 0.1)')} options={commonOptions} />
+            <ChartCard title="Light Intensity" icon="L">
+                <Line
+                    data={createDataset('Light', points.map((p) => p.light), '#f59e0b', 'rgba(245, 158, 11, 0.1)')}
+                    options={commonOptions}
+                />
             </ChartCard>
-            <ChartCard title="Air Quality (MQ135)" icon="💨">
-                <Line data={createDataset('Air Quality', 'mq', '#10b981', 'rgba(16, 185, 129, 0.1)')} options={commonOptions} />
+            <ChartCard title="Gas (MQ135)" icon="G">
+                <Line
+                    data={createDataset('Air Quality', points.map((p) => p.gas), '#10b981', 'rgba(16, 185, 129, 0.1)')}
+                    options={commonOptions}
+                />
             </ChartCard>
         </div>
     );
@@ -102,9 +155,7 @@ const ChartCard = ({ title, icon, children }) => (
         <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
             <span>{icon}</span> {title}
         </h3>
-        <div className="flex-1 w-full relative min-h-0">
-            {children}
-        </div>
+        <div className="flex-1 w-full relative min-h-0">{children}</div>
     </div>
 );
 

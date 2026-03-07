@@ -5,9 +5,34 @@ import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
 import { jsPDF } from 'jspdf';
 
+class SectionErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error) {
+    console.error('EnvMonitor section render error:', error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return <div className="text-sm text-rose-500">This section failed to render.</div>;
+    }
+    return this.props.children;
+  }
+}
+
 const EnvMonitor = () => {
   const { latest, history, growthLogs, connectionStatus, lastUpdate, alerts, aiTip } = useMonitorData();
   const pdfRef = useRef();
+  const safeHistory = Array.isArray(history)
+    ? history.filter((row) => row && Number.isFinite(Number(row.ts ?? row.timestamp)))
+    : [];
 
   const handleExportPDF = () => {
     const doc = new jsPDF();
@@ -142,7 +167,9 @@ const EnvMonitor = () => {
         <div className="flex items-center gap-2 mb-4">
           <h2 className="text-xl font-bold text-dark">Current Status</h2>
         </div>
-        <OverviewCards data={latest} lastUpdate={lastUpdate} />
+        <SectionErrorBoundary>
+          <OverviewCards data={latest} lastUpdate={lastUpdate} />
+        </SectionErrorBoundary>
       </section>
 
       {/* Charts */}
@@ -155,7 +182,9 @@ const EnvMonitor = () => {
             <option>Last 24 Hours</option>
           </select>
         </div>
-        <MonitorCharts history={history} />
+        <SectionErrorBoundary>
+          <MonitorCharts history={safeHistory} />
+        </SectionErrorBoundary>
       </section>
 
     </div>

@@ -1,17 +1,97 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { motion } from "framer-motion";
+import { motion } from 'framer-motion';
 import DetailsModal from './DetailsModal.jsx';
+import { useMonitorData } from '../../hooks/useMonitorData';
+
+const toNumber = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : null;
+};
+
+const formatFixed = (value, digits = 1) => {
+    if (value === null) return '--';
+    return Number(value).toFixed(digits);
+};
+
+const formatInt = (value) => {
+    if (value === null) return '--';
+    return String(Math.round(Number(value)));
+};
+
+const resolveStatus = (value, min, max) => {
+    if (value === null) return { label: 'Waiting', color: 'slate' };
+    if (value < min) return { label: 'Low', color: 'rose' };
+    if (value > max) return { label: 'High', color: 'amber' };
+    return { label: 'Good', color: 'emerald' };
+};
+
+const formatLastUpdate = (lastUpdate) => {
+    if (!lastUpdate) return 'Waiting for live data';
+    return `Updated ${new Date(lastUpdate).toLocaleTimeString()}`;
+};
+
+const getConnectionMeta = (connectionStatus) => {
+    if (connectionStatus === 'connected') return { label: 'Live', color: 'emerald' };
+    if (connectionStatus === 'stale') return { label: 'Stale', color: 'amber' };
+    if (connectionStatus === 'connecting') return { label: 'Connecting', color: 'blue' };
+    return { label: 'Offline', color: 'rose' };
+};
 
 const Dashboard = () => {
     const [modalConfig, setModalConfig] = useState({ isOpen: false, type: null, data: null });
+    const { latest, connectionStatus, lastUpdate } = useMonitorData();
+
+    const cards = useMemo(() => {
+        const temperature = toNumber(latest?.temperature);
+        const light = toNumber(latest?.lux);
+        const humidity = toNumber(latest?.humidity);
+        const co2 = toNumber(latest?.mq135);
+
+        return [
+            {
+                type: 'temperature',
+                title: 'Temperature',
+                value: formatFixed(temperature, 1),
+                unit: 'C',
+                icon: 'T',
+                ...resolveStatus(temperature, 18, 35)
+            },
+            {
+                type: 'light',
+                title: 'Light',
+                value: formatInt(light),
+                unit: 'lux',
+                icon: 'L',
+                ...resolveStatus(light, 50, 800)
+            },
+            {
+                type: 'humidity',
+                title: 'Humidity',
+                value: formatFixed(humidity, 1),
+                unit: '%',
+                icon: 'H',
+                ...resolveStatus(humidity, 40, 80)
+            },
+            {
+                type: 'co2',
+                title: 'CO2',
+                value: formatInt(co2),
+                unit: 'ppm',
+                icon: 'G',
+                ...resolveStatus(co2, 0, 2500)
+            }
+        ];
+    }, [latest]);
+
+    const connectionMeta = getConnectionMeta(connectionStatus);
 
     const openModal = (type, data = {}) => {
         setModalConfig({ isOpen: true, type, data });
     };
 
     const closeModal = () => {
-        setModalConfig(prev => ({ ...prev, isOpen: false }));
+        setModalConfig((prev) => ({ ...prev, isOpen: false }));
     };
 
     return (
@@ -29,22 +109,38 @@ const Dashboard = () => {
                     <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2">
                         <span>🌡️</span> Environmental Monitor
                     </h2>
-                    <Link to="/monitor" className="text-sm text-fuchsia-600 hover:text-fuchsia-700 font-medium">View Full Monitor &rarr;</Link>
+                    <div className="flex items-center gap-3">
+                        <span
+                            className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${connectionMeta.color === 'emerald'
+                                ? 'bg-emerald-100 text-emerald-700'
+                                : connectionMeta.color === 'amber'
+                                    ? 'bg-amber-100 text-amber-700'
+                                    : connectionMeta.color === 'blue'
+                                        ? 'bg-blue-100 text-blue-700'
+                                        : 'bg-rose-100 text-rose-700'
+                                }`}
+                        >
+                            {connectionMeta.label}
+                        </span>
+                        <Link to="/monitor" className="text-sm text-fuchsia-600 hover:text-fuchsia-700 font-medium">View Full Monitor &rarr;</Link>
+                    </div>
                 </div>
 
+                <p className="text-xs text-slate-500 mb-3">{formatLastUpdate(lastUpdate)}</p>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <div onClick={() => openModal('temperature')} className="cursor-pointer">
-                        <MetricCard title="Temperature" value="24" unit="°C" status="Good" statusColor="emerald" icon="🌡️" />
-                    </div>
-                    <div onClick={() => openModal('light')} className="cursor-pointer">
-                        <MetricCard title="Light" value="700" unit="lux" status="Medium" statusColor="amber" icon="☀️" />
-                    </div>
-                    <div onClick={() => openModal('humidity')} className="cursor-pointer">
-                        <MetricCard title="Humidity" value="50" unit="%" status="Low" statusColor="rose" icon="💧" />
-                    </div>
-                    <div onClick={() => openModal('co2')} className="cursor-pointer">
-                        <MetricCard title="CO2" value="400" unit="ppm" status="Good" statusColor="emerald" icon="🌬️" />
-                    </div>
+                    {cards.map((card) => (
+                        <div key={card.type} onClick={() => openModal(card.type, { latest })} className="cursor-pointer">
+                            <MetricCard
+                                title={card.title}
+                                value={card.value}
+                                unit={card.unit}
+                                status={card.label}
+                                statusColor={card.color}
+                                icon={card.icon}
+                            />
+                        </div>
+                    ))}
                 </div>
             </section>
 
@@ -130,6 +226,7 @@ const MetricCard = ({ title, value, unit, status, statusColor, icon }) => {
         emerald: 'bg-emerald-100 text-emerald-700',
         amber: 'bg-amber-100 text-amber-700',
         rose: 'bg-rose-100 text-rose-700',
+        slate: 'bg-slate-100 text-slate-600'
     };
 
     return (
@@ -138,8 +235,8 @@ const MetricCard = ({ title, value, unit, status, statusColor, icon }) => {
             className="bg-white rounded-2xl p-5 shadow-sm border border-fuchsia-100 flex flex-col justify-between h-full hover:shadow-md transition-shadow"
         >
             <div className="flex items-start justify-between mb-3">
-                <span className="text-2xl">{icon}</span>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${colorMap[statusColor]}`}>
+                <span className="text-2xl font-bold text-slate-500">{icon}</span>
+                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-full ${colorMap[statusColor] || colorMap.slate}`}>
                     {status}
                 </span>
             </div>
