@@ -1,6 +1,33 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { api } from "../lib/api";
+import { onValue, ref } from "firebase/database";
+import { db } from "../lib/firebase";
+
+const normalizePlantSnapshot = (data) => {
+  if (!data) return [];
+  if (Array.isArray(data)) {
+    return data
+      .map((item, idx) => ({
+        id: item?.id ?? String(idx),
+        planting_date: item?.planting_date || item?.plantingDate,
+        height_mm: item?.height_mm || item?.height || item?.current_height,
+        updated_at: item?.updated_at || item?.timestamp || item?.recorded_at,
+        cultivar: item?.cultivar || item?.variety,
+      }))
+      .filter((row) => row.id);
+  }
+
+  return Object.entries(data).map(([key, value]) => {
+    const base = value && typeof value === "object" ? value : {};
+    return {
+      id: key,
+      planting_date: base.planting_date || base.plantingDate,
+      height_mm: base.height_mm || base.height || base.current_height,
+      updated_at: base.updated_at || base.timestamp || base.recorded_at,
+      cultivar: base.cultivar || base.variety,
+    };
+  });
+};
 
 export default function PlantDatabase() {
   const [rows, setRows] = useState([]);
@@ -16,22 +43,27 @@ export default function PlantDatabase() {
   }, [query, rows]);
 
   useEffect(() => {
-    const fetchRows = async () => {
-      setLoading(true);
-      setError("");
-      try {
-        const resp = await api.get("/env/plants");
-        const data = resp.data || [];
+    setLoading(true);
+    setError("");
+    const plantsRef = ref(db, "plants");
+    const unsubscribe = onValue(
+      plantsRef,
+      (snap) => {
+        const data = normalizePlantSnapshot(snap.val());
         setRows(data);
         setSelected(data[0] || null);
-      } catch (err) {
-        setError(err.response?.data?.detail || err.message || "Failed to load plants");
-      } finally {
+        setLoading(false);
+        setError("");
+      },
+      (err) => {
+        setError(err?.message || "Failed to load plants from Firebase");
+        setRows([]);
+        setSelected(null);
         setLoading(false);
       }
-    };
+    );
 
-    fetchRows();
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {

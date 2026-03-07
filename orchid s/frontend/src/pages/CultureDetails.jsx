@@ -1,38 +1,38 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { onValue, ref, set } from "firebase/database";
+import { onValue, ref, remove, set, update } from "firebase/database";
 import { db } from "../lib/firebase";
 
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
-const OPTIONS_STORAGE_KEY = "orchid-insights-reculture-options-v1";
+const OPTIONS_PATH = "recultureOptions";
 
 const normalizeOption = (value) => (value || "").trim();
 const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
 
-const readOptionStore = () => {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem(OPTIONS_STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return null;
-    return {
-      racks: Array.isArray(parsed.racks) ? parsed.racks : [],
-      orchids: Array.isArray(parsed.orchids) ? parsed.orchids : [],
-    };
-  } catch {
-    return null;
-  }
+const uniqueSortedOptions = (values) => {
+  const map = new Map();
+  (values || []).forEach((value) => {
+    const cleaned = normalizeOption(value);
+    if (!cleaned) return;
+    map.set(normalizeOptionKey(cleaned), cleaned);
+  });
+  return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 };
 
-const writeOptionStore = (store) => {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.setItem(OPTIONS_STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // ignore storage failures
-  }
+const buildOptionsFromSnapshot = (data) => {
+  const racksRaw = Array.isArray(data?.racks) ? data.racks : Object.values(data?.racks || {});
+  const orchidsRaw = Array.isArray(data?.orchids) ? data.orchids : Object.values(data?.orchids || {});
+  return {
+    racks: uniqueSortedOptions(racksRaw),
+    orchids: uniqueSortedOptions(orchidsRaw),
+  };
+};
+
+const normalizeJarIdInput = (value) => {
+  const next = (value || "").trimStart();
+  if (!next) return value || "";
+  return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 
 const buildOptionsFromEntries = (entries) => {
@@ -52,29 +52,6 @@ const buildOptionsFromEntries = (entries) => {
   };
 };
 
-const addOptionValue = (list, value) => {
-  const cleaned = normalizeOption(value);
-  if (!cleaned) return list;
-  const key = normalizeOptionKey(cleaned);
-  if (list.some((item) => normalizeOptionKey(item) === key)) return list;
-  return [...list, cleaned].sort((a, b) => a.localeCompare(b));
-};
-
-const updateOptionValue = (list, fromValue, toValue) => {
-  const cleaned = normalizeOption(toValue);
-  if (!cleaned) return list;
-  const fromKey = normalizeOptionKey(fromValue);
-  const nextKey = normalizeOptionKey(cleaned);
-  const filtered = list.filter((item) => normalizeOptionKey(item) !== fromKey);
-  if (filtered.some((item) => normalizeOptionKey(item) === nextKey)) {
-    return filtered.sort((a, b) => a.localeCompare(b));
-  }
-  return [...filtered, cleaned].sort((a, b) => a.localeCompare(b));
-};
-
-const removeOptionValue = (list, value) =>
-  list.filter((item) => normalizeOptionKey(item) !== normalizeOptionKey(value));
-
 export default function CultureDetails() {
   const [form, setForm] = useState({
     jarId: "",
@@ -86,7 +63,9 @@ export default function CultureDetails() {
   });
   const [entries, setEntries] = useState([]);
   const [optionStore, setOptionStore] = useState({ racks: [], orchids: [] });
-  const [optionsReady, setOptionsReady] = useState(false);
+  const [optionsLoading, setOptionsLoading] = useState(false);
+  const [optionsError, setOptionsError] = useState("");
+  const [optionsSeeded, setOptionsSeeded] = useState(false);
   const [loadingEntries, setLoadingEntries] = useState(false);
   const [entriesError, setEntriesError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -96,11 +75,24 @@ export default function CultureDetails() {
   const isEditing = Boolean(selectedId);
 
   useEffect(() => {
-    const stored = readOptionStore();
-    if (stored) {
-      setOptionStore(stored);
-      setOptionsReady(true);
-    }
+    setOptionsLoading(true);
+    setOptionsError("");
+    const optionsRef = ref(db, OPTIONS_PATH);
+    const unsubscribe = onValue(
+      optionsRef,
+      (snap) => {
+        const next = buildOptionsFromSnapshot(snap.val() || {});
+        setOptionStore(next);
+        setOptionsLoading(false);
+        setOptionsError("");
+      },
+      (err) => {
+        setOptionsError(err?.message || "Failed to load Firebase options");
+        setOptionsLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -139,13 +131,35 @@ export default function CultureDetails() {
   }, []);
 
   useEffect(() => {
-    if (optionsReady) return;
-    if (loadingEntries) return;
+    if (optionsSeeded || optionsLoading) return;
+    if (!entries.length) return;
+    if (optionStore.racks.length || optionStore.orchids.length) {
+      setOptionsSeeded(true);
+      return;
+    }
+
     const seeded = buildOptionsFromEntries(entries);
-    setOptionStore(seeded);
-    writeOptionStore(seeded);
-    setOptionsReady(true);
-  }, [entries, loadingEntries, optionsReady]);
+    if (!seeded.racks.length && !seeded.orchids.length) {
+      setOptionsSeeded(true);
+      return;
+    }
+
+    const updates = {};
+    seeded.racks.forEach((rack) => {
+      updates[`${OPTIONS_PATH}/racks/${normalizeOptionKey(rack)}`] = rack;
+    });
+    seeded.orchids.forEach((orchid) => {
+      updates[`${OPTIONS_PATH}/orchids/${normalizeOptionKey(orchid)}`] = orchid;
+    });
+
+    update(ref(db), updates)
+      .catch((err) => {
+        setOptionsError(err?.message || "Failed to seed Firebase options");
+      })
+      .finally(() => {
+        setOptionsSeeded(true);
+      });
+  }, [entries, optionStore, optionsLoading, optionsSeeded]);
 
   const selectedEntry = useMemo(() => {
     if (!selectedId) return null;
@@ -155,16 +169,9 @@ export default function CultureDetails() {
   const rackOptions = optionStore.racks;
   const orchidOptions = optionStore.orchids;
 
-  const updateOptionStore = (updater) => {
-    setOptionStore((prev) => {
-      const next = updater(prev);
-      writeOptionStore(next);
-      return next;
-    });
-  };
-
   const handleField = (key) => (e) => {
-    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+    const nextValue = key === "jarId" ? normalizeJarIdInput(e.target.value) : e.target.value;
+    setForm((prev) => ({ ...prev, [key]: nextValue }));
   };
 
   const applyOption = (key, value) => {
@@ -174,45 +181,79 @@ export default function CultureDetails() {
   };
 
   const addRackOption = (value) => {
-    updateOptionStore((prev) => ({
-      ...prev,
-      racks: addOptionValue(prev.racks, value),
-    }));
+    const cleaned = normalizeOption(value);
+    if (!cleaned) return;
+    setOptionsError("");
+    set(ref(db, `${OPTIONS_PATH}/racks/${normalizeOptionKey(cleaned)}`), cleaned).catch((err) => {
+      setOptionsError(err?.message || "Failed to save rack option");
+    });
   };
 
   const updateRackOption = (fromValue, toValue) => {
-    updateOptionStore((prev) => ({
-      ...prev,
-      racks: updateOptionValue(prev.racks, fromValue, toValue),
-    }));
+    const cleaned = normalizeOption(toValue);
+    if (!cleaned) return;
+    const fromKey = normalizeOptionKey(fromValue);
+    const toKey = normalizeOptionKey(cleaned);
+    setOptionsError("");
+    if (fromKey === toKey) {
+      set(ref(db, `${OPTIONS_PATH}/racks/${toKey}`), cleaned).catch((err) => {
+        setOptionsError(err?.message || "Failed to update rack option");
+      });
+      return;
+    }
+    update(ref(db), {
+      [`${OPTIONS_PATH}/racks/${toKey}`]: cleaned,
+      [`${OPTIONS_PATH}/racks/${fromKey}`]: null,
+    }).catch((err) => {
+      setOptionsError(err?.message || "Failed to update rack option");
+    });
   };
 
   const deleteRackOption = (value) => {
-    updateOptionStore((prev) => ({
-      ...prev,
-      racks: removeOptionValue(prev.racks, value),
-    }));
+    const key = normalizeOptionKey(value);
+    if (!key) return;
+    setOptionsError("");
+    remove(ref(db, `${OPTIONS_PATH}/racks/${key}`)).catch((err) => {
+      setOptionsError(err?.message || "Failed to delete rack option");
+    });
   };
 
   const addOrchidOption = (value) => {
-    updateOptionStore((prev) => ({
-      ...prev,
-      orchids: addOptionValue(prev.orchids, value),
-    }));
+    const cleaned = normalizeOption(value);
+    if (!cleaned) return;
+    setOptionsError("");
+    set(ref(db, `${OPTIONS_PATH}/orchids/${normalizeOptionKey(cleaned)}`), cleaned).catch((err) => {
+      setOptionsError(err?.message || "Failed to save orchid option");
+    });
   };
 
   const updateOrchidOption = (fromValue, toValue) => {
-    updateOptionStore((prev) => ({
-      ...prev,
-      orchids: updateOptionValue(prev.orchids, fromValue, toValue),
-    }));
+    const cleaned = normalizeOption(toValue);
+    if (!cleaned) return;
+    const fromKey = normalizeOptionKey(fromValue);
+    const toKey = normalizeOptionKey(cleaned);
+    setOptionsError("");
+    if (fromKey === toKey) {
+      set(ref(db, `${OPTIONS_PATH}/orchids/${toKey}`), cleaned).catch((err) => {
+        setOptionsError(err?.message || "Failed to update orchid option");
+      });
+      return;
+    }
+    update(ref(db), {
+      [`${OPTIONS_PATH}/orchids/${toKey}`]: cleaned,
+      [`${OPTIONS_PATH}/orchids/${fromKey}`]: null,
+    }).catch((err) => {
+      setOptionsError(err?.message || "Failed to update orchid option");
+    });
   };
 
   const deleteOrchidOption = (value) => {
-    updateOptionStore((prev) => ({
-      ...prev,
-      orchids: removeOptionValue(prev.orchids, value),
-    }));
+    const key = normalizeOptionKey(value);
+    if (!key) return;
+    setOptionsError("");
+    remove(ref(db, `${OPTIONS_PATH}/orchids/${key}`)).catch((err) => {
+      setOptionsError(err?.message || "Failed to delete orchid option");
+    });
   };
 
   const handleRecultureChange = (idx, key, value) => {
@@ -259,7 +300,7 @@ export default function CultureDetails() {
     setError("");
     setStatus("");
 
-    const jarId = form.jarId.trim();
+    const jarId = normalizeJarIdInput(form.jarId).trim();
     if (!jarId) {
       setError("Jar ID is required.");
       return;
@@ -299,11 +340,8 @@ export default function CultureDetails() {
     try {
       await set(ref(db, `recultureEntries/${jarId}`), payload);
       setSelectedId(jarId);
-      updateOptionStore((prev) => ({
-        ...prev,
-        racks: addOptionValue(prev.racks, form.rackNo),
-        orchids: addOptionValue(prev.orchids, form.orchidType),
-      }));
+      addRackOption(form.rackNo);
+      addOrchidOption(form.orchidType);
       setStatus(`Saved ${jarId} with ${payload.recultures.length} re-culture dates.`);
     } catch (err) {
       setError(err?.message || "Failed to save to Firebase.");
@@ -331,6 +369,8 @@ export default function CultureDetails() {
             onAddOrchid={addOrchidOption}
             onUpdateOrchid={updateOrchidOption}
             onDeleteOrchid={deleteOrchidOption}
+            optionsLoading={optionsLoading}
+            optionsError={optionsError}
           />
           <FormCard
             form={form}
@@ -769,6 +809,8 @@ function OptionsPanel({
   onAddOrchid,
   onUpdateOrchid,
   onDeleteOrchid,
+  optionsLoading,
+  optionsError,
 }) {
   return (
     <motion.div
@@ -814,6 +856,15 @@ function OptionsPanel({
           inputPlaceholder="Add orchid (e.g. Phalaenopsis)"
         />
       </div>
+
+      {optionsLoading && !optionsError && (
+        <p className="text-xs text-subtle">Loading options from Firebase...</p>
+      )}
+      {optionsError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2">
+          Firebase options error: {optionsError}
+        </p>
+      )}
     </motion.div>
   );
 }

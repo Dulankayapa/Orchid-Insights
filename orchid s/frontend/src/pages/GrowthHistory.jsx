@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
 import { onValue, ref } from "firebase/database";
-import { api } from "../lib/api";
 import { db } from "../lib/firebase";
 import { useTheme } from "../context/ThemeContext";
 
@@ -71,6 +70,24 @@ const normalizePlantRecord = (plant) => {
     cultivar: plant.cultivar ?? extra.cultivar ?? extra.orchidType,
     nutrition: plant.nutrition ?? extra.nutrition,
   };
+};
+
+const normalizePlantSnapshot = (data) => {
+  if (!data) return [];
+  if (Array.isArray(data)) {
+    return data
+      .map((item, idx) => normalizePlantRecord({ id: item?.id ?? String(idx), ...(item || {}) }))
+      .filter(Boolean);
+  }
+  return Object.entries(data)
+    .map(([key, value]) => normalizePlantRecord({ id: key, ...(value || {}) }))
+    .filter(Boolean);
+};
+
+const normalizeJarIdInput = (value) => {
+  const next = (value || "").trimStart();
+  if (!next) return value || "";
+  return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 
 const resolveHeightTimestamp = (row) => {
@@ -250,6 +267,235 @@ const buildTrendlinePoints = (points) => {
   ];
 };
 
+const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
+  const cutoffMs = (() => {
+    const now = Date.now();
+    if (compareWindow === "30d") return now - 30 * DAY_MS;
+    if (compareWindow === "90d") return now - 90 * DAY_MS;
+    if (compareWindow === "365d") return now - 365 * DAY_MS;
+    return null;
+  })();
+
+  const metrics = [];
+  compareIds.forEach((id) => {
+    const plant = combinedRecords.find((p) => p.id === id);
+    if (!plant) return;
+    const sorted = (plant.heights || [])
+      .map((h) => {
+        const ts = Date.parse(h.date);
+        return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
+      })
+      .filter((p) => p.x !== null && (cutoffMs === null || p.x >= cutoffMs))
+      .sort((a, b) => a.x - b.x);
+    if (!sorted.length) return;
+    const stats = computeSeriesStats(sorted);
+    if (!stats) return;
+    metrics.push({
+      id,
+      rate: stats.rate,
+      delta: stats.delta,
+      avg: stats.avg,
+      count: stats.count,
+    });
+  });
+
+  return metrics;
+};
+
+const buildRackStats = (rackPlants) => {
+  if (!rackPlants.length) return [];
+  const stats = rackPlants.map((plant) => {
+    const points = (plant.heights || [])
+      .map((h) => {
+        const ts = Date.parse(h.date);
+        return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
+      })
+      .filter((p) => p.x !== null)
+      .sort((a, b) => a.x - b.x);
+    const summary = computeSeriesStats(points);
+    return {
+      id: plant.id,
+      avg: summary?.avg ?? null,
+      count: summary?.count ?? 0,
+    };
+  });
+
+  const valid = stats.filter((item) => item.avg !== null);
+  if (!valid.length) return stats.map((item) => ({ ...item, rank: null }));
+  const maxAvg = Math.max(...valid.map((item) => item.avg));
+  const minAvg = Math.min(...valid.map((item) => item.avg));
+  return stats.map((item) => {
+    if (item.avg === null) return { ...item, rank: null };
+    if (item.avg === maxAvg) return { ...item, rank: "Best" };
+    if (item.avg === minAvg) return { ...item, rank: "Worst" };
+    return { ...item, rank: null };
+  });
+};
+
+const buildGrowthInsight = ({ stats, record, history }) => {
+  if (!stats || !history.length) {
+    return "No measurements yet. Add at least two entries to generate a growth conclusion.";
+  }
+  if (history.length < 2 || stats.days === null) {
+    return "Not enough time-based data to estimate growth trend. Add measurements on different days.";
+  }
+
+  const rate = stats.rate ?? 0;
+  const change = stats.delta ?? 0;
+  const direction =
+    Math.abs(rate) < 0.05
+      ? "stable"
+      : rate > 0
+      ? "increasing"
+      : "decreasing";
+  const pace = stats.rate !== null ? `${stats.rate.toFixed(2)} mm/day` : "n/a";
+  const changeText = Number.isFinite(change)
+    ? `${change >= 0 ? "+" : ""}${change.toFixed(1)} mm`
+    : "n/a";
+  const avgText = Number.isFinite(stats.avg) ? `${stats.avg.toFixed(1)} mm` : "n/a";
+  const spanText = stats.days !== null ? `${stats.days.toFixed(0)} days` : "n/a";
+
+  return `Over ${spanText}, ${record?.id ? `jar ${record.id}` : "this jar"} shows a ${direction} trend. Average height is ${avgText} with a total change of ${changeText} and a growth rate of ${pace}.`;
+};
+
+const buildGrowthBrief = ({ stats, record, history }) => {
+  if (!stats || !history.length) {
+    return "Add measurements to generate a growth snapshot.";
+  }
+  if (history.length < 2 || stats.days === null) {
+    return "Need more time-based points to describe the growth trend.";
+  }
+  const pace = stats.rate !== null ? `${stats.rate.toFixed(2)} mm/day` : "n/a";
+  const changeText = Number.isFinite(stats.delta)
+    ? `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm`
+    : "n/a";
+  return `${record?.id ? `Jar ${record.id}` : "This jar"} is trending ${stats.rate >= 0 ? "upward" : "downward"} (${pace}), total change ${changeText}.`;
+};
+
+const buildCompareInsight = ({ metrics, compareWindow }) => {
+  if (!metrics.length) return "Select two or three jars to generate a comparison summary.";
+  const windowLabel = compareWindow === "all" ? "all time" : compareWindow;
+  const valid = metrics.filter((m) => m.rate !== null);
+  if (!valid.length) {
+    return `Not enough recent data to calculate growth rates for the ${windowLabel} window.`;
+  }
+  const best = valid.reduce((a, b) => (a.rate > b.rate ? a : b));
+  const worst = valid.reduce((a, b) => (a.rate < b.rate ? a : b));
+  return `For the ${windowLabel} window, ${best.id} has the fastest growth at ${best.rate.toFixed(
+    2
+  )} mm/day, while ${worst.id} is the slowest at ${worst.rate.toFixed(2)} mm/day.`;
+};
+
+const buildCompareBrief = ({ metrics, compareWindow }) => {
+  if (!metrics.length) return "Select jars to compare growth rates.";
+  const windowLabel = compareWindow === "all" ? "all time" : compareWindow;
+  const valid = metrics.filter((m) => m.rate !== null);
+  if (!valid.length) return `Not enough data to compare growth rates (${windowLabel}).`;
+  const best = valid.reduce((a, b) => (a.rate > b.rate ? a : b));
+  return `Fastest growth: ${best.id} at ${best.rate.toFixed(2)} mm/day (${windowLabel}).`;
+};
+
+const buildRackInsight = ({ rackStats, rackQuery }) => {
+  if (!rackQuery) return "Enter a rack label to generate a rack summary.";
+  if (!rackStats.length) return "No jars found for this rack.";
+  const valid = rackStats.filter((item) => item.avg !== null);
+  if (!valid.length) return "Not enough measurements to calculate rack averages.";
+  const best = valid.find((item) => item.rank === "Best") || valid[0];
+  const worst = valid.find((item) => item.rank === "Worst") || valid[valid.length - 1];
+  const avgAcross = valid.reduce((sum, item) => sum + item.avg, 0) / valid.length;
+  return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Best average height is ${
+    best.id
+  } at ${best.avg.toFixed(1)} mm; lowest is ${worst.id} at ${worst.avg.toFixed(1)} mm.`;
+};
+
+const buildRackBrief = ({ rackStats, rackQuery }) => {
+  if (!rackQuery) return "Enter a rack label to summarize.";
+  if (!rackStats.length) return "No jars found on this rack.";
+  const valid = rackStats.filter((item) => item.avg !== null);
+  if (!valid.length) return "Not enough data to summarize rack averages.";
+  const best = valid.find((item) => item.rank === "Best") || valid[0];
+  return `Rack ${rackQuery}: best average height is ${best.id} at ${best.avg.toFixed(1)} mm.`;
+};
+
+const answerGrowthQuestion = ({ question, stats, history, record, insight }) => {
+  if (!question?.trim()) return insight;
+  if (!stats || !history.length) return "No measurement data is available yet.";
+
+  const q = question.toLowerCase();
+  if (q.includes("rate") || q.includes("growth")) {
+    return stats.rate !== null ? `Growth rate is ${stats.rate.toFixed(2)} mm/day.` : "Growth rate is not available yet.";
+  }
+  if (q.includes("average") || q.includes("avg")) {
+    return Number.isFinite(stats.avg) ? `Average height is ${stats.avg.toFixed(1)} mm.` : "Average height is not available yet.";
+  }
+  if (q.includes("change") || q.includes("delta")) {
+    return Number.isFinite(stats.delta)
+      ? `Total change is ${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm.`
+      : "Total change is not available yet.";
+  }
+  if (q.includes("latest") || q.includes("last")) {
+    const last = history[history.length - 1];
+    return last ? `Latest height is ${Number(last.height_mm).toFixed(1)} mm on ${formatDate(last.ts)}.` : "No latest measurement.";
+  }
+  if (q.includes("min") || q.includes("max") || q.includes("range")) {
+    if (stats.min === null || stats.max === null) return "Range is not available yet.";
+    return `Height ranges from ${stats.min.toFixed(1)} mm to ${stats.max.toFixed(1)} mm.`;
+  }
+  return insight;
+};
+
+const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) => {
+  if (!question?.trim()) return insight;
+  if (!metrics.length) return "No comparison data yet.";
+  const q = question.toLowerCase();
+  const windowLabel = compareWindow === "all" ? "all time" : compareWindow;
+  const valid = metrics.filter((m) => m.rate !== null);
+
+  if (q.includes("best") || q.includes("fastest")) {
+    if (!valid.length) return "No growth rates available yet.";
+    const best = valid.reduce((a, b) => (a.rate > b.rate ? a : b));
+    return `${best.id} has the fastest growth at ${best.rate.toFixed(2)} mm/day (${windowLabel}).`;
+  }
+  if (q.includes("worst") || q.includes("slowest")) {
+    if (!valid.length) return "No growth rates available yet.";
+    const worst = valid.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `${worst.id} is the slowest at ${worst.rate.toFixed(2)} mm/day (${windowLabel}).`;
+  }
+  if (q.includes("average") || q.includes("avg")) {
+    const rows = metrics
+      .map((m) => `${m.id}: ${Number.isFinite(m.avg) ? m.avg.toFixed(1) : "n/a"} mm`)
+      .join(", ");
+    return `Average heights (${windowLabel}): ${rows}.`;
+  }
+  if (q.includes("change") || q.includes("delta")) {
+    const rows = metrics
+      .map((m) => `${m.id}: ${Number.isFinite(m.delta) ? m.delta.toFixed(1) : "n/a"} mm`)
+      .join(", ");
+    return `Total change (${windowLabel}): ${rows}.`;
+  }
+  return insight;
+};
+
+const answerRackQuestion = ({ question, rackStats, rackQuery, insight }) => {
+  if (!question?.trim()) return insight;
+  if (!rackStats.length) return "No rack data yet.";
+  const q = question.toLowerCase();
+  const valid = rackStats.filter((item) => item.avg !== null);
+  if (q.includes("best")) {
+    const best = valid.find((item) => item.rank === "Best");
+    return best ? `Best average height on ${rackQuery}: ${best.id} at ${best.avg.toFixed(1)} mm.` : insight;
+  }
+  if (q.includes("worst") || q.includes("lowest")) {
+    const worst = valid.find((item) => item.rank === "Worst");
+    return worst ? `Lowest average height on ${rackQuery}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : insight;
+  }
+  if (q.includes("average") || q.includes("avg")) {
+    const rows = valid.map((item) => `${item.id}: ${item.avg.toFixed(1)} mm`).join(", ");
+    return rows ? `Average height per jar: ${rows}.` : insight;
+  }
+  return insight;
+};
+
 export default function GrowthHistory() {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -267,27 +513,24 @@ export default function GrowthHistory() {
   const [cultureError, setCultureError] = useState("");
 
   useEffect(() => {
-    let active = true;
     setPlantsError("");
 
-    api
-      .get("/env/plants")
-      .then((resp) => {
-        if (!active) return;
-        const data = Array.isArray(resp.data) ? resp.data : [];
-        const normalized = data.map(normalizePlantRecord).filter(Boolean);
+    const plantsRef = ref(db, "plants");
+    const unsubscribe = onValue(
+      plantsRef,
+      (snap) => {
+        const normalized = normalizePlantSnapshot(snap.val());
         setPlants(normalized);
-      })
-      .catch((err) => {
-        if (!active) return;
-        const message = err.response?.data?.detail || err.message || "Failed to load plant records";
-        setPlantsError(typeof message === "string" ? message : "Failed to load plant records");
+        setPlantsError("");
+      },
+      (err) => {
+        const message = err?.message || "Failed to load plant records from Firebase";
+        setPlantsError(message);
         setPlants([]);
-      });
+      }
+    );
 
-    return () => {
-      active = false;
-    };
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -397,6 +640,59 @@ export default function GrowthHistory() {
       .sort((a, b) => a.ts - b.ts);
   }, [record]);
 
+  const historyStats = useMemo(() => {
+    if (!history.length) return null;
+    const points = history.map((row) => ({ x: row.ts, y: Number(row.height_mm) }));
+    return computeSeriesStats(points);
+  }, [history]);
+  const growthInsight = useMemo(
+    () => buildGrowthInsight({ stats: historyStats, record, history }),
+    [historyStats, record, history]
+  );
+  const growthBrief = useMemo(
+    () => buildGrowthBrief({ stats: historyStats, record, history }),
+    [historyStats, record, history]
+  );
+  const [includeInsightInReport, setIncludeInsightInReport] = useState(true);
+  const [growthReportInsight, setGrowthReportInsight] = useState("");
+  const compareMetrics = useMemo(
+    () => buildCompareMetrics(combinedRecords, compareIds, compareWindow),
+    [combinedRecords, compareIds, compareWindow]
+  );
+  const compareInsight = useMemo(
+    () => buildCompareInsight({ metrics: compareMetrics, compareWindow }),
+    [compareMetrics, compareWindow]
+  );
+  const compareBrief = useMemo(
+    () => buildCompareBrief({ metrics: compareMetrics, compareWindow }),
+    [compareMetrics, compareWindow]
+  );
+  const [includeCompareInsight, setIncludeCompareInsight] = useState(true);
+  const [compareReportInsight, setCompareReportInsight] = useState("");
+  const rackStats = useMemo(() => buildRackStats(rackPlants), [rackPlants]);
+  const rackInsight = useMemo(
+    () => buildRackInsight({ rackStats, rackQuery }),
+    [rackStats, rackQuery]
+  );
+  const rackBrief = useMemo(
+    () => buildRackBrief({ rackStats, rackQuery }),
+    [rackStats, rackQuery]
+  );
+  const [includeRackInsight, setIncludeRackInsight] = useState(true);
+  const [rackReportInsight, setRackReportInsight] = useState("");
+
+  useEffect(() => {
+    setGrowthReportInsight(growthBrief);
+  }, [growthBrief]);
+
+  useEffect(() => {
+    setCompareReportInsight(compareBrief);
+  }, [compareBrief]);
+
+  useEffect(() => {
+    setRackReportInsight(rackBrief);
+  }, [rackBrief]);
+
   return (
     <div className="relative space-y-8">
       <Backdrop isLight={isLight} />
@@ -418,7 +714,32 @@ export default function GrowthHistory() {
 
       <div className="relative space-y-6">
         <SummaryCard record={record} history={history} />
-        <ChartCard isLight={isLight} record={record} history={history} />
+        <ChartCard
+          isLight={isLight}
+          record={record}
+          history={history}
+          reportInsightText={growthReportInsight || growthBrief}
+          includeInsight={includeInsightInReport}
+        />
+        <InsightAssistant
+          kicker="Chart assistant"
+          title="Growth conclusion"
+          insightText={growthBrief}
+          summaryText={growthInsight}
+          includeInsight={includeInsightInReport}
+          setIncludeInsight={setIncludeInsightInReport}
+          placeholder="Ask about rate, change, average, or latest..."
+          onReportTextChange={setGrowthReportInsight}
+          onAsk={(question) =>
+            answerGrowthQuestion({
+              question,
+              stats: historyStats,
+              history,
+              record,
+              insight: growthInsight,
+            })
+          }
+        />
         <HistoryList history={history} />
         <RackSearch
           rackQuery={rackQuery}
@@ -428,11 +749,37 @@ export default function GrowthHistory() {
           rackPlants={rackPlants}
           rackHintString={rackHintString}
         />
-        <RackChart isLight={isLight} rackQuery={rackQuery} rackPlants={rackPlants} rackHintString={rackHintString} />
+        <RackChart
+          isLight={isLight}
+          rackQuery={rackQuery}
+          rackPlants={rackPlants}
+          rackHintString={rackHintString}
+          rackStats={rackStats}
+          reportInsightText={rackReportInsight || rackBrief}
+          includeInsight={includeRackInsight}
+        />
+        <InsightAssistant
+          kicker="Rack assistant"
+          title="Rack summary"
+          insightText={rackBrief}
+          summaryText={rackInsight}
+          includeInsight={includeRackInsight}
+          setIncludeInsight={setIncludeRackInsight}
+          placeholder="Ask about best, worst, or averages..."
+          onReportTextChange={setRackReportInsight}
+          onAsk={(question) =>
+            answerRackQuestion({
+              question,
+              rackStats,
+              rackQuery,
+              insight: rackInsight,
+            })
+          }
+        />
         <ComparePanel
           combinedRecords={combinedRecords}
           compareIds={compareIds}
-          setCompare Ids={setCompareIds}
+          setCompareIds={setCompareIds}
           compareWindow={compareWindow}
           setCompareWindow={setCompareWindow}
         />
@@ -441,6 +788,27 @@ export default function GrowthHistory() {
           compareIds={compareIds}
           compareWindow={compareWindow}
           isLight={isLight}
+          metrics={compareMetrics}
+          reportInsightText={compareReportInsight || compareBrief}
+          includeInsight={includeCompareInsight}
+        />
+        <InsightAssistant
+          kicker="Compare assistant"
+          title="Comparison summary"
+          insightText={compareBrief}
+          summaryText={compareInsight}
+          includeInsight={includeCompareInsight}
+          setIncludeInsight={setIncludeCompareInsight}
+          placeholder="Ask about best, worst, change, or average..."
+          onReportTextChange={setCompareReportInsight}
+          onAsk={(question) =>
+            answerCompareQuestion({
+              question,
+              metrics: compareMetrics,
+              compareWindow,
+              insight: compareInsight,
+            })
+          }
         />
       </div>
     </div>
@@ -510,7 +878,7 @@ function LookupCard({
             <input
               value={query}
               onChange={(e) => {
-                setQuery(e.target.value);
+                setQuery(normalizeJarIdInput(e.target.value));
                 if (status) setStatus("");
               }}
               placeholder={`Search Jar ID (${demoIdHint || "known IDs"})`}
@@ -553,7 +921,7 @@ function LookupCard({
   );
 }
 // Chart card
-function ChartCard({ record, history, isLight }) {
+function ChartCard({ record, history, isLight, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const seriesStats = useMemo(() => {
@@ -580,14 +948,22 @@ function ChartCard({ record, history, isLight }) {
       ["Growth rate", seriesStats?.rate !== null ? `${seriesStats.rate.toFixed(2)} mm/day` : "-"],
     ];
 
+    const sections = [
+      { heading: "Summary", content: renderKeyValueTable(statsRows) },
+      { heading: "Measurements", content: renderDataTable(["Date", "Height"], reportDateRows) },
+    ];
+    if (includeInsight && reportInsightText) {
+      sections.unshift({
+        heading: "Assistant conclusion",
+        content: `<p>${escapeHtml(reportInsightText)}</p>`,
+      });
+    }
+
     openReportWindow({
       title: `Jar History Report - ${record?.id || "Unknown"}`,
       subtitle: "Height over time",
       chartImage,
-      sections: [
-        { heading: "Summary", content: renderKeyValueTable(statsRows) },
-        { heading: "Measurements", content: renderDataTable(["Date", "Height"], reportDateRows) },
-      ],
+      sections,
     });
   };
 
@@ -710,6 +1086,111 @@ function ChartCard({ record, history, isLight }) {
           <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
         )}
       </div>
+    </motion.div>
+  );
+}
+
+function InsightAssistant({
+  kicker,
+  title,
+  insightText,
+  summaryText,
+  includeInsight,
+  setIncludeInsight,
+  placeholder,
+  onAsk,
+  onReportTextChange,
+}) {
+  const [messages, setMessages] = useState(() => [{ role: "assistant", text: insightText }]);
+  const [input, setInput] = useState("");
+
+  useEffect(() => {
+    setMessages([{ role: "assistant", text: insightText }]);
+  }, [insightText, title]);
+
+  const handleAsk = (e) => {
+    e.preventDefault();
+    const question = input.trim();
+    if (!question) return;
+    const lower = question.toLowerCase();
+    const wantsSummary =
+      lower.includes("summary") ||
+      lower.includes("conclusion") ||
+      lower.includes("overall") ||
+      lower.includes("insight");
+    const reply = wantsSummary ? summaryText || insightText : onAsk ? onAsk(question) : insightText;
+    if (wantsSummary && onReportTextChange && summaryText) {
+      onReportTextChange(summaryText);
+    }
+    setMessages((prev) => [...prev, { role: "user", text: question }, { role: "assistant", text: reply }]);
+    setInput("");
+  };
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="panel space-y-3"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="h-11 w-11 rounded-2xl border border-primary/30 bg-primary/10 flex items-center justify-center">
+            <svg viewBox="0 0 24 24" className="h-6 w-6 text-primary" fill="none" stroke="currentColor" strokeWidth="1.6">
+              <rect x="5" y="8" width="14" height="10" rx="3" />
+              <circle cx="9" cy="13" r="1.2" fill="currentColor" stroke="none" />
+              <circle cx="15" cy="13" r="1.2" fill="currentColor" stroke="none" />
+              <path d="M9 16h6" />
+              <path d="M12 5v3" />
+              <circle cx="12" cy="4" r="1" fill="currentColor" stroke="none" />
+            </svg>
+          </div>
+          <div>
+            <p className="kicker">{kicker}</p>
+            <h3 className="text-lg font-semibold text-dark">{title}</h3>
+            <p className="text-xs text-subtle">Mini scientist assistant</p>
+          </div>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-subtle shrink-0">
+          <input
+            type="checkbox"
+            checked={includeInsight}
+            onChange={(e) => setIncludeInsight(e.target.checked)}
+            className="accent-primary"
+          />
+          Include in report
+        </label>
+      </div>
+
+      <div className="space-y-2 max-h-48 overflow-auto pr-1">
+        {messages.map((msg, idx) => (
+          <div
+            key={`${msg.role}-${idx}`}
+            className={`rounded-xl border px-3 py-2 text-sm ${
+              msg.role === "assistant"
+                ? "border-primary/25 bg-primary/10 text-dark"
+                : "border-border/45 bg-paper/80 text-dark"
+            }`}
+          >
+            <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">
+              {msg.role === "assistant" ? "Assistant" : "You"}
+            </p>
+            <p className="mt-1">{msg.text}</p>
+          </div>
+        ))}
+      </div>
+
+      <form onSubmit={handleAsk} className="flex items-center gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={placeholder}
+          className="input-shell py-2 flex-1"
+        />
+        <button type="submit" className="btn-primary text-xs px-3 py-2">
+          Ask
+        </button>
+      </form>
     </motion.div>
   );
 }
@@ -908,11 +1389,11 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
   );
 }
 
-function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
+function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, metrics, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
-  const { datasets, metrics } = useMemo(() => {
+  const datasets = useMemo(() => {
     const palette = ["#e64cc3", "#4f46e5", "#22c55e", "#f59e0b", "#0ea5e9", "#ef4444"];
     const cutoffMs = (() => {
       const now = Date.now();
@@ -923,7 +1404,6 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
     })();
 
     const nextDatasets = [];
-    const nextMetrics = [];
 
     compareIds.forEach((id, idx) => {
       const plant = combinedRecords.find((p) => p.id === id);
@@ -950,17 +1430,6 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
         fill: false,
       });
 
-      const stats = computeSeriesStats(sorted);
-      if (stats) {
-        nextMetrics.push({
-          id,
-          rate: stats.rate,
-          delta: stats.delta,
-          avg: stats.avg,
-          count: stats.count,
-        });
-      }
-
       const trendPoints = buildTrendlinePoints(sorted);
       if (trendPoints) {
         nextDatasets.push({
@@ -976,14 +1445,15 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
       }
     });
 
-    return { datasets: nextDatasets, metrics: nextMetrics };
+    return nextDatasets;
   }, [compareIds, combinedRecords, compareWindow]);
 
   const handleReport = () => {
-    if (!metrics.length) return;
+    const safeMetrics = metrics || [];
+    if (!safeMetrics.length) return;
     const chartImage = chartRef.current?.toBase64Image?.();
     const windowLabel = compareWindow === "all" ? "All time" : compareWindow;
-    const metricRows = metrics.map((item) => [
+    const metricRows = safeMetrics.map((item) => [
       item.id,
       item.rate !== null ? `${item.rate.toFixed(2)} mm/day` : "n/a",
       Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a",
@@ -991,19 +1461,27 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
       `${item.count} pts`,
     ]);
 
+    const sections = [
+      {
+        heading: "Growth metrics",
+        content: renderDataTable(
+          ["Jar ID", "Growth rate", "Change", "Avg height", "Points"],
+          metricRows
+        ),
+      },
+    ];
+    if (includeInsight && reportInsightText) {
+      sections.unshift({
+        heading: "Assistant conclusion",
+        content: `<p>${escapeHtml(reportInsightText)}</p>`,
+      });
+    }
+
     openReportWindow({
       title: "Jar Comparison Report",
       subtitle: `Window: ${windowLabel}`,
       chartImage,
-      sections: [
-        {
-          heading: "Growth metrics",
-          content: renderDataTable(
-            ["Jar ID", "Growth rate", "Change", "Avg height", "Points"],
-            metricRows
-          ),
-        },
-      ],
+      sections,
     });
   };
 
@@ -1082,14 +1560,14 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">
-            {metrics.length ? `${metrics.length} jar${metrics.length > 1 ? "s" : ""}` : "Waiting for selection"}
+            {metrics?.length ? `${metrics.length} jar${metrics.length > 1 ? "s" : ""}` : "Waiting for selection"}
           </span>
           <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
             Report
           </button>
         </div>
       </div>
-      {metrics.length ? (
+      {metrics?.length ? (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
           {metrics.map((item) => (
             <div key={item.id} className="panel-muted px-3 py-2 text-sm">
@@ -1121,60 +1599,38 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
   );
 }
 
-function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
+function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
-  const rackStats = useMemo(() => {
-    if (!rackPlants.length) return [];
-    const stats = rackPlants.map((plant) => {
-      const points = (plant.heights || [])
-        .map((h) => {
-          const ts = Date.parse(h.date);
-          return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
-        })
-        .filter((p) => p.x !== null)
-        .sort((a, b) => a.x - b.x);
-      const summary = computeSeriesStats(points);
-      return {
-        id: plant.id,
-        avg: summary?.avg ?? null,
-        count: summary?.count ?? 0,
-      };
-    });
-
-    const valid = stats.filter((item) => item.avg !== null);
-    if (!valid.length) return stats.map((item) => ({ ...item, rank: null }));
-    const maxAvg = Math.max(...valid.map((item) => item.avg));
-    const minAvg = Math.min(...valid.map((item) => item.avg));
-    return stats.map((item) => {
-      if (item.avg === null) return { ...item, rank: null };
-      if (item.avg === maxAvg) return { ...item, rank: "Best" };
-      if (item.avg === minAvg) return { ...item, rank: "Worst" };
-      return { ...item, rank: null };
-    });
-  }, [rackPlants]);
-
   const handleReport = () => {
-    if (!rackStats.length || !rackQuery) return;
+    if (!rackStats?.length || !rackQuery) return;
     const chartImage = chartRef.current?.toBase64Image?.();
-    const rows = rackStats.map((item) => [
+    const rows = (rackStats || []).map((item) => [
       item.id,
       item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a",
       `${item.count} pts`,
       item.rank || "-",
     ]);
 
+    const sections = [
+      {
+        heading: "Rack metrics",
+        content: renderDataTable(["Jar ID", "Avg height", "Points", "Rank"], rows),
+      },
+    ];
+    if (includeInsight && reportInsightText) {
+      sections.unshift({
+        heading: "Assistant conclusion",
+        content: `<p>${escapeHtml(reportInsightText)}</p>`,
+      });
+    }
+
     openReportWindow({
       title: `Rack Summary Report - ${rackQuery}`,
       subtitle: "Average height per jar",
       chartImage,
-      sections: [
-        {
-          heading: "Rack metrics",
-          content: renderDataTable(["Jar ID", "Avg height", "Points", "Rank"], rows),
-        },
-      ],
+      sections,
     });
   };
 
@@ -1277,14 +1733,14 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
           </button>
         </div>
       </div>
-      {rackQuery && rackStats.length ? (
+      {rackQuery && rackStats?.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs text-subtle">Average height per jar</p>
             <span className="text-[11px] text-subtle">Best/Worst marked</span>
           </div>
           <div className="grid sm:grid-cols-2 gap-2 max-h-40 overflow-auto pr-1">
-            {rackStats.map((item) => (
+            {(rackStats || []).map((item) => (
               <div key={item.id} className="rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-xs text-dark">
                 <div className="flex items-center justify-between">
                   <span className="font-semibold">{item.id}</span>

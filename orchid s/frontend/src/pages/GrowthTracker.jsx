@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { api } from "../lib/api";
 import { db } from "../lib/firebase";
 import { ref, onValue, query, limitToLast } from "firebase/database";
 
@@ -75,6 +74,18 @@ const normalizePlantRecord = (plant) => {
   };
 };
 
+const normalizePlantSnapshot = (data) => {
+  if (!data) return [];
+  if (Array.isArray(data)) {
+    return data
+      .map((item, idx) => normalizePlantRecord({ id: item?.id ?? String(idx), ...(item || {}) }))
+      .filter(Boolean);
+  }
+  return Object.entries(data)
+    .map(([key, value]) => normalizePlantRecord({ id: key, ...(value || {}) }))
+    .filter(Boolean);
+};
+
 const latestHeightFromHistory = (rows) => {
   if (!rows || !rows.length) return null;
   const enriched = rows
@@ -96,6 +107,12 @@ const resolveCurrentHeight = (plant) => {
   const fromHistory = latestHeightFromHistory(plant?.heights || []);
   if (fromHistory !== null) return fromHistory;
   return toNumber(plant?.height_mm ?? plant?.height ?? plant?.current_height);
+};
+
+const normalizeJarIdInput = (value) => {
+  const next = (value || "").trimStart();
+  if (!next) return value || "";
+  return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 
 export default function GrowthTracker() {
@@ -137,27 +154,24 @@ export default function GrowthTracker() {
   }, [jarId, cultureEntries]);
 
   useEffect(() => {
-    let active = true;
     setPlantFetchError("");
 
-    api
-      .get("/env/plants")
-      .then((resp) => {
-        if (!active) return;
-        const data = Array.isArray(resp.data) ? resp.data : [];
-        const normalized = data.map(normalizePlantRecord).filter(Boolean);
+    const plantsRef = ref(db, "plants");
+    const unsubscribe = onValue(
+      plantsRef,
+      (snap) => {
+        const normalized = normalizePlantSnapshot(snap.val());
         setPlantRecords(normalized);
-      })
-      .catch((err) => {
-        if (!active) return;
-        const message = err.response?.data?.detail || err.message || "Failed to load plant records";
-        setPlantFetchError(typeof message === "string" ? message : "Failed to load plant records");
+        setPlantFetchError("");
+      },
+      (err) => {
+        const message = err?.message || "Failed to load plant records from Firebase";
+        setPlantFetchError(message);
         setPlantRecords([]);
-      });
+      }
+    );
 
-    return () => {
-      active = false;
-    };
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
@@ -426,7 +440,7 @@ function FormCard({
         <Field label="Jar / Plant ID (optional)">
           <input
             value={jarId}
-            onChange={(e) => setJarId(e.target.value)}
+            onChange={(e) => setJarId(normalizeJarIdInput(e.target.value))}
             placeholder={demoIds.length ? `e.g. ${demoIds[0]}` : "Enter Jar ID"}
             className="input-shell"
           />
