@@ -33,6 +33,16 @@
     min-height: 100%;
   }
 
+  html {
+    font-size: 17px;
+  }
+
+  @media (max-width: 640px) {
+    html {
+      font-size: 16px;
+    }
+  }
+
   body {
     font-family: "Manrope", "Segoe UI", sans-serif;
     background-image:
@@ -69,7 +79,7 @@
   }
 
   .kicker {
-    @apply text-[11px] uppercase tracking-[0.26em] font-semibold text-primary/90;
+    @apply text-[12px] uppercase tracking-[0.26em] font-semibold text-primary/90;
   }
 
   .title-lg {

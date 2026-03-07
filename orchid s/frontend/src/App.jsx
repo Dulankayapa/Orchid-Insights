@@ -101,7 +101,7 @@ export default function App() {
                   key={item.to}
                   to={item.to}
                   className={({ isActive }) =>
-                    `group flex items-center gap-3 rounded-2xl px-3 py-3 text-sm transition ${
+                    `group flex items-center gap-3 rounded-2xl px-3 py-3 text-base transition ${
                       isActive
                         ? "border border-primary/35 bg-primary/12 text-primary shadow-[0_14px_32px_-24px_rgba(13,148,136,0.9)]"
                         : "border border-transparent text-subtle hover:border-border/50 hover:bg-paper/70 hover:text-dark"
@@ -111,7 +111,7 @@ export default function App() {
                   {({ isActive }) => (
                     <>
                       <span
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border text-[13px] leading-none ${
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border text-[14px] leading-none ${
                           isActive
                             ? "border-primary/45 bg-primary/15 text-primary"
                             : "border-border/45 bg-paper/75 text-subtle group-hover:text-dark"
@@ -119,8 +119,8 @@ export default function App() {
                       >
                         {item.code}
                       </span>
-                      <span className="flex-1 font-medium">{item.label}</span>
-                      <span className={`text-xs ${isActive ? "text-primary/70" : "text-subtle/60"}`}>-&gt;</span>
+                      <span className="flex-1 font-semibold">{item.label}</span>
+                      <span className={`text-sm ${isActive ? "text-primary/70" : "text-subtle/60"}`}>-&gt;</span>
                     </>
                   )}
                 </NavLink>
@@ -152,7 +152,7 @@ export default function App() {
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) =>
-                      `whitespace-nowrap rounded-xl border px-3 py-1.5 text-xs font-semibold transition ${
+                      `whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-semibold transition ${
                         isActive
                           ? "border-primary/35 bg-primary/12 text-primary"
                           : "border-border/40 bg-paper/80 text-subtle"
