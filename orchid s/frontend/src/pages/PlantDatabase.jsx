@@ -12,7 +12,7 @@ export default function PlantDatabase() {
   const filtered = useMemo(() => {
     if (!query.trim()) return rows;
     const term = query.toLowerCase();
-    return rows.filter((r) => r.id.toLowerCase().includes(term));
+    return rows.filter((row) => row.id.toLowerCase().includes(term));
   }, [query, rows]);
 
   useEffect(() => {
@@ -21,61 +21,64 @@ export default function PlantDatabase() {
       setError("");
       try {
         const resp = await api.get("/env/plants");
-        setRows(resp.data || []);
-        setSelected(resp.data?.[0] || null);
+        const data = resp.data || [];
+        setRows(data);
+        setSelected(data[0] || null);
       } catch (err) {
         setError(err.response?.data?.detail || err.message || "Failed to load plants");
       } finally {
         setLoading(false);
       }
     };
+
     fetchRows();
   }, []);
 
   useEffect(() => {
     if (!filtered.length) return;
-    if (!selected || !filtered.find((r) => r.id === selected.id)) {
+    if (!selected || !filtered.find((row) => row.id === selected.id)) {
       setSelected(filtered[0]);
     }
-  }, [filtered]);
+  }, [filtered, selected]);
 
   return (
     <div className="space-y-6">
-      <div className="glass rounded-3xl p-6 border border-blue-400/30">
-        <p className="text-xs uppercase tracking-[0.25em] text-subtle">Plant DB</p>
-        <h2 className="text-2xl font-semibold text-dark">Firebase-linked plant records</h2>
-        <p className="text-slate-600 mt-2">Search and inspect plant entries pulled from the unified backend.</p>
-      </div>
+      <section className="panel">
+        <p className="kicker">Plant DB</p>
+        <h2 className="title-lg mt-1">Firebase-linked plant records</h2>
+        <p className="mt-2 text-sm text-subtle md:text-base">
+          Search and inspect plant entries pulled from the unified backend.
+        </p>
+      </section>
 
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass rounded-3xl p-6 border border-white/40 space-y-4"
-      >
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="panel space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <p className="text-xs uppercase tracking-[0.25em] text-subtle">Spreadsheet view</p>
+            <p className="kicker">Spreadsheet View</p>
             <h3 className="text-lg font-semibold text-dark">Plant database</h3>
           </div>
-          <div className="flex gap-2 items-center text-xs text-slate-500">
-            <span className="px-3 py-1 rounded-full border border-fuchsia-100 bg-white/50">Rows: {filtered.length}</span>
-          </div>
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            Rows: {filtered.length}
+          </span>
         </div>
 
-        <div className="flex flex-col sm:flex-row gap-3">
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by Jar/Plant ID"
-            className="flex-1 rounded-xl bg-white border border-slate-200 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary/60 text-slate-900 placeholder:text-slate-400"
-          />
-        </div>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by Jar/Plant ID"
+          className="input-shell"
+        />
 
-        {error && <p className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">{error}</p>}
+        {loading && !error && <p className="text-sm text-subtle">Loading rows...</p>}
+        {error && (
+          <p className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
+            {error}
+          </p>
+        )}
 
-        <div className="overflow-auto rounded-2xl border border-fuchsia-100">
-          <table className="min-w-full text-sm text-left text-slate-800">
-            <thead className="text-xs uppercase tracking-[0.25em] text-subtle bg-fuchsia-50/50">
+        <div className="overflow-auto rounded-2xl border border-primary/15">
+          <table className="min-w-full text-left text-sm text-slate-800">
+            <thead className="bg-primary/8 text-xs uppercase tracking-[0.2em] text-subtle">
               <tr>
                 <th className="px-4 py-3">Jar ID</th>
                 <th className="px-4 py-3">Planting date</th>
@@ -88,17 +91,19 @@ export default function PlantDatabase() {
                 <tr
                   key={row.id}
                   onClick={() => setSelected(row)}
-                  className={`border-t border-fuchsia-100 cursor-pointer ${selected?.id === row.id ? "bg-primary/10 border-primary/40" : "hover:bg-fuchsia-50/30"}`}
+                  className={`cursor-pointer border-t border-primary/10 ${
+                    selected?.id === row.id ? "bg-primary/10" : "hover:bg-primary/5"
+                  }`}
                 >
-                  <td className="px-4 py-3 font-semibold text-primary-dark">{row.id}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.planting_date || "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.height_mm ?? "—"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.updated_at || "—"}</td>
+                  <td className="px-4 py-3 font-semibold text-primary">{row.id}</td>
+                  <td className="px-4 py-3 text-slate-600">{row.planting_date || "--"}</td>
+                  <td className="px-4 py-3 text-slate-600">{row.height_mm ?? "--"}</td>
+                  <td className="px-4 py-3 text-slate-600">{row.updated_at || "--"}</td>
                 </tr>
               ))}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={4} className="px-4 py-5 text-center text-slate-400">
+                  <td colSpan={4} className="px-4 py-5 text-center text-subtle">
                     No records match.
                   </td>
                 </tr>
@@ -106,23 +111,25 @@ export default function PlantDatabase() {
             </tbody>
           </table>
         </div>
-      </motion.div>
+      </motion.section>
 
       {selected && (
-        <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="glass rounded-3xl p-6 border border-blue-400/30">
+        <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="panel">
           <div className="flex items-center justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.25em] text-subtle">Profile</p>
+              <p className="kicker">Profile</p>
               <h3 className="text-xl font-semibold text-dark">{selected.id}</h3>
             </div>
-            <span className="text-xs px-3 py-1 rounded-full border border-blue-200 bg-blue-50 text-blue-700">Mock/Live mix</span>
+            <span className="rounded-full border border-secondary/25 bg-secondary/10 px-3 py-1 text-xs font-semibold text-secondary">
+              Mock/Live mix
+            </span>
           </div>
-          <div className="grid sm:grid-cols-3 gap-4 mt-4">
-            <Stat title="Planting date" value={selected.planting_date || "—"} />
-            <Stat title="Height (mm)" value={selected.height_mm ?? "—"} />
-            <Stat title="Cultivar" value={selected.cultivar || "—"} />
+          <div className="mt-4 grid gap-4 sm:grid-cols-3">
+            <Stat title="Planting date" value={selected.planting_date || "--"} />
+            <Stat title="Height (mm)" value={selected.height_mm ?? "--"} />
+            <Stat title="Cultivar" value={selected.cultivar || "--"} />
           </div>
-        </motion.div>
+        </motion.section>
       )}
     </div>
   );
@@ -130,9 +137,9 @@ export default function PlantDatabase() {
 
 function Stat({ title, value }) {
   return (
-    <div className="rounded-2xl border border-fuchsia-100 bg-white/50 p-4">
+    <div className="panel-muted p-4">
       <p className="text-xs uppercase tracking-[0.2em] text-subtle">{title}</p>
-      <p className="text-lg font-semibold text-dark mt-1">{value}</p>
+      <p className="mt-1 text-lg font-semibold text-dark">{value}</p>
     </div>
   );
 }

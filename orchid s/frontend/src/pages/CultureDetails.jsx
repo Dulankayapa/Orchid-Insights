@@ -173,15 +173,12 @@ function Hero({ isLight }) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-purple-50 via-white to-pink-50 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 pointer-events-none" />
       <div className="relative space-y-3">
         <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Re-culture planner</p>
-        <h1 className="text-3xl font-semibold text-slate-900">Track jar metadata and re-culture cycles</h1>
-        <p className="text-slate-700 text-sm md:text-base max-w-2xl">
-          Add Jar ID, culture date, rack number, orchid type, and the nutrition/medium used. Log as many future re-culture dates as the plant needs; updating the same Jar ID replaces the prior record.
-        </p>
+        <h1 className="text-3xl font-semibold text-slate-900">Jar Meta Data</h1>
       </div>
     </motion.div>
   );
@@ -205,7 +202,7 @@ function FormCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`space-y-6 rounded-3xl p-6 shadow-[0_30px_78px_-30px_rgba(216,45,139,0.32)] ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`space-y-6 rounded-3xl p-6 shadow-[0_30px_78px_-30px_rgba(13,148,136,0.32)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -266,7 +263,7 @@ function FormCard({
           <button
             type="button"
             onClick={addRecultureRow}
-            className="text-xs rounded-lg border border-fuchsia-200 bg-fuchsia-50 px-3 py-1.5 text-primary hover:border-primary hover:bg-primary/10 transition"
+            className="text-xs rounded-lg border border-teal-200 bg-teal-50 px-3 py-1.5 text-primary hover:border-primary hover:bg-primary/10 transition"
           >
             Add re-culture details
           </button>
@@ -281,7 +278,7 @@ function FormCard({
           {form.recultures.map((row, idx) => (
             <div
               key={idx}
-              className={`grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-center rounded-2xl border px-4 py-3 shadow-sm ${isLight ? "border-pink-100 bg-slate-50/60" : "border-pink-100 bg-slate-50/60"}`}
+              className={`grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-center rounded-2xl border px-4 py-3 shadow-sm ${isLight ? "border-emerald-100 bg-slate-50/60" : "border-emerald-100 bg-slate-50/60"}`}
             >
               <div className="space-y-1">
                 <label className="text-xs text-slate-600">Re-culture date {idx + 1}</label>
@@ -318,7 +315,7 @@ function FormCard({
       <div className="flex flex-wrap gap-3">
         <button
           type="submit"
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-purple-500 text-white font-semibold px-4 py-3 shadow-glow"
+          className="inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-primary to-cyan-500 text-white font-semibold px-4 py-3 shadow-glow"
         >
           Save jar
         </button>
@@ -394,7 +391,7 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(216,45,139,0.28)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(13,148,136,0.28)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -407,7 +404,7 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
       <form onSubmit={handleSearch} className="space-y-2">
         <div
           className={`flex items-center gap-2 rounded-2xl border px-3 py-2 shadow-sm ${
-            isLight ? "border-pink-100 bg-slate-50" : "border-pink-100 bg-slate-50/60"
+            isLight ? "border-emerald-100 bg-slate-50" : "border-emerald-100 bg-slate-50/60"
           }`}
         >
           <input
@@ -427,7 +424,7 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
           )}
           <button
             type="submit"
-            className="rounded-xl bg-gradient-to-r from-primary to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+            className="rounded-xl bg-gradient-to-r from-primary to-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
           >
             Search
           </button>
@@ -446,8 +443,8 @@ function JarList({ entries, selectedId, onSelect, isLight }) {
                   onClick={() => onSelect(entry)}
                   className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm ${
                     selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase()
-                      ? "border-pink-300 bg-primary/10 text-primary shadow-md"
-                      : `${isLight ? "border-pink-100 bg-slate-50" : "border-pink-100 bg-slate-50/60"} hover:border-pink-300 hover:bg-primary/5 hover:shadow-md`
+                      ? "border-emerald-300 bg-primary/10 text-primary shadow-md"
+                      : `${isLight ? "border-emerald-100 bg-slate-50" : "border-emerald-100 bg-slate-50/60"} hover:border-emerald-300 hover:bg-primary/5 hover:shadow-md`
                   }`}
                 >
                   <div className="flex items-center justify-between">
@@ -488,7 +485,7 @@ function Timeline({ entry, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_26px_70px_-30px_rgba(216,45,139,0.28)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_26px_70px_-30px_rgba(13,148,136,0.28)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -526,9 +523,9 @@ function Timeline({ entry, isLight }) {
 function Backdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 bg-gradient-to-b from-purple-50 via-white to-pink-50" />
-      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(168,85,247,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(236,72,153,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(217,70,239,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(168,85,247,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(244,114,182,0.1),transparent_36%)]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-cyan-50 via-white to-emerald-50" />
+      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(6,182,212,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(6,182,212,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(13,148,136,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(6,182,212,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(249,115,22,0.1),transparent_36%)]" />
     </div>
   );
 }

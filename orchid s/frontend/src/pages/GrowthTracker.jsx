@@ -1,4 +1,4 @@
-ï»¿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { mockPlants } from "../data/mockPlants";
@@ -197,9 +197,9 @@ function normalizeSensor(val) {
 function BackgroundGrid() {
   return (
     <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 bg-gradient-to-b from-pink-50 via-white to-purple-50" />
-      <div className="absolute inset-0 opacity-70 bg-[linear-gradient(90deg,rgba(217,70,239,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(168,85,247,0.06)_1px,transparent_1px)] bg-[size:56px_56px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(236,72,153,0.15),transparent_32%),radial-gradient(circle_at_78%_12%,rgba(217,70,239,0.15),transparent_28%),radial-gradient(circle_at_50%_82%,rgba(168,85,247,0.1),transparent_36%)]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-emerald-50 via-white to-cyan-50" />
+      <div className="absolute inset-0 opacity-70 bg-[linear-gradient(90deg,rgba(13,148,136,0.08)_1px,transparent_1px),linear-gradient(180deg,rgba(6,182,212,0.06)_1px,transparent_1px)] bg-[size:56px_56px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(6,182,212,0.15),transparent_32%),radial-gradient(circle_at_78%_12%,rgba(13,148,136,0.15),transparent_28%),radial-gradient(circle_at_50%_82%,rgba(6,182,212,0.1),transparent_36%)]" />
     </div>
   );
 }
@@ -210,15 +210,12 @@ function Hero() {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className="relative overflow-hidden rounded-3xl border border-fuchsia-100 bg-white/90 p-8 shadow-[0_25px_60px_-25px_rgba(217,70,239,0.15)]"
+      className="relative overflow-hidden rounded-3xl border border-teal-100 bg-white/90 p-8 shadow-[0_25px_60px_-25px_rgba(13,148,136,0.15)]"
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-fuchsia-50 via-pink-50 to-purple-50 pointer-events-none" />
+      <div className="absolute inset-0 bg-gradient-to-r from-teal-50 via-emerald-50 to-cyan-50 pointer-events-none" />
       <div className="relative space-y-3 max-w-3xl">
         <p className="text-xs uppercase tracking-[0.3em] text-primary">Growth insight</p>
         <h2 className="text-3xl font-semibold leading-tight text-slate-900">Orchid growth tracker</h2>
-        <p className="text-slate-700 text-sm md:text-base">
-          Pick a Jar/Plant ID to auto-fill planting date, then enter the latest height. The FastAPI model returns age-adjusted expected range and a deterministic growth class.
-        </p>
       </div>
     </motion.div>
   );
@@ -249,7 +246,7 @@ function FormCard({
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`space-y-6 rounded-3xl text-slate-900 p-6 shadow-[0_28px_72px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`space-y-6 rounded-3xl text-slate-900 p-6 shadow-[0_28px_72px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -275,7 +272,7 @@ function FormCard({
             readOnly
             disabled
             placeholder="Choose a Jar/Plant ID to load"
-            className="w-full rounded-xl border border-fuchsia-100 bg-fuchsia-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
           />
         </Field>
         <Field label="Current height (mm) *">
@@ -286,7 +283,7 @@ function FormCard({
             readOnly
             disabled
             placeholder="Auto-filled from plant record"
-            className="w-full rounded-xl border border-fuchsia-100 bg-fuchsia-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
           />
         </Field>
         <Field label="Age (days) - optional override">
@@ -296,7 +293,7 @@ function FormCard({
             readOnly
             disabled
             placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : "Auto-calculated once ID loads"}
-            className="w-full rounded-xl border border-fuchsia-100 bg-fuchsia-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
           />
         </Field>
       </div>
@@ -308,12 +305,12 @@ function FormCard({
       )}
       <p className="text-xs text-slate-600">Today: {today}</p>
       {plantRecord && (
-        <p className="text-xs text-fuchsia-800 rounded-lg border border-fuchsia-100 bg-fuchsia-50 px-3 py-2">
+        <p className="text-xs text-teal-800 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">
           Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
         </p>
       )}
 
-      <div className="grid sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-purple-50/60 border border-purple-100 rounded-2xl p-3">
+      <div className="grid sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-cyan-50/60 border border-cyan-100 rounded-2xl p-3">
         <p>Tip: current date defaults to today automatically.</p>
         <p>Units: millimeters.</p>
       </div>
@@ -321,7 +318,7 @@ function FormCard({
       <button
         type="submit"
         disabled={loading}
-        className="inline-flex items-center justify-center w-full gap-2 rounded-xl bg-gradient-to-r from-primary to-purple-500 text-white font-semibold py-3 shadow-glow disabled:opacity-60 disabled:cursor-not-allowed"
+        className="inline-flex items-center justify-center w-full gap-2 rounded-xl bg-gradient-to-r from-primary to-cyan-500 text-white font-semibold py-3 shadow-glow disabled:opacity-60 disabled:cursor-not-allowed"
       >
         {loading ? (
           <span className="flex items-center gap-2">
@@ -355,15 +352,15 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
         initial={{ opacity: 0, y: 10 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, delay: 0.05 }}
-        className={`rounded-3xl p-6 space-y-6 shadow-[0_28px_72px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
+        className={`rounded-3xl p-6 space-y-6 shadow-[0_28px_72px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
       >
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
             <p className="text-xs uppercase tracking-[0.3em] text-primary">Prediction</p>
             <h3 className="text-xl font-semibold text-slate-900">Model output</h3>
           </div>
-          <div className="flex items-center gap-2 text-xs text-fuchsia-600">
-            <span className="h-2 w-2 rounded-full bg-fuchsia-400 shadow shadow-fuchsia-400/40" />
+          <div className="flex items-center gap-2 text-xs text-teal-600">
+            <span className="h-2 w-2 rounded-full bg-teal-400 shadow shadow-teal-400/40" />
             Live from FastAPI
           </div>
         </div>
@@ -371,7 +368,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
         {!result && (
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             {[1, 2, 3].map((item) => (
-              <div key={item} className="h-24 rounded-2xl border border-fuchsia-100 bg-fuchsia-50/60 animate-pulse" />
+              <div key={item} className="h-24 rounded-2xl border border-teal-100 bg-teal-50/60 animate-pulse" />
             ))}
           </div>
         )}
@@ -404,7 +401,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
             </div>
 
             {displayProbabilities && (
-              <div className="rounded-2xl border border-fuchsia-100 bg-gradient-to-br from-white via-fuchsia-50/60 to-purple-50 p-5 space-y-4">
+              <div className="rounded-2xl border border-teal-100 bg-gradient-to-br from-white via-teal-50/60 to-cyan-50 p-5 space-y-4">
                 <p className="text-sm text-slate-800 font-semibold">Probability breakdown</p>
                 <div className="grid gap-4">
                   {Object.entries(displayProbabilities).map(([label, prob]) => (
@@ -414,7 +411,7 @@ function ResultCard({ result, jarId, currentHeight, predictedPillClass, displayL
               </div>
             )}
 
-            <div className="rounded-2xl border border-fuchsia-100 bg-white/90 px-5 py-4 text-sm text-slate-700">
+            <div className="rounded-2xl border border-teal-100 bg-white/90 px-5 py-4 text-sm text-slate-700">
               The model compares age-adjusted expected height range with your measurement to classify growth. Use the probability spread to judge confidence and watch for consistent shifts over time.
             </div>
           </div>
@@ -436,14 +433,14 @@ function SensorPanel({ latest, history, error, isLight }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.08 }}
-      className={`rounded-3xl p-5 space-y-4 shadow-[0_24px_60px_-30px_rgba(216,45,139,0.26)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_24px_60px_-30px_rgba(13,148,136,0.26)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-primary">Sensor feed</p>
           <h4 className="text-lg font-semibold text-slate-900">Live Firebase data</h4>
         </div>
-        <span className="text-xs text-fuchsia-700 px-3 py-1 rounded-full border border-fuchsia-100 bg-fuchsia-50">
+        <span className="text-xs text-teal-700 px-3 py-1 rounded-full border border-teal-100 bg-teal-50">
           {latest ? "Streaming" : "Waiting..."}
         </span>
       </div>
@@ -454,7 +451,7 @@ function SensorPanel({ latest, history, error, isLight }) {
 
       {latest ? (
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} Â°C`} />
+          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} °C`} />
           <SensorStat label="Humidity" value={`${latest.humidity?.toFixed?.(1) ?? latest.humidity ?? "-"} %`} />
           <SensorStat label="Light" value={`${latest.lux ?? "-"} lx`} />
           <SensorStat label="MQ135" value={latest.mq135 ?? "-"} />
@@ -471,11 +468,11 @@ function SensorPanel({ latest, history, error, isLight }) {
             {recent.map((row, idx) => (
               <div
                 key={`${row.timestamp}-${idx}`}
-                className="flex items-center justify-between rounded-xl border border-fuchsia-100 bg-fuchsia-50 px-3 py-2 text-xs text-slate-800"
+                className="flex items-center justify-between rounded-xl border border-teal-100 bg-teal-50 px-3 py-2 text-xs text-slate-800"
               >
                 <span className="text-slate-600">{formatTs(row.timestamp)}</span>
                 <span className="text-slate-900">
-                  {row.temperature ?? "-"}Â°C Â· {row.humidity ?? "-"}% Â· {row.lux ?? "-"} lx Â· MQ {row.mq135 ?? "-"}
+                  {row.temperature ?? "-"}°C · {row.humidity ?? "-"}% · {row.lux ?? "-"} lx · MQ {row.mq135 ?? "-"}
                 </span>
               </div>
             ))}
@@ -494,7 +491,7 @@ function MockHistoryCard({ plantRecord, isLight, demoIdHint }) {
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35, delay: 0.05 }}
-      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(216,45,139,0.26)] ${isLight ? "bg-white border border-pink-200 shadow-xl" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(13,148,136,0.26)] ${isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -591,4 +588,5 @@ function SensorStat({ label, value, className = "" }) {
     </div>
   );
 }
+
 
