@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ref, onValue, query, limitToLast } from 'firebase/database';
-import { db } from '../lib/firebase';
+import { db, resolvedDatabaseURL } from '../lib/firebase';
 
 const LIVE_PATHS = ['Jar1', 'Jar2', 'Jar3', 'orchidData/latest'];
 
@@ -71,8 +71,8 @@ export const useMonitorData = (settings) => {
 
     const config = useMemo(() => ({ ...SAFETY_DEFAULTS, ...settings }), [SAFETY_DEFAULTS, settings]);
 
-    // Allow fallback to REST polling when Firebase realtime connection is unavailable
-    const DB_URL = import.meta.env.VITE_FIREBASE_DB_URL || 'https://orchid-insights-c2456-default-rtdb.firebaseio.com';
+    // Fallback polling uses the same resolved RTDB URL as realtime listeners.
+    const DB_URL = resolvedDatabaseURL;
 
     // Stitch the latest live point into history for ultra-real-time graphs
     const liveHistory = useMemo(() => {
@@ -198,6 +198,7 @@ export const useMonitorData = (settings) => {
                         return prev;
                     });
                     setLastUpdate(Date.now());
+                    setConnectionStatus('connected');
                 }
             } catch (err) {
                 // ignore network errors

@@ -192,7 +192,7 @@ function LookupCard({
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-5 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-5 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -200,13 +200,13 @@ function LookupCard({
           <h2 className="text-2xl font-normal text-black">Find a jar and see its trail</h2>
           <p className="text-sm text-slate-600 mt-1">Type a Jar ID and we will load the demo measurements already used in Growth Tracker.</p>
         </div>
-        <span className="h-2.5 w-2.5 rounded-full bg-fuchsia-400 shadow-[0_0_12px_rgba(217,70,239,0.4)] mt-1" aria-hidden />
+        <span className="h-2.5 w-2.5 rounded-full bg-teal-400 shadow-[0_0_12px_rgba(13,148,136,0.4)] mt-1" aria-hidden />
       </div>
 
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
         <form onSubmit={handleSearch} className="space-y-2">
           <span className="text-xs uppercase tracking-[0.22em] text-slate-500">Jar / Plant ID</span>
-          <div className="flex items-center gap-3 rounded-2xl border border-fuchsia-200 bg-white px-4 py-3 shadow-sm">
+          <div className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 shadow-sm">
             <input
               value={query}
               onChange={(e) => {
@@ -230,14 +230,14 @@ function LookupCard({
             )}
             <button
               type="submit"
-              className="rounded-xl bg-gradient-to-r from-primary to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+              className="rounded-xl bg-gradient-to-r from-primary to-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
             >
               Search
             </button>
           </div>
           <p className="text-[11px] text-slate-500">Demo IDs: {demoIdHint}</p>
         </form>
-        <div className="rounded-2xl border border-fuchsia-100 bg-fuchsia-50/60 px-4 py-3 text-sm text-fuchsia-900 shadow-inner">
+        <div className="rounded-2xl border border-teal-100 bg-teal-50/60 px-4 py-3 text-sm text-teal-900 shadow-inner">
           {record ? (
             <p>
               Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar}
@@ -273,12 +273,12 @@ function ChartCard({ record, history, isLight }) {
           {
             label: record?.id || "Height",
             data: dataPoints,
-            borderColor: "#d946ef", // primary (fuchsia-500)
+            borderColor: "#d946ef", // primary (teal-500)
             backgroundColor: "rgba(217, 70, 239, 0.15)",
             tension: 0.28,
             borderWidth: 2.4,
             pointRadius: 4,
-            pointBackgroundColor: "#a21caf", // fuchsia-700
+            pointBackgroundColor: "#a21caf", // teal-700
             pointBorderColor: "#fdf4ff", // background color
             fill: true,
           },
@@ -326,7 +326,7 @@ function ChartCard({ record, history, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -382,7 +382,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className={`rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(216,45,139,0.25)] ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(13,148,136,0.25)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-start justify-between">
         <div>
@@ -422,7 +422,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
           </div>
           <button
             type="submit"
-            className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-primary to-purple-500 shadow-glow disabled:opacity-60"
+            className="px-3 py-2 rounded-lg text-xs font-semibold text-white bg-gradient-to-r from-primary to-cyan-500 shadow-glow disabled:opacity-60"
             disabled={!filtered.length}
           >
             Add
@@ -433,10 +433,10 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
           {compareIds.map((id) => (
             <span
               key={id}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm border border-fuchsia-300 bg-fuchsia-50 text-fuchsia-800"
+              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl text-sm border border-teal-300 bg-teal-50 text-teal-800"
             >
               {id}
-              <button onClick={() => toggleId(id)} className="text-xs text-fuchsia-700 hover:text-fuchsia-900">
+              <button onClick={() => toggleId(id)} className="text-xs text-teal-700 hover:text-teal-900">
                 ×
               </button>
             </span>
@@ -490,7 +490,7 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(216,45,139,0.25)] border border-fuchsia-100 bg-white/95 space-y-4"
+      className="rounded-3xl p-6 shadow-[0_22px_60px_-28px_rgba(13,148,136,0.25)] border border-teal-100 bg-white/95 space-y-4"
     >
       <div className="flex items-start justify-between">
         <div>
@@ -502,7 +502,7 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
       </div>
 
       <form onSubmit={handleRackSearch} className="space-y-2">
-        <div className="flex items-center gap-3 rounded-2xl border border-fuchsia-200 bg-white px-4 py-3 shadow-sm">
+        <div className="flex items-center gap-3 rounded-2xl border border-teal-200 bg-white px-4 py-3 shadow-sm">
           <input
             value={rackQuery}
             onChange={(e) => {
@@ -526,13 +526,13 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
           )}
           <button
             type="submit"
-            className="rounded-xl bg-gradient-to-r from-primary to-purple-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
+            className="rounded-xl bg-gradient-to-r from-primary to-cyan-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow"
           >
             Search
           </button>
         </div>
         <p className="text-[11px] text-slate-500">Known racks: {rackHintString || "n/a"}</p>
-        {rackStatus && <p className="text-[12px] text-fuchsia-800">{rackStatus}</p>}
+        {rackStatus && <p className="text-[12px] text-teal-800">{rackStatus}</p>}
       </form>
     </motion.div>
   );
@@ -644,7 +644,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -752,7 +752,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(216,45,139,0.3)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_28px_72px_-32px_rgba(13,148,136,0.3)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between gap-3">
         <div>
@@ -787,7 +787,7 @@ function HistoryList({ history, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(216,45,139,0.28)] space-y-4 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-6 shadow-[0_24px_65px_-30px_rgba(13,148,136,0.28)] space-y-4 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="flex items-center justify-between">
         <div>
@@ -840,7 +840,7 @@ function SummaryCard({ record, history, isLight }) {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.35 }}
-      className={`rounded-3xl p-4 shadow-[0_18px_48px_-28px_rgba(216,45,139,0.24)] space-y-3 ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`rounded-3xl p-4 shadow-[0_18px_48px_-28px_rgba(13,148,136,0.24)] space-y-3 ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
       <div className="space-y-1">
         <p className="text-[11px] uppercase tracking-[0.3em] text-primary font-bold">Snapshot</p>
@@ -865,9 +865,9 @@ function Hero({ isLight }) {
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.45 }}
-      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(216,45,139,0.3)] ${isLight ? "bg-white border border-pink-200" : "border border-fuchsia-100 bg-white/95"}`}
+      className={`relative overflow-hidden rounded-3xl p-8 shadow-[0_32px_80px_-30px_rgba(13,148,136,0.3)] ${isLight ? "bg-white border border-emerald-200" : "border border-teal-100 bg-white/95"}`}
     >
-      <div className="absolute inset-0 bg-gradient-to-r from-purple-50 via-white to-pink-50 pointer-events-none " />
+      <div className="absolute inset-0 bg-gradient-to-r from-cyan-50 via-white to-emerald-50 pointer-events-none " />
       <div className="relative space-y-3">
         <p className="text-xs uppercase tracking-[0.32em] text-primary font-bold">Historical view</p>
         <h1 className="text-3xl font-normal text-black">Jar height history</h1>
@@ -883,15 +883,15 @@ function Hero({ isLight }) {
 function Backdrop() {
   return (
     <div className="pointer-events-none absolute inset-0 -z-10">
-      <div className="absolute inset-0 bg-gradient-to-b from-purple-50 via-white to-pink-50" />
-      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(168,85,247,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(236,72,153,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(217,70,239,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(168,85,247,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(244,114,182,0.1),transparent_36%)]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-cyan-50 via-white to-emerald-50" />
+      <div className="absolute inset-0 opacity-60 bg-[linear-gradient(90deg,rgba(6,182,212,0.06)_1px,transparent_1px),linear-gradient(180deg,rgba(6,182,212,0.06)_1px,transparent_1px)] bg-[size:52px_52px]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_20%,rgba(13,148,136,0.15),transparent_30%),radial-gradient(circle_at_72%_16%,rgba(6,182,212,0.15),transparent_32%),radial-gradient(circle_at_48%_82%,rgba(249,115,22,0.1),transparent_36%)]" />
     </div>
   );
 }
 
 function EmptyState({ message }) {
-  return <div className="h-full flex items-center justify-center text-sm  text-fuchsia-800 bg-slate-50 rounded-2xl border border-slate-200">{message}
+  return <div className="h-full flex items-center justify-center text-sm  text-teal-800 bg-slate-50 rounded-2xl border border-slate-200">{message}
   
   </div>;
 }

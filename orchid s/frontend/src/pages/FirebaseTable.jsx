@@ -1,6 +1,6 @@
-﻿import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { onValue, ref } from "firebase/database";
-import { db } from "../lib/firebase";
+import { db, resolvedDatabaseURL } from "../lib/firebase";
 
 const JAR_PATHS = ["Jar1", "Jar2", "Jar3"];
 
@@ -34,16 +34,14 @@ export default function FirebaseTable() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
-  const DB_URL = import.meta.env.VITE_FIREBASE_DB_URL || "https://orchid-insights-c2456-default-rtdb.firebaseio.com";
+  const dbUrl = resolvedDatabaseURL;
 
-  const rows = useMemo(() => {
-    return JAR_PATHS.map((jarKey) => jarReadings[jarKey] || emptyJar(jarKey));
-  }, [jarReadings]);
+  const rows = useMemo(() => JAR_PATHS.map((jarKey) => jarReadings[jarKey] || emptyJar(jarKey)), [jarReadings]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return rows;
     const term = query.toLowerCase();
-    return rows.filter((r) => r.id.toLowerCase().includes(term));
+    return rows.filter((row) => row.id.toLowerCase().includes(term));
   }, [query, rows]);
 
   useEffect(() => {
@@ -66,16 +64,17 @@ export default function FirebaseTable() {
         }
       )
     );
+
     return () => unsubs.forEach((off) => off());
   }, [refreshKey]);
 
-  // REST polling safety-net so live table still updates even if realtime listener fails.
+  // Polling fallback so the table still updates if realtime listeners fail.
   useEffect(() => {
     let pollId = null;
 
     const fetchJars = async () => {
       try {
-        const base = DB_URL.replace(/\/$/, "");
+        const base = dbUrl.replace(/\/$/, "");
         const results = await Promise.all(
           JAR_PATHS.map(async (jarKey) => {
             const res = await fetch(`${base}/${jarKey}.json`);
@@ -84,11 +83,10 @@ export default function FirebaseTable() {
             return [jarKey, data ? normalizeJar(jarKey, data) : emptyJar(jarKey)];
           })
         );
-
         const next = Object.fromEntries(results);
         setJarReadings((prev) => ({ ...prev, ...next }));
         setLoading(false);
-      } catch (err) {
+      } catch {
         setError((prev) => prev || "Realtime fallback polling failed");
       }
     };
@@ -99,46 +97,44 @@ export default function FirebaseTable() {
     return () => {
       if (pollId) clearInterval(pollId);
     };
-  }, [DB_URL]);
+  }, [dbUrl]);
 
   return (
     <div className="space-y-6">
-      <div className="glass rounded-3xl p-6 border border-pink-400/30">
-        <p className="text-xs uppercase tracking-[0.25em] text-subtle">Firebase RTDB</p>
-        <h2 className="text-2xl font-semibold text-dark">Live plant table</h2>
-        <p className="text-slate-600 mt-2">Realtime readings from Jar1, Jar2, and Jar3.</p>
-      </div>
+      <section className="panel">
+        <p className="kicker">Firebase RTDB</p>
+        <h2 className="title-lg mt-1">Live plant table</h2>
+        <p className="mt-2 text-sm text-subtle md:text-base">Realtime readings from Jar1, Jar2, and Jar3.</p>
+      </section>
 
-      <div className="glass rounded-3xl p-6 border border-white/40 space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div className="text-sm text-slate-600">Rows: {filtered.length}</div>
+      <section className="panel space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            Rows: {filtered.length}
+          </span>
           <div className="flex gap-2">
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="Search by Jar/Plant ID"
-              className="rounded-xl bg-white border border-slate-200 px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-primary/60 text-slate-900 placeholder:text-slate-400"
+              className="input-shell w-[220px]"
             />
-            <button
-              onClick={() => setRefreshKey((prev) => prev + 1)}
-              className="rounded-xl border border-pink-200 px-3 py-2 text-sm text-pink-700 hover:border-pink-400/60 hover:bg-pink-50"
-              disabled={loading}
-            >
+            <button onClick={() => setRefreshKey((prev) => prev + 1)} className="btn-soft" disabled={loading}>
               {loading ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
 
         {error && (
-          <p className="text-sm text-rose-200 bg-rose-500/10 border border-rose-500/30 rounded-xl px-3 py-2">
+          <p className="rounded-xl border border-rose-300/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
             {error}
           </p>
         )}
-        {!error && loading && <p className="text-sm text-slate-500">Waiting for realtime data...</p>}
+        {!error && loading && <p className="text-sm text-subtle">Waiting for realtime data...</p>}
 
-        <div className="overflow-auto rounded-2xl border border-pink-100">
-          <table className="min-w-full text-sm text-left text-slate-800">
-            <thead className="text-xs uppercase tracking-[0.25em] text-subtle bg-pink-50/50">
+        <div className="overflow-auto rounded-2xl border border-primary/15">
+          <table className="min-w-full text-left text-sm text-slate-800">
+            <thead className="bg-primary/8 text-xs uppercase tracking-[0.2em] text-subtle">
               <tr>
                 <th className="px-4 py-3">Jar ID</th>
                 <th className="px-4 py-3">Temperature (C)</th>
@@ -150,8 +146,8 @@ export default function FirebaseTable() {
             </thead>
             <tbody>
               {filtered.map((row) => (
-                <tr key={row.id} className="border-t border-pink-100 hover:bg-pink-50/30 transition">
-                  <td className="px-4 py-3 font-semibold text-primary-dark">{row.id}</td>
+                <tr key={row.id} className="border-t border-primary/10 hover:bg-primary/5 transition">
+                  <td className="px-4 py-3 font-semibold text-primary">{row.id}</td>
                   <td className="px-4 py-3 text-slate-600">{row.temperature ?? "--"}</td>
                   <td className="px-4 py-3 text-slate-600">{row.humidity ?? "--"}</td>
                   <td className="px-4 py-3 text-slate-600">{row.lux ?? "--"}</td>
@@ -161,7 +157,7 @@ export default function FirebaseTable() {
               ))}
               {!filtered.length && (
                 <tr>
-                  <td colSpan={6} className="px-4 py-5 text-center text-slate-400">
+                  <td colSpan={6} className="px-4 py-5 text-center text-subtle">
                     No rows match.
                   </td>
                 </tr>
@@ -169,8 +165,7 @@ export default function FirebaseTable() {
             </tbody>
           </table>
         </div>
-      </div>
+      </section>
     </div>
   );
 }
-

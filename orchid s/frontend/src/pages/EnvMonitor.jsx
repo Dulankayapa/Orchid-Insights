@@ -113,8 +113,8 @@ const EnvMonitor = () => {
             {connectionStatus === 'connected' ? 'LIVE DATA' : connectionStatus.toUpperCase()}
           </div>
 
-          <button onClick={handleExportPDF} className="bg-paper border border-border text-subtle px-4 py-2 rounded-xl text-sm font-bold hover:bg-primary/5 hover:text-primary transition-colors shadow-sm">
-            📄 Export Report
+          <button onClick={handleExportPDF} className="btn-soft">
+            Export report
           </button>
         </div>
       </div>
@@ -146,11 +146,11 @@ const EnvMonitor = () => {
         <motion.div
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
-          className="bg-gradient-to-r from-fuchsia-600 to-purple-600 rounded-2xl p-6 text-white shadow-lg shadow-fuchsia-200 relative overflow-hidden"
+          className="bg-gradient-to-r from-teal-600 to-cyan-600 rounded-2xl p-6 text-white shadow-lg shadow-teal-200 relative overflow-hidden"
         >
           <div className="relative z-10 flex items-start gap-4">
-            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-xl backdrop-blur-sm">
-              🤖
+            <div className="w-10 h-10 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold backdrop-blur-sm">
+              AI
             </div>
             <div>
               <h3 className="font-bold text-white/90 text-sm uppercase tracking-wide mb-1">AI Insight</h3>
@@ -158,7 +158,7 @@ const EnvMonitor = () => {
             </div>
           </div>
           <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-2xl"></div>
-          <div className="absolute bottom-0 right-20 w-20 h-20 bg-purple-500/30 rounded-full blur-xl"></div>
+          <div className="absolute bottom-0 right-20 w-20 h-20 bg-cyan-500/30 rounded-full blur-xl"></div>
         </motion.div>
       )}
 
@@ -173,7 +173,7 @@ const EnvMonitor = () => {
       </section>
 
       {/* Charts */}
-      <section className="bg-paper/50 rounded-3xl p-6 border border-border/50">
+      <section className="panel">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-dark">Analytics Trends</h2>
           <select className="bg-paper border border-border text-sm font-medium rounded-lg px-3 py-1.5 text-subtle outline-none focus:ring-2 focus:ring-primary/20">
