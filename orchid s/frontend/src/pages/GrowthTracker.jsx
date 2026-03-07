@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
-import { ref, onValue, query, limitToLast } from "firebase/database";
+import { ref, onValue, query, limitToLast, push } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
 
 const toNumber = (value) => {
@@ -119,6 +119,9 @@ export default function GrowthTracker() {
   const [sensorLatest, setSensorLatest] = useState(null);
   const [sensorHistory, setSensorHistory] = useState([]);
   const [sensorError, setSensorError] = useState("");
+  const [heightLogError, setHeightLogError] = useState("");
+  const lastHeightLoggedRef = useRef({ ts: 0, height: null });
+  const hasSeededHeightRef = useRef(false);
 
   const plantRecord = useMemo(() => {
     if (!jarId) return null;
@@ -179,6 +182,48 @@ export default function GrowthTracker() {
       offHist();
     };
   }, []);
+
+  // Autofill the current height field from the latest live sensor reading when a Jar is selected.
+  useEffect(() => {
+    if (!jarId) return;
+    const liveHeight = toNumber(sensorLatest?.height_mm ?? sensorLatest?.height);
+    if (liveHeight === null) return;
+    setCurrentHeight(String(liveHeight));
+  }, [jarId, sensorLatest]);
+
+  // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
+  useEffect(() => {
+    setHeightLogError("");
+    if (!sensorLatest) return;
+    const liveHeight = toNumber(sensorLatest.height_mm ?? sensorLatest.height);
+    if (liveHeight === null) return;
+
+    const ts = Number(sensorLatest.timestamp) || Date.now();
+
+    if (!hasSeededHeightRef.current) {
+      hasSeededHeightRef.current = true;
+      lastHeightLoggedRef.current = { ts, height: liveHeight };
+      return;
+    }
+
+    const last = lastHeightLoggedRef.current;
+    const isDuplicate = last && Math.abs(liveHeight - last.height) < 0.1 && Math.abs(ts - last.ts) < 3000;
+    if (isDuplicate) return;
+
+    const payload = {
+      height_mm: liveHeight,
+      height_cm: Number((liveHeight / 10).toFixed(1)),
+      timestamp: ts,
+      jarId: jarId || sensorLatest.jarId || sensorLatest.jar_id || null,
+      source: "sensor",
+    };
+
+    push(ref(db, "growthLogs"), payload)
+      .then(() => {
+        lastHeightLoggedRef.current = { ts, height: liveHeight };
+      })
+      .catch((err) => setHeightLogError(err?.message || "Failed to write live height to Firebase"));
+  }, [sensorLatest, jarId]);
 
   const derivedAgeDays = useMemo(() => {
     if (!plantingDate) return null;
@@ -286,7 +331,7 @@ export default function GrowthTracker() {
             plantFetchError={plantFetchError}
           />
           <PlantHistoryCard isLight={isLight} plantRecord={plantRecord} demoIdHint={demoIdHint} />
-          <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError} />
+          <SensorPanel isLight={isLight} latest={sensorLatest} history={sensorHistory} error={sensorError || heightLogError} />
         </div>
         <ResultCard
           isLight={isLight}
@@ -304,9 +349,25 @@ export default function GrowthTracker() {
 
 function normalizeSensor(val) {
   const ts = Number(val.timestamp) || Date.now();
+  const heightMmRaw =
+    toNumber(
+      val.height_mm ??
+        val.height ??
+        val.heightMm ??
+        val.heightMM ??
+        val.plantHeight ??
+        val.distance_mm ??
+        val.distanceMm ??
+        val.level_mm
+    ) ?? null;
+  const heightCmRaw = toNumber(val.height_cm ?? val.heightCm ?? val.distance_cm ?? val.distanceCm ?? val.level_cm) ?? null;
+  const height_mm = heightMmRaw ?? (heightCmRaw !== null ? heightCmRaw * 10 : null);
+
   return {
     ...val,
     timestamp: ts,
+    height_mm,
+    height_cm: height_mm !== null ? Number((height_mm / 10).toFixed(1)) : heightCmRaw,
     lux: Number(val.lux ?? val.light ?? val.lx ?? 0),
     temperature: Number(val.temperature ?? val.temp ?? 0),
     humidity: Number(val.humidity ?? val.hum ?? 0),
@@ -439,6 +500,7 @@ function FormCard({
       <div className="grid sm:grid-cols-2 gap-3 text-xs text-slate-600 bg-cyan-50/60 border border-cyan-100 rounded-2xl p-3">
         <p>Tip: current date defaults to today automatically.</p>
         <p>Units: millimeters.</p>
+        <p className="sm:col-span-2">Live height readings auto-fill when the sensor streams and are logged to Firebase instantly.</p>
       </div>
 
       <button
@@ -575,9 +637,14 @@ function SensorPanel({ latest, history, error, isLight }) {
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">Sensor error: {error}</div>
       )}
 
+      <p className="text-[11px] text-slate-600">
+        Live height readings stream here and are mirrored to Firebase <code className="font-mono text-[10px]">growthLogs</code> automatically.
+      </p>
+
       {latest ? (
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} °C`} />
+          <SensorStat label="Height" value={`${latest.height_mm?.toFixed?.(1) ?? latest.height_mm ?? "-"} mm`} />
+          <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} C`} />
           <SensorStat label="Humidity" value={`${latest.humidity?.toFixed?.(1) ?? latest.humidity ?? "-"} %`} />
           <SensorStat label="Light" value={`${latest.lux ?? "-"} lx`} />
           <SensorStat label="MQ135" value={latest.mq135 ?? "-"} />
@@ -598,7 +665,7 @@ function SensorPanel({ latest, history, error, isLight }) {
               >
                 <span className="text-slate-600">{formatTs(row.timestamp)}</span>
                 <span className="text-slate-900">
-                  {row.temperature ?? "-"}°C · {row.humidity ?? "-"}% · {row.lux ?? "-"} lx · MQ {row.mq135 ?? "-"}
+                  {row.height_mm ?? "-"} mm | {row.temperature ?? "-"} C | {row.humidity ?? "-"}% | {row.lux ?? "-"} lx | MQ {row.mq135 ?? "-"}
                 </span>
               </div>
             ))}
