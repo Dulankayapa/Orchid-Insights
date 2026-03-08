@@ -26,12 +26,83 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const excelSerialToIsoDate = (serial) => {
+  if (!Number.isFinite(serial)) return "";
+  const wholeDays = Math.trunc(serial);
+  const dayFraction = serial - wholeDays;
+  const msInDay = 24 * 60 * 60 * 1000;
+  const excelEpochUtc = Date.UTC(1899, 11, 30);
+  const dt = new Date(excelEpochUtc + wholeDays * msInDay + Math.round(dayFraction * msInDay));
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toISOString().slice(0, 10);
+};
+
+const toIsoDate = (value) => {
+  if (value === undefined || value === null || value === "") return "";
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "";
+    if (value > 10000000000) {
+      const dt = new Date(value);
+      return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+    }
+    if (value > 1000000000) {
+      const dt = new Date(value * 1000);
+      return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+    }
+    if (value > 20000 && value < 100000) {
+      return excelSerialToIsoDate(value);
+    }
+    return "";
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    return raw.slice(0, 10);
+  }
+
+  if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(raw)) {
+    const [aRaw, bRaw, cRaw] = raw.split(/[./-]/);
+    const a = Number(aRaw);
+    const b = Number(bRaw);
+    let c = Number(cRaw);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c)) return "";
+    if (c < 100) c += c >= 70 ? 1900 : 2000;
+
+    const treatAsDmy = a > 12 || (a <= 12 && b <= 12);
+    const day = treatAsDmy ? a : b;
+    const month = treatAsDmy ? b : a;
+    const dt = new Date(Date.UTC(c, month - 1, day));
+    if (Number.isNaN(dt.getTime())) return "";
+    if (dt.getUTCFullYear() !== c || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) return "";
+    return dt.toISOString().slice(0, 10);
+  }
+
+  const numericRaw = Number(raw);
+  if (Number.isFinite(numericRaw)) {
+    return toIsoDate(numericRaw);
+  }
+
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return new Date(parsed).toISOString().slice(0, 10);
+};
+
 const normalizeId = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const compact = raw.replace(/[\s_-]+/g, "").toLowerCase();
   const jarMatch = compact.match(/^jar0*(\d+)$/);
   if (jarMatch) return `jar${Number(jarMatch[1])}`;
+  const numericMatch = compact.match(/^0*(\d+)$/);
+  if (numericMatch) return `jar${Number(numericMatch[1])}`;
   return compact;
 };
 
@@ -109,8 +180,9 @@ const normalizePlantRecord = (plant) => {
       extra.growth_logs ??
       extra.growthLogs
   );
-  const planting_date =
-    plant.planting_date || plant.plantingDate || extra.planting_date || extra.plantingDate || "";
+  const planting_date = toIsoDate(
+    plant.planting_date || plant.plantingDate || extra.planting_date || extra.plantingDate || ""
+  );
   const height_mm = toNumber(
     plant.height_mm ?? plant.height ?? plant.current_height ?? extra.height_mm ?? extra.height ?? extra.current_height
   );
@@ -146,7 +218,7 @@ const normalizeCultureRecord = (key, value) => {
 
   return {
     jarId,
-    cultureDate: entry.cultureDate || entry.culture_date || entry.planting_date || entry.plantingDate || "",
+    cultureDate: toIsoDate(entry.cultureDate || entry.culture_date || entry.planting_date || entry.plantingDate || ""),
     rackNo: entry.rackNo ?? entry.rack_no ?? entry.rack ?? "",
     orchidType: entry.orchidType || entry.cultivar || entry.type || "",
     nutrition: entry.nutrition || "",
@@ -241,7 +313,7 @@ export default function GrowthTracker() {
       const merged = normalizePlantRecord({
         ...existing,
         id: existing.id || entry.jarId,
-        planting_date: existing.planting_date || entry.cultureDate || "",
+        planting_date: toIsoDate(existing.planting_date || entry.cultureDate || ""),
         cultivar: existing.cultivar || entry.orchidType || undefined,
         location: existing.location || (entry.rackNo ? `Rack ${entry.rackNo}` : undefined),
         nutrition: existing.nutrition || entry.nutrition || undefined,
@@ -530,7 +602,7 @@ export default function GrowthTracker() {
       push(ref(db, `growthLogsByJar/${canonicalId}`), payload),
       update(ref(db, `plants/${canonicalId}`), {
         id: canonicalId,
-        planting_date: plantingDate || null,
+        planting_date: toIsoDate(plantingDate) || null,
         height_mm: liveHeight,
         temperature,
         humidity,
@@ -547,16 +619,24 @@ export default function GrowthTracker() {
   }, [sensorLatest, jarLive, activeJarId, plantingDate]);
 
   const derivedAgeDays = useMemo(() => {
-    if (!plantingDate) return null;
-    const planted = new Date(plantingDate);
+    const normalizedPlanting = toIsoDate(plantingDate);
+    if (!normalizedPlanting) return null;
+    const planted = new Date(`${normalizedPlanting}T00:00:00`);
     if (Number.isNaN(planted.getTime())) return null;
     const diffMs = new Date().setHours(0, 0, 0, 0) - planted.setHours(0, 0, 0, 0);
     return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
   }, [plantingDate]);
 
   useEffect(() => {
+    if (!plantingDate && cultureRecord?.cultureDate) {
+      setPlantingDate(cultureRecord.cultureDate);
+    }
+  }, [cultureRecord, plantingDate]);
+
+  useEffect(() => {
     if (plantRecord) {
-      if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
+      const normalizedPlanting = toIsoDate(plantRecord.planting_date);
+      if (normalizedPlanting) setPlantingDate(normalizedPlanting);
       const latestHeight = resolveCurrentHeight(plantRecord);
       if (latestHeight !== undefined && latestHeight !== null) {
         setCurrentHeight(String(latestHeight));
@@ -589,8 +669,14 @@ export default function GrowthTracker() {
       return;
     }
 
+    const normalizedPlanting = toIsoDate(plantingDate);
+    if (!normalizedPlanting) {
+      setError("Planting date format is invalid. Please check the culture date.");
+      return;
+    }
+
     const payload = {
-      planting_date: plantingDate,
+      planting_date: normalizedPlanting,
       current_height_mm: Number(currentHeight),
       age_days: manualAgeDays ? Number(manualAgeDays) : undefined,
     };
@@ -661,7 +747,7 @@ export default function GrowthTracker() {
       (snap) => {
         const val = snap.val();
         if (!val) return;
-        const planted = val.planting_date || val.plantingDate;
+        const planted = toIsoDate(val.planting_date || val.plantingDate);
         if (planted) setPlantingDate(planted);
         const h = toNumber(val.height_mm ?? val.height ?? val.current_height);
         if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
@@ -713,8 +799,6 @@ export default function GrowthTracker() {
             liveTimestamp={liveTimestamp}
           />
           <HeightChartCard isLight={isLight} points={heightPoints} />
-          <PlantHistoryCard plantRecord={plantRecord} demoIdHint={demoIdHint} />
-          <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
           result={result}
