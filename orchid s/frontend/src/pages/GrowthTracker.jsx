@@ -15,7 +15,7 @@ import {
 import "chartjs-adapter-date-fns";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
-import { ref, onValue, query, limitToLast, push } from "firebase/database";
+import { ref, onValue, query, limitToLast, push, update } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
 
 ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend, Filler, CategoryScale);
@@ -29,7 +29,10 @@ const toNumber = (value) => {
 const normalizeId = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
-  return raw.replace(/[\s_-]+/g, "").toLowerCase();
+  const compact = raw.replace(/[\s_-]+/g, "").toLowerCase();
+  const jarMatch = compact.match(/^jar0*(\d+)$/);
+  if (jarMatch) return `jar${Number(jarMatch[1])}`;
+  return compact;
 };
 
 const canonicalJarKey = (value) => {
@@ -39,6 +42,24 @@ const canonicalJarKey = (value) => {
   if (match) return `Jar${match[1]}`;
   return value?.toString()?.trim() || "";
 };
+
+const canonicalPlantId = (value) => {
+  const norm = normalizeId(value);
+  if (!norm) return "";
+  const match = norm.match(/^jar(\d+)$/);
+  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
+  return String(value || "").trim().toLowerCase();
+};
+
+const splitJarInputs = (value) =>
+  Array.from(
+    new Set(
+      String(value || "")
+        .split(/[\s,;]+/)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    )
+  );
 
 const coerceTimestamp = (value) => {
   const num = toNumber(value);
@@ -105,6 +126,22 @@ const normalizePlantRecord = (plant) => {
   };
 };
 
+const normalizeRecultureRecord = (key, value) => {
+  const base = value && typeof value === "object" ? value : {};
+  const jar = String(base.jarId || key || "").trim();
+  if (!jar) return null;
+
+  return {
+    id: jar,
+    planting_date: base.cultureDate || base.culture_date || "",
+    height_mm: null,
+    cultivar: base.orchidType || base.cultivar || "",
+    location: base.rackNo ? `Rack ${base.rackNo}` : undefined,
+    heights: [],
+    source: "reculture",
+  };
+};
+
 const latestHeightFromHistory = (rows) => {
   if (!rows || !rows.length) return null;
   const enriched = rows
@@ -134,9 +171,43 @@ export default function GrowthTracker() {
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [plantRecords, setPlantRecords] = useState([]);
   const [plantFetchError, setPlantFetchError] = useState("");
-  const demoIds = useMemo(() => plantRecords.map((p) => p.id).filter(Boolean), [plantRecords]);
+  const [recultureRecords, setRecultureRecords] = useState([]);
+  const [recultureError, setRecultureError] = useState("");
+  const mergedPlantRecords = useMemo(() => {
+    const byId = new Map();
+
+    plantRecords.forEach((record) => {
+      const key = normalizeId(record?.id);
+      if (!key) return;
+      byId.set(key, { ...record });
+    });
+
+    recultureRecords.forEach((record) => {
+      const key = normalizeId(record?.id);
+      if (!key) return;
+      const existing = byId.get(key);
+      if (!existing) {
+        byId.set(key, { ...record });
+        return;
+      }
+      byId.set(key, {
+        ...existing,
+        id: existing.id || record.id,
+        planting_date: existing.planting_date || record.planting_date,
+        cultivar: existing.cultivar || record.cultivar,
+        location: existing.location || record.location,
+      });
+    });
+
+    return Array.from(byId.values());
+  }, [plantRecords, recultureRecords]);
+
+  const demoIds = useMemo(() => mergedPlantRecords.map((p) => p.id).filter(Boolean), [mergedPlantRecords]);
   const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
   const [jarId, setJarId] = useState("");
+  const enteredJarIds = useMemo(() => splitJarInputs(jarId), [jarId]);
+  const activeJarId = enteredJarIds[0] || "";
+  const activeCanonicalId = useMemo(() => canonicalPlantId(activeJarId), [activeJarId]);
   const [plantingDate, setPlantingDate] = useState("");
   const [currentHeight, setCurrentHeight] = useState("");
   const [manualAgeDays, setManualAgeDays] = useState("");
@@ -150,14 +221,16 @@ export default function GrowthTracker() {
   const [sensorHistory, setSensorHistory] = useState([]);
   const [sensorError, setSensorError] = useState("");
   const [heightLogError, setHeightLogError] = useState("");
+  const [jarPersistStatus, setJarPersistStatus] = useState("");
+  const [jarPersistError, setJarPersistError] = useState("");
   const lastHeightLoggedRef = useRef({ ts: 0, height: null });
-  const hasSeededHeightRef = useRef(false);
+  const createdJarIdsRef = useRef(new Set());
 
   const plantRecord = useMemo(() => {
-    if (!jarId) return null;
-    const idNorm = normalizeId(jarId);
-    return plantRecords.find((p) => normalizeId(p.id) === idNorm) || null;
-  }, [jarId, plantRecords]);
+    if (!activeJarId) return null;
+    const idNorm = normalizeId(activeJarId);
+    return mergedPlantRecords.find((p) => normalizeId(p.id) === idNorm) || null;
+  }, [activeJarId, mergedPlantRecords]);
 
   useEffect(() => {
     let active = true;
@@ -184,9 +257,139 @@ export default function GrowthTracker() {
   }, []);
 
   useEffect(() => {
-    // Live latest
+    setRecultureError("");
+    const entriesRef = ref(db, "recultureEntries");
+    const off = onValue(
+      entriesRef,
+      (snap) => {
+        const data = snap.val() || {};
+        const rows = Object.entries(data)
+          .map(([key, value]) => normalizeRecultureRecord(key, value))
+          .filter(Boolean);
+        setRecultureRecords(rows);
+      },
+      (err) => {
+        setRecultureError(err?.message || "Failed to load reculture entries");
+        setRecultureRecords([]);
+      }
+    );
+    return () => off();
+  }, []);
+
+  const recordSourceError = useMemo(
+    () => [plantFetchError, recultureError].filter(Boolean).join(" | "),
+    [plantFetchError, recultureError]
+  );
+
+  useEffect(() => {
+    if (!enteredJarIds.length) {
+      setJarPersistStatus("");
+      setJarPersistError("");
+      return;
+    }
+
+    const knownIds = new Set(mergedPlantRecords.map((record) => normalizeId(record?.id)).filter(Boolean));
+    const candidates = enteredJarIds
+      .map((raw) => {
+        const normalized = normalizeId(raw);
+        const canonicalId = canonicalPlantId(raw);
+        const jarMatch = normalized.match(/^jar(\d+)$/);
+        return { raw, normalized, canonicalId, isJar: Boolean(jarMatch) };
+      })
+      .filter(({ normalized, canonicalId, isJar }) => {
+        if (!normalized || !canonicalId || !isJar) return false;
+        if (knownIds.has(normalized)) return false;
+        if (createdJarIdsRef.current.has(normalized)) return false;
+        return true;
+      });
+
+    if (!candidates.length) {
+      return;
+    }
+
+    candidates.forEach(({ normalized }) => createdJarIdsRef.current.add(normalized));
+    let cancelled = false;
+
+    Promise.allSettled(
+      candidates.map(async ({ canonicalId }) => {
+        const baseRecord = {
+          id: canonicalId,
+          planting_date: null,
+          height_mm: null,
+          cultivar: null,
+          updated_at: new Date().toISOString(),
+        };
+
+        try {
+          const resp = await api.put(`/env/plants/${encodeURIComponent(canonicalId)}`, baseRecord);
+          return { ok: true, canonicalId, record: normalizePlantRecord(resp?.data) || normalizePlantRecord(baseRecord), via: "api" };
+        } catch (apiErr) {
+          try {
+            // Fallback to direct RTDB write when backend env is not configured.
+            await update(ref(db, `plants/${canonicalId}`), baseRecord);
+            return { ok: true, canonicalId, record: normalizePlantRecord(baseRecord), via: "firebase" };
+          } catch (firebaseErr) {
+            const apiMessage = apiErr?.response?.data?.detail || apiErr?.message || "API save failed";
+            const firebaseMessage = firebaseErr?.message || "Firebase save failed";
+            return { ok: false, canonicalId, message: `${apiMessage}; ${firebaseMessage}` };
+          }
+        }
+      })
+    )
+      .then((results) => {
+        if (cancelled) return;
+
+        const saved = [];
+        const savedViaFallback = [];
+        const failed = [];
+
+        results.forEach((result, index) => {
+          const { normalized, canonicalId } = candidates[index];
+          if (result.status === "fulfilled" && result.value?.ok) {
+            const normalizedRecord = result.value?.record;
+            if (normalizedRecord) {
+              setPlantRecords((prev) => {
+                const exists = prev.some((row) => normalizeId(row?.id) === normalizeId(normalizedRecord.id));
+                if (exists) return prev;
+                return [...prev, normalizedRecord];
+              });
+            }
+            saved.push(canonicalId);
+            if (result.value?.via === "firebase") {
+              savedViaFallback.push(canonicalId);
+            }
+            return;
+          }
+
+          createdJarIdsRef.current.delete(normalized);
+          const message = result.value?.message || result.reason?.message || "Failed to save Jar ID";
+          failed.push(`${canonicalId} (${message})`);
+        });
+
+        if (saved.length) {
+          const fallbackHint = savedViaFallback.length
+            ? ` Saved via Firebase fallback: ${savedViaFallback.join(", ")}.`
+            : "";
+          setJarPersistStatus(`Saved IDs for future searches: ${saved.join(", ")}.${fallbackHint}`);
+        } else {
+          setJarPersistStatus("");
+        }
+        setJarPersistError(failed.length ? failed.join(" | ") : "");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setJarPersistStatus("");
+        setJarPersistError(err?.message || "Failed to save Jar IDs");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enteredJarIds, mergedPlantRecords]);
+
+  useEffect(() => {
     const latestRef = ref(db, "orchidData/latest");
-    const offLatest = onValue(
+    const off = onValue(
       latestRef,
       (snap) => {
         const val = snap.val();
@@ -194,9 +397,14 @@ export default function GrowthTracker() {
       },
       (err) => setSensorError(err.message || "Failed to read latest sensor data")
     );
-    // History (last 150)
-    const historyRef = query(ref(db, "orchidData/logs"), limitToLast(150));
-    const offHist = onValue(
+    return () => off();
+  }, []);
+
+  useEffect(() => {
+    const historyRef = activeCanonicalId
+      ? query(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(150))
+      : query(ref(db, "orchidData/logs"), limitToLast(150));
+    const off = onValue(
       historyRef,
       (snap) => {
         const raw = snap.val() || {};
@@ -205,21 +413,22 @@ export default function GrowthTracker() {
         rows.reverse();
         setSensorHistory(rows);
       },
-      (err) => setSensorError(err.message || "Failed to read history")
+      (err) =>
+        setSensorError(
+          err.message ||
+            (activeCanonicalId ? `Failed to read ${activeCanonicalId} history` : "Failed to read sensor history")
+        )
     );
-    return () => {
-      offLatest();
-      offHist();
-    };
-  }, []);
+    return () => off();
+  }, [activeCanonicalId]);
 
   // Listen to per-jar RTDB nodes (e.g., Jar1, Jar2...) to capture live height for that jar.
   useEffect(() => {
-    if (!jarId) {
+    if (!activeJarId) {
       setJarLive(null);
       return undefined;
     }
-    const jarKey = canonicalJarKey(jarId);
+    const jarKey = canonicalJarKey(activeJarId);
     if (!jarKey) return undefined;
 
     const jarRef = ref(db, jarKey);
@@ -233,15 +442,19 @@ export default function GrowthTracker() {
       (err) => setSensorError(err.message || "Failed to read jar live data")
     );
     return () => off();
-  }, [jarId]);
+  }, [activeJarId]);
 
   // Autofill the current height field from the latest live sensor reading when a Jar is selected.
   useEffect(() => {
-    if (!jarId) return;
+    if (!activeJarId) return;
     const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
     if (liveHeight === null) return;
     setCurrentHeight(String(liveHeight));
-  }, [jarId, sensorLatest, jarLive]);
+  }, [activeJarId, sensorLatest, jarLive]);
+
+  useEffect(() => {
+    lastHeightLoggedRef.current = { ts: 0, height: null };
+  }, [activeCanonicalId]);
 
   // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
   useEffect(() => {
@@ -254,30 +467,53 @@ export default function GrowthTracker() {
 
     const ts = Number(liveSource.timestamp) || Date.now();
 
-    if (!hasSeededHeightRef.current) {
-      hasSeededHeightRef.current = true;
-      lastHeightLoggedRef.current = { ts, height: liveHeight };
-      return;
-    }
-
     const last = lastHeightLoggedRef.current;
-    const isDuplicate = last && Math.abs(liveHeight - last.height) < 0.1 && Math.abs(ts - last.ts) < 3000;
+    const isDuplicate =
+      last && last.height !== null && Math.abs(liveHeight - last.height) < 0.1 && Math.abs(ts - last.ts) < 3000;
     if (isDuplicate) return;
+
+    const sourceJarId =
+      activeJarId || liveSource.jarId || liveSource.jar_id || liveSource.id || canonicalJarKey(activeJarId) || null;
+    const canonicalId = canonicalPlantId(sourceJarId);
+    if (!canonicalId) return;
+
+    const temperature = toNumber(liveSource.temperature ?? liveSource.temp);
+    const humidity = toNumber(liveSource.humidity ?? liveSource.hum);
+    const lux = toNumber(liveSource.lux ?? liveSource.light ?? liveSource.lx);
+    const mq135 = toNumber(liveSource.mq135 ?? liveSource.mq ?? liveSource.gas);
 
     const payload = {
       height_mm: liveHeight,
       height_cm: Number((liveHeight / 10).toFixed(1)),
+      temperature,
+      humidity,
+      lux,
+      mq135,
       timestamp: ts,
-      jarId: jarId || liveSource.jarId || liveSource.jar_id || liveSource.id || canonicalJarKey(jarId) || null,
+      jarId: canonicalId,
       source: "sensor",
     };
 
-    push(ref(db, "growthLogs"), payload)
+    Promise.all([
+      push(ref(db, "growthLogs"), payload),
+      push(ref(db, `growthLogsByJar/${canonicalId}`), payload),
+      update(ref(db, `plants/${canonicalId}`), {
+        id: canonicalId,
+        planting_date: plantingDate || null,
+        height_mm: liveHeight,
+        temperature,
+        humidity,
+        lux,
+        mq135,
+        timestamp: ts,
+        updated_at: new Date(ts).toISOString(),
+      }),
+    ])
       .then(() => {
         lastHeightLoggedRef.current = { ts, height: liveHeight };
       })
-      .catch((err) => setHeightLogError(err?.message || "Failed to write live height to Firebase"));
-  }, [sensorLatest, jarLive, jarId]);
+      .catch((err) => setHeightLogError(err?.message || "Failed to write live jar data to Firebase"));
+  }, [sensorLatest, jarLive, activeJarId, plantingDate]);
 
   const derivedAgeDays = useMemo(() => {
     if (!plantingDate) return null;
@@ -288,14 +524,22 @@ export default function GrowthTracker() {
   }, [plantingDate]);
 
   useEffect(() => {
-    if (plantRecord) {
-      if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
-      const latestHeight = resolveCurrentHeight(plantRecord);
-      if (latestHeight !== undefined && latestHeight !== null) {
-        setCurrentHeight(String(latestHeight));
-      }
+    if (!activeJarId) {
+      setPlantingDate("");
+      return;
     }
-  }, [plantRecord]);
+
+    if (!plantRecord) {
+      setPlantingDate("");
+      return;
+    }
+
+    if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
+    const latestHeight = resolveCurrentHeight(plantRecord);
+    if (latestHeight !== undefined && latestHeight !== null) {
+      setCurrentHeight(String(latestHeight));
+    }
+  }, [activeJarId, plantRecord]);
 
   useEffect(() => {
     if (derivedAgeDays === null) {
@@ -333,7 +577,7 @@ export default function GrowthTracker() {
       const resp = await api.post("/growth/analyze", payload);
       setResult(resp.data);
       setAnalyzedHeight(Number(currentHeight));
-      setAnalyzedJarId(jarId);
+      setAnalyzedJarId(activeJarId || jarId);
     } catch (err) {
       const message = err.response?.data?.detail || err.response?.data || err.message || "Request failed";
       setError(typeof message === "string" ? message : JSON.stringify(message));
@@ -375,21 +619,20 @@ export default function GrowthTracker() {
       const h = toNumber(row.height_mm ?? row.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
     });
-    if (sensorLatest) {
-      const ts = Number(sensorLatest.timestamp);
-      const h = toNumber(sensorLatest.height_mm ?? sensorLatest.height);
+    const latestPoint = jarLive || sensorLatest;
+    if (latestPoint) {
+      const ts = Number(latestPoint.timestamp);
+      const h = toNumber(latestPoint.height_mm ?? latestPoint.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "latest" });
     }
     pts.sort((a, b) => a.x - b.x);
     return pts.slice(-120); // keep last 120 points
-  }, [plantRecord, sensorHistory, sensorLatest]);
+  }, [plantRecord, sensorHistory, sensorLatest, jarLive]);
 
   // Listen directly to Firebase plants/{id} for real-time planting date/height updates
   useEffect(() => {
-    if (!jarId) return undefined;
-    const key = normalizeId(jarId);
-    if (!key) return undefined;
-    const plantRef = ref(db, `plants/${key}`);
+    if (!activeCanonicalId) return undefined;
+    const plantRef = ref(db, `plants/${activeCanonicalId}`);
     const off = onValue(
       plantRef,
       (snap) => {
@@ -405,7 +648,7 @@ export default function GrowthTracker() {
       (err) => setPlantFetchError(err?.message || "Failed to read plant record from Firebase")
     );
     return () => off();
-  }, [jarId, liveHeight]);
+  }, [activeCanonicalId, liveHeight]);
 
   useEffect(() => {
     if (liveHeight !== null && liveHeight !== undefined) {
@@ -423,6 +666,8 @@ export default function GrowthTracker() {
             isLight={isLight}
             onSubmit={submit}
             jarId={jarId}
+            activeJarId={activeJarId}
+            enteredJarCount={enteredJarIds.length}
             setJarId={setJarId}
             plantingDate={plantingDate}
             setPlantingDate={setPlantingDate}
@@ -437,7 +682,9 @@ export default function GrowthTracker() {
             plantRecord={plantRecord}
             demoIds={demoIds}
             demoIdHint={demoIdHint}
-            plantFetchError={plantFetchError}
+            plantFetchError={recordSourceError}
+            jarPersistStatus={jarPersistStatus}
+            jarPersistError={jarPersistError}
             liveHeight={liveHeight}
             liveTimestamp={liveTimestamp}
           />
@@ -516,6 +763,8 @@ function FormCard({
   isLight,
   onSubmit,
   jarId,
+  activeJarId,
+  enteredJarCount,
   setJarId,
   plantingDate,
   setPlantingDate,
@@ -531,6 +780,8 @@ function FormCard({
   demoIds,
   demoIdHint,
   plantFetchError,
+  jarPersistStatus,
+  jarPersistError,
   liveHeight,
   liveTimestamp,
 }) {
@@ -551,7 +802,7 @@ function FormCard({
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
-        <Field label="Jar / Plant ID (optional)">
+        <Field label="Jar / Plant ID (optional, comma-separated supported)">
           <input
             value={jarId}
             onChange={(e) => setJarId(e.target.value)}
@@ -599,14 +850,29 @@ function FormCard({
         </Field>
       </div>
 
-      {!plantRecord && jarId && (
+      {enteredJarCount > 1 && (
+        <p className="text-xs text-sky-800 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
+          Multiple IDs detected. Live tracking and analysis currently use the first ID: {activeJarId}.
+        </p>
+      )}
+      {!plantRecord && activeJarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
+          No record found for "{activeJarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
         </p>
       )}
       {plantFetchError && (
         <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
           Plant records unavailable: {plantFetchError}
+        </p>
+      )}
+      {jarPersistError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Could not save Jar ID: {jarPersistError}
+        </p>
+      )}
+      {jarPersistStatus && (
+        <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+          {jarPersistStatus}
         </p>
       )}
       <p className="text-xs text-slate-600">Today: {today}</p>
