@@ -180,9 +180,6 @@ export default function Dashboard() {
               </div>
             )}
             <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/35 via-transparent to-transparent" />
-            <p className="absolute bottom-3 left-3 rounded-full border border-white/60 bg-white/75 px-3 py-1 text-xs font-semibold tracking-wide text-slate-700 backdrop-blur">
-              Orchid Clip - Single Frame
-            </p>
           </div>
         </div>
       </section>

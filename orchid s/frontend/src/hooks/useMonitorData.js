@@ -4,15 +4,26 @@ import { db, resolvedDatabaseURL } from '../lib/firebase'; // Correct path to fi
 
 const normalizeSensor = (val) => {
     if (!val) return null;
+    const toNum = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : null;
+    };
+
     let ts = Number(val.timestamp) || Number(val.ts) || Date.now();
 
     // Heuristic: If timestamp is in seconds (less than 10 billion), convert to milliseconds
     if (ts < 10000000000) ts *= 1000;
 
-    const temp = Number(val.temperature ?? val.temp ?? val.t ?? 0);
-    const hum = Number(val.humidity ?? val.hum ?? val.h ?? 0);
-    const luxVal = Number(val.lux ?? val.light ?? val.lx ?? 0);
-    const mqVal = Number(val.mq135 ?? val.mq ?? 0);
+    const temp = toNum(val.temperature ?? val.temp ?? val.t) ?? 0;
+    const hum = toNum(val.humidity ?? val.hum ?? val.h) ?? 0;
+    const luxVal = toNum(val.lux ?? val.light ?? val.lx) ?? 0;
+    const mqVal = toNum(val.mq135 ?? val.mq ?? val.gas) ?? 0;
+
+    const heightMmRaw = toNum(
+        val.height_mm ?? val.height ?? val.heightMm ?? val.heightMM ?? val.plantHeight ?? val.distance_mm ?? val.distanceMm ?? val.level_mm
+    );
+    const heightCmRaw = toNum(val.height_cm ?? val.heightCm ?? val.distance_cm ?? val.distanceCm ?? val.level_cm);
+    const height_mm = heightMmRaw ?? (heightCmRaw !== null ? heightCmRaw * 10 : null);
 
     return {
         ...val,
@@ -22,6 +33,8 @@ const normalizeSensor = (val) => {
         humidity: hum,
         lux: luxVal,
         mq135: mqVal,
+        height_mm,
+        height_cm: height_mm !== null ? Number((height_mm / 10).toFixed(1)) : heightCmRaw,
         t: temp, // shorthand for charts
         h: hum,
         lx: luxVal,
@@ -30,7 +43,13 @@ const normalizeSensor = (val) => {
 };
 
 const LIVE_PATHS = ['orchidData/latest', 'Jar1', 'Jar2', 'Jar3'];
-const SENSOR_KEYS = ['temperature', 'temp', 't', 'humidity', 'hum', 'h', 'lux', 'light', 'lx', 'mq135', 'mq', 'gas'];
+const SENSOR_KEYS = [
+    'temperature', 'temp', 't',
+    'humidity', 'hum', 'h',
+    'lux', 'light', 'lx',
+    'mq135', 'mq', 'gas',
+    'height', 'height_mm', 'heightMm', 'heightMM', 'height_cm', 'heightCm', 'plantHeight', 'distance', 'distance_cm', 'distance_mm'
+];
 
 const isRecord = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 

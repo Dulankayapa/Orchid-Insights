@@ -1,13 +1,65 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { Line } from "react-chartjs-2";
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  TimeScale,
+  Tooltip,
+  Legend,
+  Filler,
+  CategoryScale,
+} from "chart.js";
+import "chartjs-adapter-date-fns";
+import { api } from "../lib/api";
 import { db } from "../lib/firebase";
-import { ref, onValue, query, limitToLast } from "firebase/database";
+import { ref, onValue, query, limitToLast, push, update } from "firebase/database";
+import { useTheme } from "../context/ThemeContext";
+
+ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend, Filler, CategoryScale);
 
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
+
+const normalizeId = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s_-]+/g, "").toLowerCase();
+  const jarMatch = compact.match(/^jar0*(\d+)$/);
+  if (jarMatch) return `jar${Number(jarMatch[1])}`;
+  return compact;
+};
+
+const canonicalJarKey = (value) => {
+  const norm = normalizeId(value);
+  if (!norm) return "";
+  const match = norm.match(/^jar(\d+)$/);
+  if (match) return `Jar${match[1]}`;
+  return value?.toString()?.trim() || "";
+};
+
+const canonicalPlantId = (value) => {
+  const norm = normalizeId(value);
+  if (!norm) return "";
+  const match = norm.match(/^jar(\d+)$/);
+  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
+  return String(value || "").trim().toLowerCase();
+};
+
+const splitJarInputs = (value) =>
+  Array.from(
+    new Set(
+      String(value || "")
+        .split(/[\s,;]+/)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    )
+  );
 
 const coerceTimestamp = (value) => {
   const num = toNumber(value);
@@ -81,9 +133,26 @@ const normalizePlantSnapshot = (data) => {
       .map((item, idx) => normalizePlantRecord({ id: item?.id ?? String(idx), ...(item || {}) }))
       .filter(Boolean);
   }
+
   return Object.entries(data)
     .map(([key, value]) => normalizePlantRecord({ id: key, ...(value || {}) }))
     .filter(Boolean);
+};
+
+const normalizeCultureRecord = (key, value) => {
+  const entry = value && typeof value === "object" ? value : {};
+  const jarId = String(entry.jarId || key || "").trim();
+  if (!jarId) return null;
+
+  return {
+    jarId,
+    cultureDate: entry.cultureDate || entry.culture_date || entry.planting_date || entry.plantingDate || "",
+    rackNo: entry.rackNo ?? entry.rack_no ?? entry.rack ?? "",
+    orchidType: entry.orchidType || entry.cultivar || entry.type || "",
+    nutrition: entry.nutrition || "",
+    recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+    updatedAt: entry.updatedAt || entry.updated_at || null,
+  };
 };
 
 const latestHeightFromHistory = (rows) => {
@@ -116,19 +185,18 @@ const normalizeJarIdInput = (value) => {
 };
 
 export default function GrowthTracker() {
+  const { theme } = useTheme();
+  const isLight = theme === "light";
+
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [plantRecords, setPlantRecords] = useState([]);
   const [plantFetchError, setPlantFetchError] = useState("");
   const [cultureEntries, setCultureEntries] = useState([]);
   const [cultureError, setCultureError] = useState("");
-  const demoIds = useMemo(() => {
-    const ids = new Set();
-    plantRecords.forEach((p) => p.id && ids.add(p.id));
-    cultureEntries.forEach((e) => e.jarId && ids.add(e.jarId));
-    return Array.from(ids);
-  }, [plantRecords, cultureEntries]);
-  const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
   const [jarId, setJarId] = useState("");
+  const enteredJarIds = useMemo(() => splitJarInputs(jarId), [jarId]);
+  const activeJarId = enteredJarIds[0] || "";
+  const activeCanonicalId = useMemo(() => canonicalPlantId(activeJarId), [activeJarId]);
   const [plantingDate, setPlantingDate] = useState("");
   const [currentHeight, setCurrentHeight] = useState("");
   const [manualAgeDays, setManualAgeDays] = useState("");
@@ -138,20 +206,66 @@ export default function GrowthTracker() {
   const [analyzedHeight, setAnalyzedHeight] = useState(null);
   const [analyzedJarId, setAnalyzedJarId] = useState("");
   const [sensorLatest, setSensorLatest] = useState(null);
+  const [jarLive, setJarLive] = useState(null);
   const [sensorHistory, setSensorHistory] = useState([]);
   const [sensorError, setSensorError] = useState("");
+  const [heightLogError, setHeightLogError] = useState("");
+  const [jarPersistStatus, setJarPersistStatus] = useState("");
+  const [jarPersistError, setJarPersistError] = useState("");
+  const lastHeightLoggedRef = useRef({ ts: 0, height: null });
+  const createdJarIdsRef = useRef(new Set());
+
+  const cultureMap = useMemo(() => {
+    const map = new Map();
+    cultureEntries.forEach((entry) => {
+      const key = normalizeId(entry?.jarId);
+      if (key) map.set(key, entry);
+    });
+    return map;
+  }, [cultureEntries]);
+
+  const mergedPlantRecords = useMemo(() => {
+    const map = new Map();
+
+    plantRecords.forEach((plant) => {
+      const key = normalizeId(plant?.id);
+      if (!key) return;
+      map.set(key, plant);
+    });
+
+    cultureEntries.forEach((entry) => {
+      const key = normalizeId(entry?.jarId);
+      if (!key) return;
+
+      const existing = map.get(key) || {};
+      const merged = normalizePlantRecord({
+        ...existing,
+        id: existing.id || entry.jarId,
+        planting_date: existing.planting_date || entry.cultureDate || "",
+        cultivar: existing.cultivar || entry.orchidType || undefined,
+        location: existing.location || (entry.rackNo ? `Rack ${entry.rackNo}` : undefined),
+        nutrition: existing.nutrition || entry.nutrition || undefined,
+        recultures: existing.recultures || entry.recultures || [],
+      });
+      if (merged) map.set(key, merged);
+    });
+
+    return Array.from(map.values());
+  }, [cultureEntries, plantRecords]);
+
+  const demoIds = useMemo(() => mergedPlantRecords.map((p) => p.id).filter(Boolean), [mergedPlantRecords]);
+  const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
 
   const plantRecord = useMemo(() => {
-    if (!jarId) return null;
-    const id = jarId.trim().toLowerCase();
-    return plantRecords.find((p) => String(p.id).toLowerCase() === id) || null;
-  }, [jarId, plantRecords]);
+    if (!activeJarId) return null;
+    const idNorm = normalizeId(activeJarId);
+    return mergedPlantRecords.find((p) => normalizeId(p.id) === idNorm) || null;
+  }, [activeJarId, mergedPlantRecords]);
 
   const cultureRecord = useMemo(() => {
-    if (!jarId) return null;
-    const id = jarId.trim().toLowerCase();
-    return cultureEntries.find((entry) => String(entry.jarId).toLowerCase() === id) || null;
-  }, [jarId, cultureEntries]);
+    if (!activeJarId) return null;
+    return cultureMap.get(normalizeId(activeJarId)) || null;
+  }, [activeJarId, cultureMap]);
 
   useEffect(() => {
     setPlantFetchError("");
@@ -180,20 +294,7 @@ export default function GrowthTracker() {
       entriesRef,
       (snap) => {
         const data = snap.val() || {};
-        const next = Object.entries(data)
-          .map(([key, value]) => {
-            const entry = value && typeof value === "object" ? value : {};
-            return {
-              jarId: entry.jarId || key,
-              cultureDate: entry.cultureDate,
-              rackNo: entry.rackNo,
-              orchidType: entry.orchidType,
-              nutrition: entry.nutrition,
-              recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
-              updatedAt: entry.updatedAt,
-            };
-          })
-          .filter((entry) => entry.jarId);
+        const next = Object.entries(data).map(([key, value]) => normalizeCultureRecord(key, value)).filter(Boolean);
         setCultureEntries(next);
         setCultureError("");
       },
@@ -206,10 +307,120 @@ export default function GrowthTracker() {
     return () => unsubscribe();
   }, []);
 
+  const recordSourceError = useMemo(
+    () => [plantFetchError].filter(Boolean).join(" | "),
+    [plantFetchError]
+  );
+
   useEffect(() => {
-    // Live latest
+    if (!enteredJarIds.length) {
+      setJarPersistStatus("");
+      setJarPersistError("");
+      return;
+    }
+
+    const knownIds = new Set(mergedPlantRecords.map((record) => normalizeId(record?.id)).filter(Boolean));
+    const candidates = enteredJarIds
+      .map((raw) => {
+        const normalized = normalizeId(raw);
+        const canonicalId = canonicalPlantId(raw);
+        const jarMatch = normalized.match(/^jar(\d+)$/);
+        return { raw, normalized, canonicalId, isJar: Boolean(jarMatch) };
+      })
+      .filter(({ normalized, canonicalId, isJar }) => {
+        if (!normalized || !canonicalId || !isJar) return false;
+        if (knownIds.has(normalized)) return false;
+        if (createdJarIdsRef.current.has(normalized)) return false;
+        return true;
+      });
+
+    if (!candidates.length) {
+      return;
+    }
+
+    candidates.forEach(({ normalized }) => createdJarIdsRef.current.add(normalized));
+    let cancelled = false;
+
+    Promise.allSettled(
+      candidates.map(async ({ canonicalId }) => {
+        const baseRecord = {
+          id: canonicalId,
+          planting_date: null,
+          height_mm: null,
+          cultivar: null,
+          updated_at: new Date().toISOString(),
+        };
+
+        try {
+          const resp = await api.put(`/env/plants/${encodeURIComponent(canonicalId)}`, baseRecord);
+          return { ok: true, canonicalId, record: normalizePlantRecord(resp?.data) || normalizePlantRecord(baseRecord), via: "api" };
+        } catch (apiErr) {
+          try {
+            // Fallback to direct RTDB write when backend env is not configured.
+            await update(ref(db, `plants/${canonicalId}`), baseRecord);
+            return { ok: true, canonicalId, record: normalizePlantRecord(baseRecord), via: "firebase" };
+          } catch (firebaseErr) {
+            const apiMessage = apiErr?.response?.data?.detail || apiErr?.message || "API save failed";
+            const firebaseMessage = firebaseErr?.message || "Firebase save failed";
+            return { ok: false, canonicalId, message: `${apiMessage}; ${firebaseMessage}` };
+          }
+        }
+      })
+    )
+      .then((results) => {
+        if (cancelled) return;
+
+        const saved = [];
+        const savedViaFallback = [];
+        const failed = [];
+
+        results.forEach((result, index) => {
+          const { normalized, canonicalId } = candidates[index];
+          if (result.status === "fulfilled" && result.value?.ok) {
+            const normalizedRecord = result.value?.record;
+            if (normalizedRecord) {
+              setPlantRecords((prev) => {
+                const exists = prev.some((row) => normalizeId(row?.id) === normalizeId(normalizedRecord.id));
+                if (exists) return prev;
+                return [...prev, normalizedRecord];
+              });
+            }
+            saved.push(canonicalId);
+            if (result.value?.via === "firebase") {
+              savedViaFallback.push(canonicalId);
+            }
+            return;
+          }
+
+          createdJarIdsRef.current.delete(normalized);
+          const message = result.value?.message || result.reason?.message || "Failed to save Jar ID";
+          failed.push(`${canonicalId} (${message})`);
+        });
+
+        if (saved.length) {
+          const fallbackHint = savedViaFallback.length
+            ? ` Saved via Firebase fallback: ${savedViaFallback.join(", ")}.`
+            : "";
+          setJarPersistStatus(`Saved IDs for future searches: ${saved.join(", ")}.${fallbackHint}`);
+        } else {
+          setJarPersistStatus("");
+        }
+        setJarPersistError(failed.length ? failed.join(" | ") : "");
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setJarPersistStatus("");
+        setJarPersistError(err?.message || "Failed to save Jar IDs");
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [enteredJarIds, mergedPlantRecords]);
+
+  useEffect(() => {
     const latestRef = ref(db, "orchidData/latest");
-    const offLatest = onValue(
+    const off = onValue(
       latestRef,
       (snap) => {
         const val = snap.val();
@@ -217,9 +428,14 @@ export default function GrowthTracker() {
       },
       (err) => setSensorError(err.message || "Failed to read latest sensor data")
     );
-    // History (last 150)
-    const historyRef = query(ref(db, "orchidData/logs"), limitToLast(150));
-    const offHist = onValue(
+    return () => off();
+  }, []);
+
+  useEffect(() => {
+    const historyRef = activeCanonicalId
+      ? query(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(150))
+      : query(ref(db, "orchidData/logs"), limitToLast(150));
+    const off = onValue(
       historyRef,
       (snap) => {
         const raw = snap.val() || {};
@@ -228,13 +444,107 @@ export default function GrowthTracker() {
         rows.reverse();
         setSensorHistory(rows);
       },
-      (err) => setSensorError(err.message || "Failed to read history")
+      (err) =>
+        setSensorError(
+          err.message ||
+            (activeCanonicalId ? `Failed to read ${activeCanonicalId} history` : "Failed to read sensor history")
+        )
     );
-    return () => {
-      offLatest();
-      offHist();
+    return () => off();
+  }, [activeCanonicalId]);
+
+  // Listen to per-jar RTDB nodes (e.g., Jar1, Jar2...) to capture live height for that jar.
+  useEffect(() => {
+    if (!activeJarId) {
+      setJarLive(null);
+      return undefined;
+    }
+    const jarKey = canonicalJarKey(activeJarId);
+    if (!jarKey) return undefined;
+
+    const jarRef = ref(db, jarKey);
+    const off = onValue(
+      jarRef,
+      (snap) => {
+        const val = snap.val();
+        const normalized = val ? normalizeSensor({ ...val, jarId: jarKey }) : null;
+        setJarLive(normalized);
+      },
+      (err) => setSensorError(err.message || "Failed to read jar live data")
+    );
+    return () => off();
+  }, [activeJarId]);
+
+  // Autofill the current height field from the latest live sensor reading when a Jar is selected.
+  useEffect(() => {
+    if (!activeJarId) return;
+    const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
+    if (liveHeight === null) return;
+    setCurrentHeight(String(liveHeight));
+  }, [activeJarId, sensorLatest, jarLive]);
+
+  useEffect(() => {
+    lastHeightLoggedRef.current = { ts: 0, height: null };
+  }, [activeCanonicalId]);
+
+  // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
+  useEffect(() => {
+    setHeightLogError("");
+    const liveSource = jarLive || sensorLatest;
+    if (!liveSource) return;
+
+    const liveHeight = toNumber(liveSource.height_mm ?? liveSource.height);
+    if (liveHeight === null) return;
+
+    const ts = Number(liveSource.timestamp) || Date.now();
+
+    const last = lastHeightLoggedRef.current;
+    const isDuplicate =
+      last && last.height !== null && Math.abs(liveHeight - last.height) < 0.1 && Math.abs(ts - last.ts) < 3000;
+    if (isDuplicate) return;
+
+    const sourceJarId =
+      activeJarId || liveSource.jarId || liveSource.jar_id || liveSource.id || canonicalJarKey(activeJarId) || null;
+    const canonicalId = canonicalPlantId(sourceJarId);
+    if (!canonicalId) return;
+
+    const temperature = toNumber(liveSource.temperature ?? liveSource.temp);
+    const humidity = toNumber(liveSource.humidity ?? liveSource.hum);
+    const lux = toNumber(liveSource.lux ?? liveSource.light ?? liveSource.lx);
+    const mq135 = toNumber(liveSource.mq135 ?? liveSource.mq ?? liveSource.gas);
+
+    const payload = {
+      height_mm: liveHeight,
+      height_cm: Number((liveHeight / 10).toFixed(1)),
+      temperature,
+      humidity,
+      lux,
+      mq135,
+      timestamp: ts,
+      jarId: canonicalId,
+      source: "sensor",
     };
-  }, []);
+
+    Promise.all([
+      push(ref(db, "growthLogs"), payload),
+      push(ref(db, `growthLogsByJar/${canonicalId}`), payload),
+      update(ref(db, `plants/${canonicalId}`), {
+        id: canonicalId,
+        planting_date: plantingDate || null,
+        height_mm: liveHeight,
+        temperature,
+        humidity,
+        lux,
+        mq135,
+        timestamp: ts,
+        updated_at: new Date(ts).toISOString(),
+      }),
+    ])
+      .then(() => {
+        lastHeightLoggedRef.current = { ts, height: liveHeight };
+      })
+      .catch((err) => setHeightLogError(err?.message || "Failed to write live jar data to Firebase"));
+  }, [sensorLatest, jarLive, activeJarId, plantingDate]);
 
   const derivedAgeDays = useMemo(() => {
     if (!plantingDate) return null;
@@ -245,27 +555,14 @@ export default function GrowthTracker() {
   }, [plantingDate]);
 
   useEffect(() => {
-    if (!jarId.trim()) {
-      setPlantingDate("");
-      setCurrentHeight("");
-      return;
+    if (plantRecord) {
+      if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
+      const latestHeight = resolveCurrentHeight(plantRecord);
+      if (latestHeight !== undefined && latestHeight !== null) {
+        setCurrentHeight(String(latestHeight));
+      }
     }
-
-    if (cultureRecord?.cultureDate) {
-      setPlantingDate(cultureRecord.cultureDate);
-    } else if (plantRecord?.planting_date) {
-      setPlantingDate(plantRecord.planting_date);
-    } else {
-      setPlantingDate("");
-    }
-
-    const latestHeight = resolveCurrentHeight(plantRecord);
-    if (latestHeight !== undefined && latestHeight !== null) {
-      setCurrentHeight(String(latestHeight));
-    } else {
-      setCurrentHeight("");
-    }
-  }, [jarId, plantRecord, cultureRecord]);
+  }, [plantRecord]);
 
   useEffect(() => {
     if (derivedAgeDays === null) {
@@ -303,7 +600,7 @@ export default function GrowthTracker() {
       const resp = await api.post("/growth/analyze", payload);
       setResult(resp.data);
       setAnalyzedHeight(Number(currentHeight));
-      setAnalyzedJarId(jarId);
+      setAnalyzedJarId(activeJarId || jarId);
     } catch (err) {
       const message = err.response?.data?.detail || err.response?.data || err.message || "Request failed";
       setError(typeof message === "string" ? message : JSON.stringify(message));
@@ -328,6 +625,60 @@ export default function GrowthTracker() {
     return "border-border/45 bg-paper/70 text-subtle";
   }, [displayLabel]);
 
+  const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
+  const liveTimestamp = jarLive?.timestamp ?? sensorLatest?.timestamp ?? null;
+
+  const heightPoints = useMemo(() => {
+    const pts = [];
+    if (Array.isArray(plantRecord?.heights)) {
+      plantRecord.heights.forEach((row) => {
+        const ts = coerceTimestamp(row.timestamp ?? row.ts) ?? (row.date ? Date.parse(row.date) : null);
+        const h = toNumber(row.height_mm ?? row.height);
+        if (ts && h !== null) pts.push({ x: ts, y: h, source: "record" });
+      });
+    }
+    (sensorHistory || []).forEach((row) => {
+      const ts = Number(row.timestamp);
+      const h = toNumber(row.height_mm ?? row.height);
+      if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
+    });
+    const latestPoint = jarLive || sensorLatest;
+    if (latestPoint) {
+      const ts = Number(latestPoint.timestamp);
+      const h = toNumber(latestPoint.height_mm ?? latestPoint.height);
+      if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "latest" });
+    }
+    pts.sort((a, b) => a.x - b.x);
+    return pts.slice(-120); // keep last 120 points
+  }, [plantRecord, sensorHistory, sensorLatest, jarLive]);
+
+  // Listen directly to Firebase plants/{id} for real-time planting date/height updates
+  useEffect(() => {
+    if (!activeCanonicalId) return undefined;
+    const plantRef = ref(db, `plants/${activeCanonicalId}`);
+    const off = onValue(
+      plantRef,
+      (snap) => {
+        const val = snap.val();
+        if (!val) return;
+        const planted = val.planting_date || val.plantingDate;
+        if (planted) setPlantingDate(planted);
+        const h = toNumber(val.height_mm ?? val.height ?? val.current_height);
+        if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
+          setCurrentHeight(String(h));
+        }
+      },
+      (err) => setPlantFetchError(err?.message || "Failed to read plant record from Firebase")
+    );
+    return () => off();
+  }, [activeCanonicalId, liveHeight]);
+
+  useEffect(() => {
+    if (liveHeight !== null && liveHeight !== undefined) {
+      setCurrentHeight(String(liveHeight));
+    }
+  }, [liveHeight]);
+
   return (
     <div className="space-y-8">
       <Hero />
@@ -336,6 +687,8 @@ export default function GrowthTracker() {
           <FormCard
             onSubmit={submit}
             jarId={jarId}
+            activeJarId={activeJarId}
+            enteredJarCount={enteredJarIds.length}
             setJarId={setJarId}
             plantingDate={plantingDate}
             setPlantingDate={setPlantingDate}
@@ -351,9 +704,15 @@ export default function GrowthTracker() {
             cultureRecord={cultureRecord}
             demoIds={demoIds}
             demoIdHint={demoIdHint}
-            plantFetchError={plantFetchError}
+            plantFetchError={recordSourceError}
             cultureError={cultureError}
+            heightLogError={heightLogError}
+            jarPersistStatus={jarPersistStatus}
+            jarPersistError={jarPersistError}
+            liveHeight={liveHeight}
+            liveTimestamp={liveTimestamp}
           />
+          <HeightChartCard isLight={isLight} points={heightPoints} />
           <PlantHistoryCard plantRecord={plantRecord} demoIdHint={demoIdHint} />
           <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
@@ -372,9 +731,25 @@ export default function GrowthTracker() {
 
 function normalizeSensor(val) {
   const ts = Number(val.timestamp) || Date.now();
+  const heightMmRaw =
+    toNumber(
+      val.height_mm ??
+        val.height ??
+        val.heightMm ??
+        val.heightMM ??
+        val.plantHeight ??
+        val.distance_mm ??
+        val.distanceMm ??
+        val.level_mm
+    ) ?? null;
+  const heightCmRaw = toNumber(val.height_cm ?? val.heightCm ?? val.distance_cm ?? val.distanceCm ?? val.level_cm) ?? null;
+  const height_mm = heightMmRaw ?? (heightCmRaw !== null ? heightCmRaw * 10 : null);
+
   return {
     ...val,
     timestamp: ts,
+    height_mm,
+    height_cm: height_mm !== null ? Number((height_mm / 10).toFixed(1)) : heightCmRaw,
     lux: Number(val.lux ?? val.light ?? val.lx ?? 0),
     temperature: Number(val.temperature ?? val.temp ?? 0),
     humidity: Number(val.humidity ?? val.hum ?? 0),
@@ -402,6 +777,8 @@ function Hero() {
 function FormCard({
   onSubmit,
   jarId,
+  activeJarId,
+  enteredJarCount,
   setJarId,
   plantingDate,
   setPlantingDate,
@@ -418,7 +795,12 @@ function FormCard({
   demoIds,
   demoIdHint,
   plantFetchError,
+  jarPersistStatus,
+  jarPersistError,
+  liveHeight,
+  liveTimestamp,
   cultureError,
+  heightLogError,
 }) {
   return (
     <motion.form
@@ -437,7 +819,7 @@ function FormCard({
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
-        <Field label="Jar / Plant ID (optional)">
+        <Field label="Jar / Plant ID (optional, comma-separated supported)">
           <input
             value={jarId}
             onChange={(e) => setJarId(normalizeJarIdInput(e.target.value))}
@@ -456,15 +838,22 @@ function FormCard({
           />
         </Field>
         <Field label="Current height (mm) *">
-          <input
-            type="number"
-            step="0.1"
-            value={currentHeight}
-            readOnly
-            disabled
-            placeholder="Auto-filled from plant record"
-            className="input-shell bg-paper/70 text-subtle"
-          />
+          <div className="space-y-1">
+            <input
+              type="number"
+              step="0.1"
+              value={currentHeight}
+              readOnly
+              disabled
+              placeholder={liveHeight !== null && liveHeight !== undefined ? `Live: ${liveHeight} mm` : "Auto-filled from plant record"}
+              className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
+            />
+            <p className="text-xs text-emerald-700">
+              {liveHeight !== null && liveHeight !== undefined
+                ? `Live: ${liveHeight} mm${liveTimestamp ? ` | ${new Date(liveTimestamp).toLocaleTimeString()}` : ""}`
+                : "Waiting for live height from Firebase…"}
+            </p>
+          </div>
         </Field>
         <Field label="Age (days) - optional override">
           <input
@@ -478,6 +867,11 @@ function FormCard({
         </Field>
       </div>
 
+      {enteredJarCount > 1 && (
+        <p className="text-xs text-sky-800 rounded-lg border border-sky-200 bg-sky-50 px-3 py-2">
+          Multiple IDs detected. Live tracking and analysis currently use the first ID: {activeJarId}.
+        </p>
+      )}
       {!cultureRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
           No culture entry found for "{jarId}". Planting date and age come from the culture table. Try {demoIdHint || "a known ID"}.
@@ -485,7 +879,7 @@ function FormCard({
       )}
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No plant height record found for "{jarId}". Current height is pulled from the plant record.
+          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
         </p>
       )}
       {cultureRecord && (
@@ -505,21 +899,32 @@ function FormCard({
           Culture entries unavailable: {cultureError}
         </p>
       )}
-      <p className="text-xs text-subtle">Today: {today}</p>
-      {cultureRecord && plantRecord && (
-        <p className="text-xs text-primary rounded-lg border border-primary/25 bg-primary/10 px-3 py-2">
-          Planting date and age from culture data; latest height from plant record.
+      {heightLogError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Live height logging issue: {heightLogError}
         </p>
       )}
-      {cultureRecord && !plantRecord && (
-        <p className="text-xs text-primary rounded-lg border border-primary/25 bg-primary/10 px-3 py-2">
-          Planting date and age loaded from culture data. Height is missing for this jar.
+      {jarPersistError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Could not save Jar ID: {jarPersistError}
+        </p>
+      )}
+      {jarPersistStatus && (
+        <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+          {jarPersistStatus}
+        </p>
+      )}
+      <p className="text-xs text-slate-600">Today: {today}</p>
+      {plantRecord && (
+        <p className="text-xs text-teal-800 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">
+          Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
         </p>
       )}
 
       <div className="panel-muted grid sm:grid-cols-2 gap-3 p-3 text-xs text-subtle">
         <p>Tip: current date defaults to today automatically.</p>
         <p>Units: millimeters.</p>
+        <p className="sm:col-span-2">Live height readings auto-fill when the sensor streams and are logged to Firebase instantly.</p>
       </div>
 
       <button
@@ -656,8 +1061,13 @@ function SensorPanel({ latest, history, error }) {
         <div className="rounded-xl border border-rose-200/60 bg-rose-500/10 px-3 py-2 text-sm text-rose-700">Sensor error: {error}</div>
       )}
 
+      <p className="text-[11px] text-slate-600">
+        Live height readings stream here and mirror to Firebase <code className="font-mono text-[10px]">growthLogs</code> automatically.
+      </p>
+
       {latest ? (
         <div className="grid grid-cols-2 gap-3 text-sm">
+          <SensorStat label="Height" value={`${latest.height_mm?.toFixed?.(1) ?? latest.height_mm ?? "-"} mm`} />
           <SensorStat label="Temperature" value={`${latest.temperature?.toFixed?.(1) ?? latest.temperature ?? "-"} \u00b0C`} />
           <SensorStat label="Humidity" value={`${latest.humidity?.toFixed?.(1) ?? latest.humidity ?? "-"} %`} />
           <SensorStat label="Light" value={`${latest.lux ?? "-"} lx`} />
@@ -677,7 +1087,7 @@ function SensorPanel({ latest, history, error }) {
                 key={`${row.timestamp}-${idx}`}
                 className="flex items-center justify-between rounded-xl border border-border/45 bg-paper/70 px-3 py-2 text-xs text-dark"
               >
-                <span className="text-subtle">{formatTs(row.timestamp)}</span>
+                <span className="text-slate-600">{formatTs(row.timestamp)}</span>
                 <span className="text-dark">
                   {row.temperature ?? "-"}\u00b0C \u00b7 {row.humidity ?? "-"}% \u00b7 {row.lux ?? "-"} lx \u00b7 MQ {row.mq135 ?? "-"}
                 </span>
@@ -798,6 +1208,89 @@ function SensorStat({ label, value, className = "" }) {
       <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">{label}</p>
       <p className="text-sm font-semibold text-dark mt-1">{value}</p>
     </div>
+  );
+}
+
+function HeightChartCard({ points, isLight }) {
+  const hasData = points && points.length;
+  const data = useMemo(
+    () => ({
+      datasets: [
+        {
+          label: "Height (mm)",
+          data: points,
+          parsing: false,
+          spanGaps: true,
+          borderColor: "rgba(16, 185, 129, 1)",
+          backgroundColor: "rgba(16, 185, 129, 0.18)",
+          tension: 0.25,
+          fill: true,
+          pointRadius: 2.5,
+        },
+      ],
+    }),
+    [points]
+  );
+
+  const options = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: {
+        x: {
+          type: "time",
+          time: { unit: "day", tooltipFormat: "PPpp" },
+          ticks: { color: "#475569" },
+          grid: { color: "rgba(148, 163, 184, 0.15)" },
+        },
+        y: {
+          title: { display: true, text: "mm" },
+          ticks: { color: "#475569" },
+          grid: { color: "rgba(148, 163, 184, 0.12)" },
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `Height: ${ctx.parsed.y} mm`,
+          },
+        },
+      },
+    }),
+    []
+  );
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, delay: 0.08 }}
+      className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(13,148,136,0.26)] ${
+        isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"
+      }`}
+      style={{ minHeight: "320px" }}
+    >
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Growth</p>
+          <h4 className="text-lg font-semibold text-slate-900">Height trend</h4>
+        </div>
+        <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
+          {hasData ? "Live from Firebase" : "Waiting..."}
+        </span>
+      </div>
+
+      {hasData ? (
+        <div className="h-64">
+          <Line data={data} options={options} />
+        </div>
+      ) : (
+        <div className="text-sm text-slate-700 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
+          No height points yet. Once a Jar is selected and either a plant history or live sensor height is available, the chart will populate automatically.
+        </div>
+      )}
+    </motion.div>
   );
 }
 
