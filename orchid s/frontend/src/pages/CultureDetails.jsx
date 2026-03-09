@@ -274,6 +274,7 @@ export default function CultureDetails() {
     });
   };
 
+  // Loads a selected entry into the form for viewing/editing
   const loadEntry = (entry) => {
     setForm({
       jarId: entry.jarId,
@@ -288,6 +289,7 @@ export default function CultureDetails() {
     setError("");
   };
 
+  // Clears the form to allow creating a new entry, and resets status and error messages
   const clearForm = () => {
     setForm({ jarId: "", cultureDate: "", rackNo: "", orchidType: "", nutrition: "", recultures: [newRecultureRow()] });
     setSelectedId("");
