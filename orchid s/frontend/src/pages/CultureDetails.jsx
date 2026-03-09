@@ -2,14 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { onValue, ref, remove, set, update } from "firebase/database";
 import { db } from "../lib/firebase";
-
+// Components
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
 const OPTIONS_PATH = "recultureOptions";
-
+// Utility functions for normalizing and managing options
 const normalizeOption = (value) => (value || "").trim();
 const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
-
+// Ensures options are unique, cleaned, and sorted
 const uniqueSortedOptions = (values) => {
   const map = new Map();
   (values || []).forEach((value) => {
@@ -19,7 +19,7 @@ const uniqueSortedOptions = (values) => {
   });
   return Array.from(map.values()).sort((a, b) => a.localeCompare(b));
 };
-
+// Builds options list from Firebase snapshot data
 const buildOptionsFromSnapshot = (data) => {
   const racksRaw = Array.isArray(data?.racks) ? data.racks : Object.values(data?.racks || {});
   const orchidsRaw = Array.isArray(data?.orchids) ? data.orchids : Object.values(data?.orchids || {});
@@ -28,13 +28,13 @@ const buildOptionsFromSnapshot = (data) => {
     orchids: uniqueSortedOptions(orchidsRaw),
   };
 };
-
+// Normalizes Jar ID input to ensure it starts with "J" followed by the rest of the input
 const normalizeJarIdInput = (value) => {
   const next = (value || "").trimStart();
   if (!next) return value || "";
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
-
+// Builds options list from existing entries to seed Firebase options if they are missing
 const buildOptionsFromEntries = (entries) => {
   const racks = new Map();
   const orchids = new Map();
@@ -51,7 +51,7 @@ const buildOptionsFromEntries = (entries) => {
     orchids: Array.from(orchids.values()).sort((a, b) => a.localeCompare(b)),
   };
 };
-
+// Empty state component for displaying messages when there are no entries or options
 export default function CultureDetails() {
   const [form, setForm] = useState({
     jarId: "",
@@ -61,8 +61,8 @@ export default function CultureDetails() {
     nutrition: "",
     recultures: [newRecultureRow()],
   });
-  const [entries, setEntries] = useState([]);
-  const [optionStore, setOptionStore] = useState({ racks: [], orchids: [] });
+  const [entries, setEntries] = useState([]);// Firebase entries loaded from the database
+  const [optionStore, setOptionStore] = useState({ racks: [], orchids: [] });// Options for racks and orchids loaded from Firebase
   const [optionsLoading, setOptionsLoading] = useState(false);
   const [optionsError, setOptionsError] = useState("");
   const [optionsSeeded, setOptionsSeeded] = useState(false);
