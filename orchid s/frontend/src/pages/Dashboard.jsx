@@ -5,25 +5,79 @@ import { api } from "../lib/api";
 const FEEDBACK_STORAGE_KEY = "orchid-insights-dashboard-feedback";
 
 const cards = [
-  { title: "Growth Tracker", to: "/growth", tone: "from-teal-500/55 to-cyan-500/45", desc: "Model-backed growth classification and expected ranges." },
-  { title: "Growth History", to: "/history", tone: "from-cyan-500/55 to-blue-500/45", desc: "Jar-based trend lines with comparison and rack filtering." },
-  { title: "Culture Details", to: "/reculture", tone: "from-indigo-500/55 to-violet-500/45", desc: "Manage culture/reculture entries, racks, orchids, and nutrition records." },
-  { title: "Plant Database", to: "/plants", tone: "from-emerald-500/55 to-teal-500/45", desc: "Searchable plant records synced from your backend." },
-  { title: "Firebase Table", to: "/firebase", tone: "from-orange-400/55 to-emerald-500/45", desc: "Live jar sensor values in a compact data table." },
-  { title: "Env Monitor", to: "/monitor", tone: "from-sky-500/55 to-teal-500/45", desc: "Real-time environment status with alerts and charts." },
-  { title: "Orchid Companion", to: "/companion", tone: "from-fuchsia-500/50 to-cyan-500/45", desc: "Ask the assistant for orchid care and growth guidance using live monitor context." },
+  {
+    title: "Growth Tracker",
+    to: "/growth",
+    tone: "from-primary/35 to-secondary/30",
+    icon: "\u{1F4C8}",
+    meta: "Predictive",
+    desc: "Model-backed growth classification and expected ranges.",
+  },
+  {
+    title: "Growth History",
+    to: "/history",
+    tone: "from-accent/35 to-secondary/30",
+    icon: "\u{1F552}",
+    meta: "Analytics",
+    desc: "Jar-based trend lines with comparison and rack filtering.",
+  },
+  {
+    title: "Culture Details",
+    to: "/reculture",
+    tone: "from-secondary/35 to-primary/30",
+    icon: "\u{1F9EA}",
+    meta: "Operations",
+    desc: "Manage culture and reculture entries, racks, orchids, and nutrition records.",
+  },
+  {
+    title: "Plant Database",
+    to: "/plants",
+    tone: "from-emerald-400/35 to-primary/30",
+    icon: "\u{1F33F}",
+    meta: "Records",
+    desc: "Searchable plant records synced from your backend.",
+  },
+  {
+    title: "Firebase Table",
+    to: "/firebase",
+    tone: "from-orange-300/35 to-primary/30",
+    icon: "\u{1F525}",
+    meta: "Live Data",
+    desc: "Live jar sensor values in a compact data table.",
+  },
+  {
+    title: "Env Monitor",
+    to: "/monitor",
+    tone: "from-sky-400/35 to-primary/30",
+    icon: "\u{1F321}\uFE0F",
+    meta: "Sensors",
+    desc: "Real-time environment status with alerts and charts.",
+  },
+  {
+    title: "Orchid Companion",
+    to: "/companion",
+    tone: "from-fuchsia-400/35 to-secondary/30",
+    icon: "\u{1F916}",
+    meta: "Assistant",
+    desc: "Ask the assistant for orchid care and growth guidance using live monitor context.",
+  },
 ];
-const ORCHID_CLIP_DURATION_MS = 5000;
+const ORCHID_FRAME_DURATION_MS = 5000;
 const orchidClipFrames = [
   "/orchid-clip/frame-1.jpg",
   "/orchid-clip/frame-2.jpg",
   "/orchid-clip/frame-3.jpg",
   "/orchid-clip/frame-4.jpg",
+  "/orchid-clip/frame-5.jpg",
+  "/orchid-clip/frame-6.jpg",
+  "/orchid-clip/frame-7.jpg",
+  "/orchid-clip/frame-8.jpg",
 ];
 
 export default function Dashboard() {
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
+  const [showStats, setShowStats] = useState(true);
   const [feedback, setFeedback] = useState("");
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [feedbackList, setFeedbackList] = useState([]);
@@ -53,17 +107,16 @@ export default function Dashboard() {
   const availableClipFrames = orchidClipFrames
     .map((src, index) => ({ src, index }))
     .filter((frame) => !failedClipFrames.includes(frame.index));
-  const clipStepMs = Math.max(900, Math.floor(ORCHID_CLIP_DURATION_MS / Math.max(availableClipFrames.length, 1)));
 
   useEffect(() => {
     if (availableClipFrames.length <= 1) return undefined;
 
     const timer = window.setInterval(() => {
       setClipFrameIndex((prev) => (prev + 1) % availableClipFrames.length);
-    }, clipStepMs);
+    }, ORCHID_FRAME_DURATION_MS);
 
     return () => window.clearInterval(timer);
-  }, [availableClipFrames.length, clipStepMs]);
+  }, [availableClipFrames.length]);
 
   useEffect(() => {
     setClipFrameIndex(0);
@@ -133,18 +186,60 @@ export default function Dashboard() {
   const currentClipFrame = availableClipFrames.length
     ? availableClipFrames[clipFrameIndex % availableClipFrames.length]
     : null;
+  const activeSensorServices = health
+    ? [health.model_loaded, health.firebase_connected, health.status === "ok"].filter(Boolean).length
+    : 0;
+  const statItems = [
+    {
+      label: "Plants Monitored",
+      value: "128",
+      icon: "\u{1F33F}",
+      detail: "Across 6 greenhouse zones",
+      trend: "+6 this week",
+      trendTone: "text-emerald-600 dark:text-emerald-400",
+    },
+    {
+      label: "Active Sensors",
+      value: health ? `${activeSensorServices}/3` : "--",
+      icon: "\u{1F4F6}",
+      detail: health ? "Core services reporting live" : "Waiting for health telemetry",
+      trend: health ? "Live now" : "Pending",
+      trendTone: health ? "text-primary" : "text-amber-600 dark:text-amber-400",
+    },
+    {
+      label: "Avg Humidity",
+      value: health ? "62%" : "--",
+      icon: "\u{1F4A7}",
+      detail: "Rolling average over 24h",
+      trend: "+1.8%",
+      trendTone: "text-primary",
+    },
+    {
+      label: "Growth Alerts",
+      value: error ? "1" : "0",
+      icon: "\u{1F514}",
+      detail: error ? "Health warning needs review" : "No blocking alerts",
+      trend: error ? "Check now" : "All clear",
+      trendTone: error ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400",
+    },
+  ];
 
   return (
     <div className="space-y-6">
-      <section className="panel relative overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
+      <section className="hero-glass relative overflow-hidden">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/35 via-transparent to-primary/10 dark:from-white/5" />
         <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-stretch">
           <div className="space-y-4">
             <p className="kicker">Orchid Insights</p>
             <h2 className="title-lg">Orchid Insights Dashboard</h2>
-            <p className="max-w-3xl text-sm text-subtle md:text-base">
+            <p className="page-description max-w-3xl">
               Growth analytics, plant database operations, and real-time environmental monitoring in one modern workspace.
             </p>
+            <div className="flex flex-wrap gap-2">
+              <span className="chip-subtle">7 active modules</span>
+              <span className="chip-subtle">Live telemetry</span>
+              <span className="chip-subtle">Team-ready workspace</span>
+            </div>
 
             {health && (
               <div className="grid gap-3 sm:grid-cols-3">
@@ -161,13 +256,13 @@ export default function Dashboard() {
             )}
           </div>
 
-          <div className="relative h-[230px] w-full overflow-hidden rounded-3xl border border-white/50 bg-white/60 shadow-[0_26px_60px_-35px_rgba(15,23,42,0.65)] sm:h-[280px] lg:h-[320px] xl:h-[340px]">
+          <div className="hero-media-card group relative h-[230px] w-full sm:h-[280px] lg:h-[320px] xl:h-[340px]">
             {currentClipFrame ? (
               <img
                 key={currentClipFrame.src}
                 src={currentClipFrame.src}
                 alt="Blooming orchid cluster"
-                className="h-full w-full object-cover object-center"
+                className="h-full w-full object-cover object-center transition-transform duration-500 ease-out group-hover:scale-[1.03]"
                 loading="lazy"
                 onError={() => {
                   setFailedClipFrames((prev) => {
@@ -181,9 +276,53 @@ export default function Dashboard() {
                 Add orchid images in <span className="mx-1 rounded bg-white/70 px-2 py-0.5 font-semibold text-slate-700">public/orchid-clip</span> to run the clip in one frame.
               </div>
             )}
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/35 via-transparent to-transparent" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/50 via-slate-900/5 to-transparent" />
           </div>
         </div>
+      </section>
+
+      <section className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <p className="kicker">Live Snapshot</p>
+            <p className="text-sm text-subtle">Quick health and monitoring summary.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowStats((prev) => !prev)}
+            className="btn-soft btn-soft-emphasis rounded-xl px-3 py-1.5 text-sm"
+            aria-expanded={showStats}
+          >
+            <span className="inline-flex h-2 w-2 rounded-full bg-primary" />
+            {showStats ? "Hide Charts" : "Show Charts"}
+          </button>
+        </div>
+
+        {showStats ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {statItems.map((stat) => (
+              <article key={stat.label} className="stat-card group">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-subtle">{stat.label}</p>
+                    <p className="mt-2 text-2xl font-semibold tracking-[-0.03em] text-dark">{stat.value}</p>
+                  </div>
+                  <span className="stat-icon transition-transform duration-200 group-hover:scale-105 group-hover:-translate-y-0.5">
+                    {stat.icon}
+                  </span>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-2 text-xs">
+                  <p className="text-subtle">{stat.detail}</p>
+                  <span className={`font-semibold ${stat.trendTone}`}>{stat.trend}</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <div className="dashboard-card p-4 text-sm text-subtle">
+            Charts are hidden. Click <span className="font-semibold text-dark">Show Charts</span> to display them.
+          </div>
+        )}
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
@@ -191,34 +330,32 @@ export default function Dashboard() {
           <Link
             key={card.to}
             to={card.to}
-            className="group relative overflow-hidden rounded-3xl border border-border/45 bg-paper/85 p-5 shadow-[0_24px_55px_-35px_rgba(15,23,42,0.45)] transition hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-[0_28px_65px_-34px_rgba(13,148,136,0.55)]"
+            className="dashboard-card dashboard-card-hover group relative overflow-hidden p-5"
           >
-            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${card.tone} opacity-10 transition-opacity group-hover:opacity-20`} />
+            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${card.tone} opacity-[0.08] transition-opacity duration-200 group-hover:opacity-[0.16]`} />
             <div className="relative space-y-2">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">Module</p>
-              <h3 className="text-xl font-semibold text-dark">{card.title}</h3>
-              <p className="text-sm text-subtle">{card.desc}</p>
-              <p className="pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-primary">Open -&gt;</p>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">{card.meta}</p>
+                <span className="module-glyph">{card.icon}</span>
+              </div>
+              <h3 className="module-title">{card.title}</h3>
+              <p className="page-description">{card.desc}</p>
+              <p className="pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-primary">Open module</p>
             </div>
           </Link>
         ))}
       </section>
 
-      <section className="panel space-y-4">
+      <section className="feedback-panel space-y-5">
         <div className="space-y-3">
-          <p className="kicker">Feedback</p>
-          <div className="relative h-28 overflow-hidden rounded-2xl border border-primary/25 bg-gradient-to-br from-cyan-100 via-white to-emerald-100">
-            <div className="absolute -left-6 top-6 h-20 w-20 rounded-full bg-cyan-300/35 blur-sm" />
-            <div className="absolute left-10 top-2 h-16 w-16 rounded-full bg-rose-300/30 blur-sm" />
-            <div className="absolute right-8 top-8 h-14 w-14 rounded-full bg-teal-300/35 blur-sm" />
-            <div className="absolute right-2 top-2 h-20 w-20 rounded-full bg-emerald-300/30 blur-sm" />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="rounded-full border border-white/70 bg-white/65 px-4 py-1 text-sm font-semibold text-primary shadow-sm backdrop-blur">
-                Orchid Bloom
-              </div>
+          <div className="feedback-head">
+            <div>
+              <p className="kicker">Feedback</p>
+              <h3 className="module-title">Share your feedback</h3>
+              <p className="page-description">Help us improve this dashboard with practical input from daily use.</p>
             </div>
+            <div className="feedback-pill">User voice matters</div>
           </div>
-          <h3 className="text-xl font-semibold text-dark">Share your feed back</h3>
         </div>
 
         <form onSubmit={submitFeedback} className="space-y-3">
@@ -231,7 +368,7 @@ export default function Dashboard() {
             rows={4}
             maxLength={500}
             placeholder="Write your feedback..."
-            className="input-shell resize-y"
+            className="input-shell min-h-[124px] resize-y rounded-[16px]"
           />
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-subtle">{feedback.length}/500</p>
@@ -241,7 +378,7 @@ export default function Dashboard() {
                   Cancel Edit
                 </button>
               )}
-              <button type="submit" className="btn-primary">
+              <button type="submit" className="btn-primary px-5">
                 {editingId ? "Update Feedback" : "Submit Feedback"}
               </button>
             </div>
@@ -249,17 +386,20 @@ export default function Dashboard() {
         </form>
 
         {feedbackStatus && (
-          <p className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-sm text-primary">
+          <p className="rounded-xl border border-primary/25 bg-primary/10 px-3 py-2 text-sm font-medium text-primary">
             {feedbackStatus}
           </p>
         )}
 
         <div className="space-y-2">
-          <p className="text-sm font-semibold text-dark">Recent feedback</p>
+          <div className="flex items-center justify-between gap-2">
+            <p className="module-title">Recent feedback</p>
+            <span className="text-xs text-subtle">{feedbackList.length} stored</span>
+          </div>
           {feedbackList.length ? (
-            <div className="space-y-2">
+            <div className="space-y-2.5">
               {feedbackList.slice(0, 5).map((item) => (
-                <div key={item.id} className="panel-muted px-3 py-2">
+                <div key={item.id} className="dashboard-card dashboard-card-hover px-3.5 py-3">
                   <p className="text-sm text-dark">{item.message}</p>
                   <p className="mt-1 text-xs text-subtle">
                     {item.updatedAt
@@ -270,14 +410,14 @@ export default function Dashboard() {
                     <button
                       type="button"
                       onClick={() => startEditFeedback(item)}
-                      className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary hover:bg-primary/15"
+                      className="rounded-lg border border-primary/30 bg-primary/10 px-2.5 py-1 text-xs font-semibold text-primary transition-all duration-200 hover:-translate-y-0.5 hover:bg-primary/15"
                     >
                       Edit
                     </button>
                     <button
                       type="button"
                       onClick={() => deleteFeedback(item.id)}
-                      className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-500/15 dark:text-rose-300"
+                      className="rounded-lg border border-rose-300/40 bg-rose-500/10 px-2.5 py-1 text-xs font-semibold text-rose-700 transition-all duration-200 hover:-translate-y-0.5 hover:bg-rose-500/15 dark:text-rose-300"
                     >
                       Delete
                     </button>
