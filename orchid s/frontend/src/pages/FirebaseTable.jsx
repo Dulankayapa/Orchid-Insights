@@ -3,6 +3,7 @@ import { onValue, ref } from "firebase/database";
 import { db, resolvedDatabaseURL } from "../lib/firebase";
 
 const JAR_PATHS = ["Jar1", "Jar2", "Jar3"];
+const PLANTS_PATH = "plants";
 
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
@@ -19,6 +20,15 @@ const normalizeJar = (jarKey, data) => ({
   height: toNumber(data?.height ?? data?.height_mm ?? data?.heightCm),
 });
 
+const normalizePlant = (plantId, data) => ({
+  id: plantId,
+  temperature: toNumber(data?.temperature ?? data?.temp),
+  humidity: toNumber(data?.humidity ?? data?.hum),
+  lux: toNumber(data?.lux ?? data?.light ?? data?.lx),
+  mq135: toNumber(data?.mq135 ?? data?.mq ?? data?.gas),
+  height: toNumber(data?.height_mm ?? data?.height ?? data?.current_height),
+});
+
 const emptyJar = (jarKey) => ({
   id: jarKey,
   temperature: null,
@@ -29,14 +39,34 @@ const emptyJar = (jarKey) => ({
 });
 
 export default function FirebaseTable() {
-  const [jarReadings, setJarReadings] = useState({});
+  const [sensorReadings, setSensorReadings] = useState({});
+  const [plantReadings, setPlantReadings] = useState({});
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const dbUrl = resolvedDatabaseURL;
 
-  const rows = useMemo(() => JAR_PATHS.map((jarKey) => jarReadings[jarKey] || emptyJar(jarKey)), [jarReadings]);
+  const rows = useMemo(() => {
+    const merged = { ...sensorReadings };
+    Object.entries(plantReadings).forEach(([id, row]) => {
+      const base = merged[id] || emptyJar(id);
+      merged[id] = {
+        ...base,
+        temperature: row.temperature ?? base.temperature,
+        humidity: row.humidity ?? base.humidity,
+        lux: row.lux ?? base.lux,
+        mq135: row.mq135 ?? base.mq135,
+        height: row.height ?? base.height,
+      };
+    });
+
+    const ids = Array.from(new Set([...JAR_PATHS, ...Object.keys(merged)])).sort((a, b) =>
+      a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })
+    );
+
+    return ids.map((id) => merged[id] || emptyJar(id));
+  }, [sensorReadings, plantReadings]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return rows;
@@ -52,7 +82,7 @@ export default function FirebaseTable() {
         ref(db, jarKey),
         (snap) => {
           const data = snap.val();
-          setJarReadings((prev) => ({
+          setSensorReadings((prev) => ({
             ...prev,
             [jarKey]: data ? normalizeJar(jarKey, data) : emptyJar(jarKey),
           }));
@@ -65,7 +95,27 @@ export default function FirebaseTable() {
       )
     );
 
-    return () => unsubs.forEach((off) => off());
+    const plantsUnsub = onValue(
+      ref(db, PLANTS_PATH),
+      (snap) => {
+        const raw = snap.val() || {};
+        const normalized = Object.entries(raw).reduce((acc, [key, value]) => {
+          acc[key] = normalizePlant(key, value || {});
+          return acc;
+        }, {});
+        setPlantReadings(normalized);
+        setLoading(false);
+      },
+      (err) => {
+        setError(err?.message || "Failed to fetch saved plant IDs");
+        setLoading(false);
+      }
+    );
+
+    return () => {
+      unsubs.forEach((off) => off());
+      plantsUnsub();
+    };
   }, [refreshKey]);
 
   // Polling fallback so the table still updates if realtime listeners fail.
@@ -75,7 +125,7 @@ export default function FirebaseTable() {
     const fetchJars = async () => {
       try {
         const base = dbUrl.replace(/\/$/, "");
-        const results = await Promise.all(
+        const jarResults = await Promise.all(
           JAR_PATHS.map(async (jarKey) => {
             const res = await fetch(`${base}/${jarKey}.json`);
             if (!res.ok) return [jarKey, emptyJar(jarKey)];
@@ -83,8 +133,16 @@ export default function FirebaseTable() {
             return [jarKey, data ? normalizeJar(jarKey, data) : emptyJar(jarKey)];
           })
         );
-        const next = Object.fromEntries(results);
-        setJarReadings((prev) => ({ ...prev, ...next }));
+
+        const plantsRes = await fetch(`${base}/${PLANTS_PATH}.json`);
+        const plantsRaw = plantsRes.ok ? await plantsRes.json() : {};
+        const plantNext = Object.entries(plantsRaw || {}).reduce((acc, [key, value]) => {
+          acc[key] = normalizePlant(key, value || {});
+          return acc;
+        }, {});
+
+        setSensorReadings(Object.fromEntries(jarResults));
+        setPlantReadings(plantNext);
         setLoading(false);
       } catch {
         setError((prev) => prev || "Realtime fallback polling failed");
@@ -104,7 +162,9 @@ export default function FirebaseTable() {
       <section className="panel">
         <p className="kicker">Firebase RTDB</p>
         <h2 className="title-lg mt-1">Live plant table</h2>
-        <p className="mt-2 text-sm text-subtle md:text-base">Realtime readings from Jar1, Jar2, and Jar3.</p>
+        <p className="mt-2 text-sm text-subtle md:text-base">
+          Realtime readings from Jar1/Jar2/Jar3 plus saved Jar IDs from the database.
+        </p>
       </section>
 
       <section className="panel space-y-4">

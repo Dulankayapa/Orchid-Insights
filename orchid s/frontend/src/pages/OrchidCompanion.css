@@ -1,0 +1,308 @@
+.orchid-companion-page {
+  padding: 16px;
+}
+
+.orchid-companion-page .care-guide-container {
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 8px;
+}
+
+.orchid-companion-page .care-guide-header {
+  margin-bottom: 24px;
+}
+
+.orchid-companion-page .care-guide-title {
+  color: #b7008c;
+  font-size: clamp(1.8rem, 2.5vw, 2.3rem);
+  margin-bottom: 8px;
+  text-align: left;
+  border-bottom: 3px solid rgba(183, 0, 140, 0.18);
+  padding-bottom: 12px;
+}
+
+.orchid-companion-page .care-guide-subtitle {
+  color: #4f566b;
+  font-size: 1rem;
+}
+
+.orchid-companion-page .care-sections {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 20px;
+}
+
+.orchid-companion-page .care-section {
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(10px);
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.orchid-companion-page .section-header {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 18px;
+  padding-bottom: 12px;
+  border-bottom: 2px solid rgba(183, 0, 140, 0.1);
+}
+
+.orchid-companion-page .section-header h2 {
+  color: #333;
+  font-size: 1.25rem;
+}
+
+.orchid-companion-page .section-icon {
+  font-size: 1.5rem;
+  width: 52px;
+  height: 52px;
+  background: linear-gradient(135deg, #d81b60 0%, #b7008c 100%);
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+}
+
+.orchid-companion-page .tips-list {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+
+.orchid-companion-page .tip-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  color: #4f566b;
+  line-height: 1.4;
+}
+
+.orchid-companion-page .tip-bullet {
+  color: #2e7d32;
+  font-weight: 700;
+}
+
+.orchid-companion-page .tip-box {
+  background: rgba(76, 175, 80, 0.1);
+  border-left: 4px solid #4caf50;
+  padding: 12px 14px;
+  margin-top: 16px;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #2e7d32;
+}
+
+.orchid-companion-page .warning-box {
+  background: rgba(244, 67, 54, 0.08);
+  border-left-color: #f44336;
+  color: #b42318;
+}
+
+.orchid-companion-page .tip-label {
+  font-weight: 700;
+  margin-right: 8px;
+}
+
+.orchid-companion-page .problems-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.orchid-companion-page .problem-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 15px;
+  background: rgba(244, 67, 54, 0.05);
+  border-radius: 8px;
+  border-left: 4px solid #f44336;
+}
+
+.orchid-companion-page .problem-symptom {
+  font-weight: 600;
+  color: #333;
+}
+
+.orchid-companion-page .problem-cause {
+  font-size: 0.85rem;
+  color: #666;
+  text-align: right;
+}
+
+.orchid-companion-page .ai-bot-section {
+  margin-bottom: 20px;
+}
+
+.orchid-companion-page .section-title-bot {
+  font-size: 1.3rem;
+  color: #21263b;
+  margin-bottom: 6px;
+}
+
+.orchid-companion-page .bot-intro {
+  color: #4f566b;
+  margin-bottom: 14px;
+}
+
+.orchid-companion-page .companion-live-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.orchid-companion-page .companion-live-card {
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #dfe3ea;
+  background: #ffffff;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.orchid-companion-page .companion-live-card span {
+  font-size: 0.75rem;
+  color: #6f7788;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.orchid-companion-page .companion-live-card strong {
+  font-size: 1rem;
+  color: #1f2a44;
+}
+
+.orchid-companion-page .quick-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.orchid-companion-page .quick-chip {
+  background: #ffffff;
+  color: #444f67;
+  border: 1px solid #d4dbe5;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  padding: 7px 12px;
+  cursor: pointer;
+}
+
+.orchid-companion-page .quick-chip:hover {
+  border-color: #b7008c;
+  color: #b7008c;
+}
+
+.orchid-companion-page .quick-chip:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.orchid-companion-page .companion-chat-box {
+  max-height: 240px;
+  overflow-y: auto;
+  background: #f8f9fc;
+  border: 1px solid #e0e5ef;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.orchid-companion-page .chat-bubble {
+  max-width: 95%;
+  padding: 9px 11px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.4;
+  white-space: pre-line;
+}
+
+.orchid-companion-page .chat-user {
+  margin-left: auto;
+  background: rgba(183, 0, 140, 0.12);
+  border: 1px solid rgba(183, 0, 140, 0.28);
+  color: #3a3150;
+}
+
+.orchid-companion-page .chat-assistant {
+  margin-right: auto;
+  background: #ffffff;
+  border: 1px solid #dce2ed;
+  color: #26324b;
+}
+
+.orchid-companion-page .companion-form {
+  display: flex;
+  gap: 8px;
+}
+
+.orchid-companion-page .companion-input {
+  flex: 1;
+  border-radius: 10px;
+  border: 1px solid #d2d8e4;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+}
+
+.orchid-companion-page .companion-send {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 14px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #fff;
+  background: linear-gradient(135deg, #d81b60 0%, #b7008c 100%);
+  cursor: pointer;
+}
+
+.orchid-companion-page .companion-send:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.orchid-companion-page .companion-error {
+  margin: 4px 0 14px;
+  color: #b42318;
+  font-size: 0.9rem;
+}
+
+.orchid-companion-page .companion-loading {
+  margin: 4px 0 14px;
+  color: #596279;
+  font-size: 0.9rem;
+}
+
+@media (max-width: 768px) {
+  .orchid-companion-page {
+    padding: 8px;
+  }
+
+  .orchid-companion-page .care-sections {
+    grid-template-columns: 1fr;
+  }
+
+  .orchid-companion-page .section-header {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .orchid-companion-page .problem-item {
+    flex-direction: column;
+    text-align: center;
+  }
+
+  .orchid-companion-page .problem-cause {
+    text-align: center;
+  }
+}
