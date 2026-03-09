@@ -6,26 +6,26 @@
 
 @layer base {
   :root {
-    --background: 240 246 242;
+    --background: 236 244 246;
     --paper: 255 255 255;
-    --primary: 16 185 129;
-    --secondary: 14 165 233;
-    --accent: 244 114 182;
+    --primary: 15 164 146;
+    --secondary: 3 105 161;
+    --accent: 225 29 144;
     --dark: 15 23 42;
-    --subtle: 71 85 105;
-    --border: 148 163 184;
+    --subtle: 69 85 117;
+    --border: 134 151 178;
     color-scheme: light;
   }
 
   .dark {
-    --background: 2 6 23;
-    --paper: 15 23 42;
+    --background: 3 10 30;
+    --paper: 16 24 48;
     --primary: 45 212 191;
-    --secondary: 34 211 238;
-    --accent: 251 146 60;
+    --secondary: 56 189 248;
+    --accent: 244 114 182;
     --dark: 226 232 240;
-    --subtle: 148 163 184;
-    --border: 51 65 85;
+    --subtle: 153 171 197;
+    --border: 62 82 114;
     color-scheme: dark;
   }
 
@@ -48,12 +48,33 @@
   body {
     font-family: "Manrope", "Segoe UI", sans-serif;
     background-image:
-      radial-gradient(circle at 12% 8%, rgba(16, 185, 129, 0.12), transparent 24%),
-      radial-gradient(circle at 82% 12%, rgba(14, 165, 233, 0.12), transparent 24%),
-      radial-gradient(circle at 46% 90%, rgba(244, 114, 182, 0.08), transparent 30%),
-      linear-gradient(135deg, rgba(255,255,255,0.85), rgba(245,250,247,0.9));
+      radial-gradient(circle at 10% 8%, rgba(15, 164, 146, 0.2), transparent 29%),
+      radial-gradient(circle at 88% 11%, rgba(3, 105, 161, 0.22), transparent 28%),
+      radial-gradient(circle at 40% 85%, rgba(225, 29, 144, 0.14), transparent 31%),
+      radial-gradient(circle at 72% 70%, rgba(14, 165, 233, 0.13), transparent 27%),
+      linear-gradient(140deg, rgba(255, 255, 255, 0.9), rgba(235, 246, 247, 0.96));
     background-attachment: fixed;
+    position: relative;
     @apply bg-background text-dark antialiased transition-colors duration-300;
+  }
+
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: -1;
+    background-image:
+      linear-gradient(110deg, rgba(15, 164, 146, 0.04), transparent 35%),
+      linear-gradient(295deg, rgba(3, 105, 161, 0.04), transparent 35%),
+      repeating-linear-gradient(
+        45deg,
+        rgba(255, 255, 255, 0.045) 0,
+        rgba(255, 255, 255, 0.045) 2px,
+        rgba(255, 255, 255, 0) 2px,
+        rgba(255, 255, 255, 0) 10px
+      );
+    opacity: 0.65;
   }
 
   h1,
@@ -69,15 +90,25 @@
 
 @layer components {
   .glass {
-    @apply bg-paper/80 backdrop-blur-2xl border border-white/60 shadow-[0_30px_80px_-40px_rgba(15,23,42,0.45)] transition-colors duration-300;
+    @apply bg-paper/85 backdrop-blur-2xl border border-white/70 shadow-[0_30px_85px_-40px_rgba(15,23,42,0.48)] transition-colors duration-300;
+    background-image:
+      linear-gradient(148deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.74)),
+      radial-gradient(circle at 14% 16%, rgba(15, 164, 146, 0.12), transparent 38%),
+      radial-gradient(circle at 88% 6%, rgba(3, 105, 161, 0.1), transparent 30%);
   }
 
   .panel {
     @apply rounded-[28px] glass p-6;
+    box-shadow:
+      0 30px 90px -42px rgba(15, 23, 42, 0.5),
+      0 0 0 1px rgba(15, 164, 146, 0.06);
   }
 
   .panel-muted {
-    @apply rounded-2xl border border-white/70 bg-white/70 backdrop-blur-md shadow-[0_18px_42px_-30px_rgba(15,23,42,0.4)];
+    @apply rounded-2xl border border-white/75 bg-white/80 backdrop-blur-md shadow-[0_18px_42px_-30px_rgba(15,23,42,0.4)];
+    background-image:
+      linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(246, 252, 252, 0.7)),
+      radial-gradient(circle at 88% 12%, rgba(15, 164, 146, 0.1), transparent 28%);
   }
 
   .kicker {
@@ -89,18 +120,38 @@
   }
 
   .input-shell {
-    @apply w-full rounded-2xl border border-border/40 bg-paper/80 px-3.5 py-3 text-sm text-dark placeholder:text-subtle/70 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary/50 shadow-[0_10px_28px_-20px_rgba(15,23,42,0.35)];
+    @apply w-full rounded-2xl border border-border/40 bg-paper/85 px-3.5 py-3 text-sm text-dark placeholder:text-subtle/70 focus:outline-none focus:ring-2 focus:ring-primary/45 focus:border-primary/55 shadow-[0_10px_30px_-20px_rgba(15,23,42,0.36)];
   }
 
   .btn-primary {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary to-secondary px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_45px_-18px_rgba(13,148,136,0.9)] transition hover:brightness-105;
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary via-secondary to-accent px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_48px_-18px_rgba(13,148,136,0.92)] transition hover:brightness-105;
   }
 
   .btn-soft {
-    @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-border/45 bg-paper/85 px-4 py-3 text-sm font-medium text-dark transition hover:border-primary/35 hover:text-primary shadow-[0_12px_32px_-24px_rgba(15,23,42,0.28)];
+    @apply inline-flex items-center justify-center gap-2 rounded-2xl border border-border/45 bg-paper/90 px-4 py-3 text-sm font-medium text-dark transition hover:border-primary/40 hover:text-primary shadow-[0_12px_34px_-24px_rgba(15,23,42,0.3)];
+    background-image: linear-gradient(130deg, rgba(255, 255, 255, 0.86), rgba(245, 251, 251, 0.82));
   }
 }
 
 .light .glass {
   border-color: rgba(148, 163, 184, 0.32);
+}
+
+.dark body::before {
+  opacity: 0.22;
+}
+
+.dark .glass {
+  background-image:
+    linear-gradient(150deg, rgba(30, 41, 68, 0.9), rgba(14, 23, 44, 0.78)),
+    radial-gradient(circle at 18% 12%, rgba(45, 212, 191, 0.18), transparent 40%),
+    radial-gradient(circle at 88% 12%, rgba(56, 189, 248, 0.16), transparent 34%);
+  border-color: rgba(94, 117, 156, 0.5);
+}
+
+.dark .panel-muted {
+  background-image:
+    linear-gradient(145deg, rgba(28, 39, 64, 0.88), rgba(21, 31, 54, 0.84)),
+    radial-gradient(circle at 90% 12%, rgba(45, 212, 191, 0.16), transparent 30%);
+  border-color: rgba(79, 99, 132, 0.55);
 }
