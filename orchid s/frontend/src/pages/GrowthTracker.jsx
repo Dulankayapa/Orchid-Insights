@@ -15,7 +15,7 @@ import {
 import "chartjs-adapter-date-fns";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
-import { ref, onValue, query, limitToLast, push, update } from "firebase/database";
+import { ref, onValue, query, limitToLast, limitToFirst, orderByChild, push, update } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
 
 ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend, Filler, CategoryScale);
@@ -26,12 +26,102 @@ const toNumber = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 
+const excelSerialToIsoDate = (serial) => {
+  if (!Number.isFinite(serial)) return "";
+  const wholeDays = Math.trunc(serial);
+  const dayFraction = serial - wholeDays;
+  const msInDay = 24 * 60 * 60 * 1000;
+  const excelEpochUtc = Date.UTC(1899, 11, 30);
+  const dt = new Date(excelEpochUtc + wholeDays * msInDay + Math.round(dayFraction * msInDay));
+  if (Number.isNaN(dt.getTime())) return "";
+  return dt.toISOString().slice(0, 10);
+};
+
+const toIsoDate = (value) => {
+  if (value === undefined || value === null || value === "") return "";
+
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return "";
+    return value.toISOString().slice(0, 10);
+  }
+
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) return "";
+    if (value > 10000000000) {
+      const dt = new Date(value);
+      return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+    }
+    if (value > 1000000000) {
+      const dt = new Date(value * 1000);
+      return Number.isNaN(dt.getTime()) ? "" : dt.toISOString().slice(0, 10);
+    }
+    if (value > 20000 && value < 100000) {
+      return excelSerialToIsoDate(value);
+    }
+    return "";
+  }
+
+  const raw = String(value).trim();
+  if (!raw) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) {
+    return raw.slice(0, 10);
+  }
+
+  if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(raw)) {
+    const [aRaw, bRaw, cRaw] = raw.split(/[./-]/);
+    const a = Number(aRaw);
+    const b = Number(bRaw);
+    let c = Number(cRaw);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || !Number.isFinite(c)) return "";
+    if (c < 100) c += c >= 70 ? 1900 : 2000;
+
+    const toIso = (day, month, year) => {
+      const dt = new Date(Date.UTC(year, month - 1, day));
+      if (Number.isNaN(dt.getTime())) return "";
+      if (dt.getUTCFullYear() !== year || dt.getUTCMonth() !== month - 1 || dt.getUTCDate() !== day) return "";
+      return dt.toISOString().slice(0, 10);
+    };
+
+    if (a > 12 && b <= 12) return toIso(a, b, c);
+    if (b > 12 && a <= 12) return toIso(b, a, c);
+    if (a > 12 && b > 12) return "";
+
+    // Ambiguous dates like 3/8/2026: prefer a non-future interpretation.
+    const dmyIso = toIso(a, b, c);
+    const mdyIso = toIso(b, a, c);
+    if (!dmyIso) return mdyIso;
+    if (!mdyIso) return dmyIso;
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const dmyPast = dmyIso <= todayIso;
+    const mdyPast = mdyIso <= todayIso;
+    if (dmyPast && !mdyPast) return dmyIso;
+    if (mdyPast && !dmyPast) return mdyIso;
+
+    return mdyIso;
+  }
+
+  const numericRaw = Number(raw);
+  if (Number.isFinite(numericRaw)) {
+    return toIsoDate(numericRaw);
+  }
+
+  const parsed = Date.parse(raw);
+  if (!Number.isFinite(parsed)) return "";
+  return new Date(parsed).toISOString().slice(0, 10);
+};
+
 const normalizeId = (value) => {
   const raw = String(value || "").trim();
   if (!raw) return "";
   const compact = raw.replace(/[\s_-]+/g, "").toLowerCase();
   const jarMatch = compact.match(/^jar0*(\d+)$/);
   if (jarMatch) return `jar${Number(jarMatch[1])}`;
+  const jMatch = compact.match(/^j0*(\d+)$/);
+  if (jMatch) return `jar${Number(jMatch[1])}`;
+  const numericMatch = compact.match(/^0*(\d+)$/);
+  if (numericMatch) return `jar${Number(numericMatch[1])}`;
   return compact;
 };
 
@@ -109,8 +199,9 @@ const normalizePlantRecord = (plant) => {
       extra.growth_logs ??
       extra.growthLogs
   );
-  const planting_date =
-    plant.planting_date || plant.plantingDate || extra.planting_date || extra.plantingDate || "";
+  const planting_date = toIsoDate(
+    plant.planting_date || plant.plantingDate || extra.planting_date || extra.plantingDate || ""
+  );
   const height_mm = toNumber(
     plant.height_mm ?? plant.height ?? plant.current_height ?? extra.height_mm ?? extra.height ?? extra.current_height
   );
@@ -144,15 +235,71 @@ const normalizeCultureRecord = (key, value) => {
   const jarId = String(entry.jarId || key || "").trim();
   if (!jarId) return null;
 
+  const rawRecultures = Array.isArray(entry.recultures)
+    ? entry.recultures
+    : entry.recultures && typeof entry.recultures === "object"
+      ? Object.values(entry.recultures)
+      : [];
+
+  const recultures = rawRecultures
+    .map((row) => {
+      const rec = row && typeof row === "object" ? row : {};
+      const date = toIsoDate(
+        rec.date ||
+          rec.cultureDate ||
+          rec.planting_date ||
+          rec.plantingDate ||
+          rec.eventDate ||
+          rec.event_date ||
+          rec.timestamp ||
+          rec.time ||
+          ""
+      );
+      if (!date) return null;
+      return { ...rec, date };
+    })
+    .filter(Boolean);
+
+  const explicitCultureDate = toIsoDate(
+    entry.cultureDate ||
+      entry.culture_date ||
+      entry.planting_date ||
+      entry.plantingDate ||
+      entry.start_date ||
+      entry.startDate ||
+      entry.inoculation_date ||
+      entry.inoculationDate ||
+      entry.sowing_date ||
+      entry.sowingDate ||
+      ""
+  );
+  const earliestRecultureDate = recultures.map((r) => r.date).sort()[0] || "";
+  const cultureDate = [explicitCultureDate, earliestRecultureDate].filter(Boolean).sort()[0] || "";
+
   return {
     jarId,
-    cultureDate: entry.cultureDate || entry.culture_date || entry.planting_date || entry.plantingDate || "",
+    cultureDate,
     rackNo: entry.rackNo ?? entry.rack_no ?? entry.rack ?? "",
     orchidType: entry.orchidType || entry.cultivar || entry.type || "",
     nutrition: entry.nutrition || "",
-    recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+    recultures,
     updatedAt: entry.updatedAt || entry.updated_at || null,
   };
+};
+
+const toIsoDateFromTimestamp = (value) => {
+  const ts = coerceTimestamp(value);
+  if (!Number.isFinite(ts)) return "";
+  return new Date(ts).toISOString().slice(0, 10);
+};
+
+const calculateAgeDaysFromIso = (isoDate) => {
+  const normalized = toIsoDate(isoDate);
+  if (!normalized) return null;
+  const planted = new Date(`${normalized}T00:00:00`);
+  if (Number.isNaN(planted.getTime())) return null;
+  const diffMs = new Date().setHours(0, 0, 0, 0) - planted.setHours(0, 0, 0, 0);
+  return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 };
 
 const latestHeightFromHistory = (rows) => {
@@ -184,6 +331,31 @@ const normalizeJarIdInput = (value) => {
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 
+const deriveIdAliases = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+
+  const aliases = new Set();
+  const add = (candidate) => {
+    const normalized = normalizeId(candidate);
+    if (normalized) aliases.add(normalized);
+  };
+
+  add(raw);
+  add(canonicalJarKey(raw));
+  add(canonicalPlantId(raw));
+
+  const compact = raw.replace(/[\s_-]+/g, "").toLowerCase();
+  const jMatch = compact.match(/^j0*(\d+)$/);
+  if (jMatch) {
+    const num = Number(jMatch[1]);
+    add(`jar${num}`);
+    add(String(num));
+  }
+
+  return Array.from(aliases);
+};
+
 export default function GrowthTracker() {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -196,10 +368,10 @@ export default function GrowthTracker() {
   const [jarId, setJarId] = useState("");
   const enteredJarIds = useMemo(() => splitJarInputs(jarId), [jarId]);
   const activeJarId = enteredJarIds[0] || "";
+  const activeIdAliases = useMemo(() => deriveIdAliases(activeJarId), [activeJarId]);
   const activeCanonicalId = useMemo(() => canonicalPlantId(activeJarId), [activeJarId]);
   const [plantingDate, setPlantingDate] = useState("");
   const [currentHeight, setCurrentHeight] = useState("");
-  const [manualAgeDays, setManualAgeDays] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [result, setResult] = useState(null);
@@ -212,14 +384,21 @@ export default function GrowthTracker() {
   const [heightLogError, setHeightLogError] = useState("");
   const [jarPersistStatus, setJarPersistStatus] = useState("");
   const [jarPersistError, setJarPersistError] = useState("");
+  const [firstGrowthTimestamp, setFirstGrowthTimestamp] = useState(null);
+  const [firstGlobalGrowthTimestamp, setFirstGlobalGrowthTimestamp] = useState(null);
+  const [ageSourceLabel, setAgeSourceLabel] = useState("");
   const lastHeightLoggedRef = useRef({ ts: 0, height: null });
   const createdJarIdsRef = useRef(new Set());
 
   const cultureMap = useMemo(() => {
     const map = new Map();
     cultureEntries.forEach((entry) => {
-      const key = normalizeId(entry?.jarId);
-      if (key) map.set(key, entry);
+      deriveIdAliases(entry?.jarId).forEach((key) => {
+        if (!key) return;
+        if (!map.has(key)) {
+          map.set(key, entry);
+        }
+      });
     });
     return map;
   }, [cultureEntries]);
@@ -241,7 +420,7 @@ export default function GrowthTracker() {
       const merged = normalizePlantRecord({
         ...existing,
         id: existing.id || entry.jarId,
-        planting_date: existing.planting_date || entry.cultureDate || "",
+        planting_date: toIsoDate(existing.planting_date || entry.cultureDate || ""),
         cultivar: existing.cultivar || entry.orchidType || undefined,
         location: existing.location || (entry.rackNo ? `Rack ${entry.rackNo}` : undefined),
         nutrition: existing.nutrition || entry.nutrition || undefined,
@@ -257,15 +436,23 @@ export default function GrowthTracker() {
   const demoIdHint = useMemo(() => demoIds.join(", "), [demoIds]);
 
   const plantRecord = useMemo(() => {
-    if (!activeJarId) return null;
-    const idNorm = normalizeId(activeJarId);
-    return mergedPlantRecords.find((p) => normalizeId(p.id) === idNorm) || null;
-  }, [activeJarId, mergedPlantRecords]);
+    if (!activeJarId || !activeIdAliases.length) return null;
+    return (
+      mergedPlantRecords.find((p) => {
+        const norm = normalizeId(p.id);
+        return norm && activeIdAliases.includes(norm);
+      }) || null
+    );
+  }, [activeJarId, activeIdAliases, mergedPlantRecords]);
 
   const cultureRecord = useMemo(() => {
-    if (!activeJarId) return null;
-    return cultureMap.get(normalizeId(activeJarId)) || null;
-  }, [activeJarId, cultureMap]);
+    if (!activeJarId || !activeIdAliases.length) return null;
+    for (const alias of activeIdAliases) {
+      const row = cultureMap.get(alias);
+      if (row) return row;
+    }
+    return null;
+  }, [activeJarId, activeIdAliases, cultureMap]);
 
   useEffect(() => {
     setPlantFetchError("");
@@ -453,6 +640,76 @@ export default function GrowthTracker() {
     return () => off();
   }, [activeCanonicalId]);
 
+  useEffect(() => {
+    if (!activeCanonicalId) {
+      setFirstGrowthTimestamp(null);
+      return undefined;
+    }
+    const firstRef = query(ref(db, `growthLogsByJar/${activeCanonicalId}`), orderByChild("timestamp"), limitToFirst(1));
+    const off = onValue(
+      firstRef,
+      (snap) => {
+        const data = snap.val() || {};
+        const row = Object.values(data)[0];
+        const ts = coerceTimestamp(row?.timestamp ?? row?.ts ?? row?.time ?? row?.logged_at ?? row?.created_at);
+        setFirstGrowthTimestamp(Number.isFinite(ts) ? ts : null);
+      },
+      () => setFirstGrowthTimestamp(null)
+    );
+    return () => off();
+  }, [activeCanonicalId]);
+
+  useEffect(() => {
+    if (!activeJarId) {
+      setFirstGlobalGrowthTimestamp(null);
+      return undefined;
+    }
+
+    const targetIds = new Set(
+      [activeJarId, activeCanonicalId, canonicalJarKey(activeJarId), canonicalPlantId(activeJarId)]
+        .map((value) => normalizeId(value))
+        .filter(Boolean)
+    );
+    if (!targetIds.size) {
+      setFirstGlobalGrowthTimestamp(null);
+      return undefined;
+    }
+
+    const logsRef = query(ref(db, "growthLogs"), limitToLast(800));
+    const off = onValue(
+      logsRef,
+      (snap) => {
+        const rows = Object.values(snap.val() || {});
+        let earliestTs = null;
+
+        rows.forEach((row) => {
+          if (!row || typeof row !== "object") return;
+          const matched = [
+            row.jarId,
+            row.jar_id,
+            row.id,
+            row.jar,
+            row.jarKey,
+            row.plantId,
+            row.plant_id,
+          ]
+            .map((candidate) => normalizeId(candidate))
+            .some((candidate) => candidate && targetIds.has(candidate));
+          if (!matched) return;
+
+          const ts = coerceTimestamp(row.timestamp ?? row.ts ?? row.time ?? row.logged_at ?? row.created_at);
+          if (!Number.isFinite(ts)) return;
+          earliestTs = earliestTs === null ? ts : Math.min(earliestTs, ts);
+        });
+
+        setFirstGlobalGrowthTimestamp(earliestTs);
+      },
+      () => setFirstGlobalGrowthTimestamp(null)
+    );
+
+    return () => off();
+  }, [activeJarId, activeCanonicalId]);
+
   // Listen to per-jar RTDB nodes (e.g., Jar1, Jar2...) to capture live height for that jar.
   useEffect(() => {
     if (!activeJarId) {
@@ -525,20 +782,25 @@ export default function GrowthTracker() {
       source: "sensor",
     };
 
+    const normalizedPlantingDate = toIsoDate(plantingDate);
+    const plantUpdatePayload = {
+      id: canonicalId,
+      height_mm: liveHeight,
+      temperature,
+      humidity,
+      lux,
+      mq135,
+      timestamp: ts,
+      updated_at: new Date(ts).toISOString(),
+    };
+    if (normalizedPlantingDate) {
+      plantUpdatePayload.planting_date = normalizedPlantingDate;
+    }
+
     Promise.all([
       push(ref(db, "growthLogs"), payload),
       push(ref(db, `growthLogsByJar/${canonicalId}`), payload),
-      update(ref(db, `plants/${canonicalId}`), {
-        id: canonicalId,
-        planting_date: plantingDate || null,
-        height_mm: liveHeight,
-        temperature,
-        humidity,
-        lux,
-        mq135,
-        timestamp: ts,
-        updated_at: new Date(ts).toISOString(),
-      }),
+      update(ref(db, `plants/${canonicalId}`), plantUpdatePayload),
     ])
       .then(() => {
         lastHeightLoggedRef.current = { ts, height: liveHeight };
@@ -546,31 +808,93 @@ export default function GrowthTracker() {
       .catch((err) => setHeightLogError(err?.message || "Failed to write live jar data to Firebase"));
   }, [sensorLatest, jarLive, activeJarId, plantingDate]);
 
-  const derivedAgeDays = useMemo(() => {
-    if (!plantingDate) return null;
-    const planted = new Date(plantingDate);
-    if (Number.isNaN(planted.getTime())) return null;
-    const diffMs = new Date().setHours(0, 0, 0, 0) - planted.setHours(0, 0, 0, 0);
-    return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
-  }, [plantingDate]);
-
-  useEffect(() => {
-    if (plantRecord) {
-      if (plantRecord.planting_date) setPlantingDate(plantRecord.planting_date);
-      const latestHeight = resolveCurrentHeight(plantRecord);
-      if (latestHeight !== undefined && latestHeight !== null) {
-        setCurrentHeight(String(latestHeight));
-      }
-    }
+  const oldestPlantHistoryTimestamp = useMemo(() => {
+    const timestamps = [];
+    (plantRecord?.heights || []).forEach((row) => {
+      const ts = coerceTimestamp(row?.timestamp ?? row?.ts) ?? (row?.date ? Date.parse(row.date) : null);
+      if (Number.isFinite(ts)) timestamps.push(ts);
+    });
+    if (!timestamps.length) return null;
+    return Math.min(...timestamps);
   }, [plantRecord]);
 
+  const oldestSensorHistoryTimestamp = useMemo(() => {
+    const timestamps = (sensorHistory || [])
+      .map((row) => coerceTimestamp(row?.timestamp ?? row?.ts ?? row?.time))
+      .filter((ts) => Number.isFinite(ts));
+    if (!timestamps.length) return null;
+    return Math.min(...timestamps);
+  }, [sensorHistory]);
+
+  const resolvedPlantingInfo = useMemo(() => {
+    if (!activeJarId) return { date: "", source: "" };
+
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const candidates = [];
+    const pushCandidate = (rawValue, source, rank) => {
+      const iso = toIsoDate(rawValue);
+      if (!iso || iso > todayIso) return;
+      candidates.push({ iso, source, rank });
+    };
+
+    pushCandidate(cultureRecord?.cultureDate, "Culture details", 1);
+    pushCandidate(plantRecord?.planting_date, "Plant record", 2);
+
+    const earliestReculture = Array.isArray(cultureRecord?.recultures)
+      ? cultureRecord.recultures
+          .map((row) => toIsoDate(row?.date || row?.cultureDate || row?.timestamp || ""))
+          .filter(Boolean)
+          .sort()[0]
+      : "";
+    pushCandidate(earliestReculture, "Reculture trail", 3);
+
+    pushCandidate(toIsoDateFromTimestamp(firstGrowthTimestamp), "Earliest growth log", 4);
+    pushCandidate(toIsoDateFromTimestamp(firstGlobalGrowthTimestamp), "Global growth log", 5);
+    pushCandidate(toIsoDateFromTimestamp(oldestSensorHistoryTimestamp), "Sensor history", 6);
+    pushCandidate(toIsoDateFromTimestamp(oldestPlantHistoryTimestamp), "Plant height history", 7);
+
+    if (!candidates.length) return { date: "", source: "" };
+    // Prioritize culture-derived date when present for the selected Plant ID.
+    candidates.sort((a, b) => {
+      if (a.iso === b.iso) return a.rank - b.rank;
+      if (a.rank !== b.rank) return a.rank - b.rank;
+      return a.iso.localeCompare(b.iso);
+    });
+    return { date: candidates[0].iso, source: candidates[0].source };
+  }, [
+    activeJarId,
+    cultureRecord,
+    plantRecord,
+    firstGrowthTimestamp,
+    firstGlobalGrowthTimestamp,
+    oldestSensorHistoryTimestamp,
+    oldestPlantHistoryTimestamp,
+  ]);
+
+  const effectivePlantingDate = resolvedPlantingInfo.date || toIsoDate(plantingDate) || "";
+
+  const derivedAgeDays = useMemo(() => calculateAgeDaysFromIso(effectivePlantingDate), [effectivePlantingDate]);
+
   useEffect(() => {
-    if (derivedAgeDays === null) {
-      setManualAgeDays("");
-    } else {
-      setManualAgeDays(String(derivedAgeDays));
+    if (!activeJarId) {
+      setPlantingDate("");
+      setCurrentHeight("");
+      setAgeSourceLabel("");
+      return;
     }
-  }, [derivedAgeDays]);
+
+    const normalizedPlanting = resolvedPlantingInfo.date || "";
+    const currentPlanting = toIsoDate(plantingDate);
+    if (normalizedPlanting !== currentPlanting) {
+      setPlantingDate(normalizedPlanting);
+    }
+    setAgeSourceLabel(resolvedPlantingInfo.source || "");
+
+    const latestHeight = resolveCurrentHeight(plantRecord);
+    if (latestHeight !== undefined && latestHeight !== null) {
+      setCurrentHeight(String(latestHeight));
+    }
+  }, [activeJarId, plantRecord, plantingDate, resolvedPlantingInfo]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -579,8 +903,9 @@ export default function GrowthTracker() {
     setAnalyzedJarId("");
     setAnalyzedHeight(null);
 
-    if (!plantingDate) {
-      setError("Select a Jar/Plant ID that has culture data so planting date can be loaded.");
+    const normalizedPlanting = toIsoDate(plantingDate) || resolvedPlantingInfo.date;
+    if (!normalizedPlanting) {
+      setError("No planting date found in Firebase for this jar. Add culture date or keep streaming growth logs.");
       return;
     }
 
@@ -590,9 +915,9 @@ export default function GrowthTracker() {
     }
 
     const payload = {
-      planting_date: plantingDate,
+      planting_date: normalizedPlanting,
       current_height_mm: Number(currentHeight),
-      age_days: manualAgeDays ? Number(manualAgeDays) : undefined,
+      age_days: derivedAgeDays ?? undefined,
     };
 
     setLoading(true);
@@ -661,7 +986,13 @@ export default function GrowthTracker() {
       (snap) => {
         const val = snap.val();
         if (!val) return;
-        const planted = val.planting_date || val.plantingDate;
+        const planted = toIsoDate(
+          val.planting_date ||
+            val.plantingDate ||
+            val.cultureDate ||
+            val.culture_date ||
+            ""
+        );
         if (planted) setPlantingDate(planted);
         const h = toNumber(val.height_mm ?? val.height ?? val.current_height);
         if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
@@ -696,8 +1027,7 @@ export default function GrowthTracker() {
             setCurrentHeight={setCurrentHeight}
             derivedAgeDays={derivedAgeDays}
             today={today}
-            manualAgeDays={manualAgeDays}
-            setManualAgeDays={setManualAgeDays}
+            ageSourceLabel={ageSourceLabel}
             loading={loading}
             error={error}
             plantRecord={plantRecord}
@@ -713,8 +1043,6 @@ export default function GrowthTracker() {
             liveTimestamp={liveTimestamp}
           />
           <HeightChartCard isLight={isLight} points={heightPoints} />
-          <PlantHistoryCard plantRecord={plantRecord} demoIdHint={demoIdHint} />
-          <SensorPanel latest={sensorLatest} history={sensorHistory} error={sensorError} />
         </div>
         <ResultCard
           result={result}
@@ -786,8 +1114,7 @@ function FormCard({
   setCurrentHeight,
   derivedAgeDays,
   today,
-  manualAgeDays,
-  setManualAgeDays,
+  ageSourceLabel,
   loading,
   error,
   plantRecord,
@@ -827,7 +1154,7 @@ function FormCard({
             className="input-shell"
           />
         </Field>
-        <Field label="Planting date (from culture data)">
+        <Field label="Planting date (auto from Firebase)">
           <input
             type="text"
             value={plantingDate}
@@ -855,15 +1182,22 @@ function FormCard({
             </p>
           </div>
         </Field>
-        <Field label="Age (days) - optional override">
-          <input
-            type="number"
-            value={manualAgeDays}
-            readOnly
-            disabled
-            placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : "Auto-calculated once ID loads"}
-            className="input-shell bg-paper/70 text-subtle"
-          />
+        <Field label="Age (days) - auto">
+          <div className="space-y-1">
+            <input
+              type="number"
+              value={derivedAgeDays ?? ""}
+              readOnly
+              disabled
+              placeholder={derivedAgeDays !== null ? `Auto: ${derivedAgeDays}` : "Auto-calculated from Firebase"}
+              className="input-shell bg-paper/70 text-subtle"
+            />
+            <p className="text-xs text-slate-600">
+              {derivedAgeDays !== null
+                ? `Auto age: ${derivedAgeDays} days${ageSourceLabel ? ` | Source: ${ageSourceLabel}` : ""}`
+                : "Waiting for planting factors from Firebase..."}
+            </p>
+          </div>
         </Field>
       </div>
 
@@ -874,7 +1208,7 @@ function FormCard({
       )}
       {!cultureRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No culture entry found for "{jarId}". Planting date and age come from the culture table. Try {demoIdHint || "a known ID"}.
+          No culture entry found for "{jarId}". Age will fallback to other Firebase factors (plant record and growth logs). Try {demoIdHint || "a known ID"}.
         </p>
       )}
       {!plantRecord && jarId && (
@@ -884,6 +1218,9 @@ function FormCard({
       )}
       {cultureRecord && (
         <div className="panel-muted grid sm:grid-cols-2 gap-3 p-3 text-xs text-subtle">
+          <p>Planting: {plantingDate || "-"}</p>
+          <p>Age: {derivedAgeDays !== null ? `${derivedAgeDays} days` : "-"}</p>
+          <p className="sm:col-span-2">Age source: {ageSourceLabel || "Waiting for Firebase factors"}</p>
           <p>Rack: {cultureRecord.rackNo || "-"}</p>
           <p>Orchid: {cultureRecord.orchidType || "-"}</p>
           <p className="sm:col-span-2">Nutrition: {cultureRecord.nutrition || "-"}</p>
@@ -1211,54 +1548,165 @@ function SensorStat({ label, value, className = "" }) {
   );
 }
 
+function ChartStat({ label, value, hint }) {
+  return (
+    <div className="rounded-xl border border-emerald-100 bg-emerald-50/70 px-3 py-2">
+      <p className="text-[10px] uppercase tracking-[0.18em] text-emerald-700">{label}</p>
+      <p className="text-sm font-semibold text-slate-900 mt-1">{value}</p>
+      {hint && <p className="text-[11px] text-slate-600 mt-0.5">{hint}</p>}
+    </div>
+  );
+}
+
 function HeightChartCard({ points, isLight }) {
-  const hasData = points && points.length;
+  const HEIGHT_MIN_MM = 0;
+  const HEIGHT_MAX_MM = 150;
+
+  const chartPoints = useMemo(
+    () =>
+      (Array.isArray(points) ? points : [])
+        .map((p) => {
+          const x = Number(p?.x);
+          const y = toNumber(p?.y);
+          if (!Number.isFinite(x) || y === null) return null;
+          return {
+            ...p,
+            x,
+            y: Math.max(HEIGHT_MIN_MM, Math.min(HEIGHT_MAX_MM, y)),
+          };
+        })
+        .filter(Boolean),
+    [points]
+  );
+
+  const hasData = chartPoints.length > 0;
+
+  const chartStats = useMemo(() => {
+    if (!hasData) return null;
+    const cleaned = chartPoints.map((p) => ({
+      x: p.x,
+      y: p.y,
+      source: p.source || "record",
+    }));
+    if (!cleaned.length) return null;
+
+    cleaned.sort((a, b) => a.x - b.x);
+    const values = cleaned.map((p) => p.y);
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const average = values.reduce((sum, item) => sum + item, 0) / values.length;
+    const first = cleaned[0];
+    const last = cleaned[cleaned.length - 1];
+    const spread = max - min;
+    const padding = spread === 0 ? Math.max(Math.abs(last.y) * 0.08, 0.2) : Math.max(spread * 0.35, 0.08);
+
+    return {
+      min,
+      max,
+      average,
+      first,
+      last,
+      spread,
+      change: last.y - first.y,
+      count: cleaned.length,
+      meanLine: [
+        { x: first.x, y: Number(average.toFixed(3)) },
+        { x: last.x, y: Number(average.toFixed(3)) },
+      ],
+    };
+  }, [hasData, chartPoints]);
+
   const data = useMemo(
     () => ({
       datasets: [
         {
           label: "Height (mm)",
-          data: points,
+          data: chartPoints,
           parsing: false,
           spanGaps: true,
-          borderColor: "rgba(16, 185, 129, 1)",
-          backgroundColor: "rgba(16, 185, 129, 0.18)",
-          tension: 0.25,
+          borderColor: "rgba(5, 150, 105, 1)",
+          borderWidth: 2.8,
+          backgroundColor: "rgba(16, 185, 129, 0.22)",
+          tension: 0.2,
           fill: true,
-          pointRadius: 2.5,
+          pointBorderColor: "rgba(255, 255, 255, 0.95)",
+          pointBorderWidth: 1,
+          pointBackgroundColor: (ctx) => {
+            const source = ctx.raw?.source;
+            if (source === "latest") return "rgba(15, 118, 110, 1)";
+            if (source === "sensor") return "rgba(16, 185, 129, 0.95)";
+            return "rgba(59, 130, 246, 0.95)";
+          },
+          pointRadius: (ctx) => (ctx.raw?.source === "latest" ? 4.2 : 2.8),
+          pointHoverRadius: 5.8,
         },
+        ...(chartStats?.meanLine?.length === 2
+          ? [
+              {
+                label: "Mean",
+                data: chartStats.meanLine,
+                parsing: false,
+                borderColor: "rgba(71, 85, 105, 0.85)",
+                borderWidth: 1.4,
+                borderDash: [6, 4],
+                pointRadius: 0,
+                fill: false,
+              },
+            ]
+          : []),
       ],
     }),
-    [points]
+    [chartPoints, chartStats]
   );
 
   const options = useMemo(
     () => ({
       responsive: true,
       maintainAspectRatio: false,
+      interaction: {
+        mode: "nearest",
+        intersect: false,
+      },
       scales: {
         x: {
           type: "time",
           time: { unit: "day", tooltipFormat: "PPpp" },
-          ticks: { color: "#475569" },
-          grid: { color: "rgba(148, 163, 184, 0.15)" },
+          ticks: { color: "#475569", maxTicksLimit: 6 },
+          grid: { color: "rgba(148, 163, 184, 0.18)" },
         },
         y: {
-          title: { display: true, text: "mm" },
-          ticks: { color: "#475569" },
-          grid: { color: "rgba(148, 163, 184, 0.12)" },
+          min: HEIGHT_MIN_MM,
+          max: HEIGHT_MAX_MM,
+          title: { display: true, text: "mm", color: "#334155" },
+          ticks: {
+            color: "#334155",
+            stepSize: 25,
+            callback: (value) => `${Number(value).toFixed(0)}`,
+          },
+          grid: { color: "rgba(148, 163, 184, 0.16)" },
         },
       },
       plugins: {
         legend: { display: false },
         tooltip: {
+          displayColors: false,
+          backgroundColor: "rgba(15, 23, 42, 0.95)",
+          titleColor: "#e2e8f0",
+          bodyColor: "#f8fafc",
           callbacks: {
-            label: (ctx) => `Height: ${ctx.parsed.y} mm`,
+            label: (ctx) => `Height: ${Number(ctx.parsed.y).toFixed(2)} mm`,
+            afterLabel: (ctx) => {
+              const source = ctx.raw?.source;
+              if (!source) return "";
+              if (source === "latest") return "Source: Live stream";
+              if (source === "sensor") return "Source: Sensor history";
+              return "Source: Plant record";
+            },
           },
         },
       },
     }),
-    []
+    [chartStats]
   );
 
   return (
@@ -1269,12 +1717,15 @@ function HeightChartCard({ points, isLight }) {
       className={`rounded-3xl p-5 space-y-4 shadow-[0_22px_60px_-30px_rgba(13,148,136,0.26)] ${
         isLight ? "bg-white border border-emerald-200 shadow-xl" : "border border-teal-100 bg-white/95"
       }`}
-      style={{ minHeight: "320px" }}
+      style={{ minHeight: "360px" }}
     >
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-emerald-500">Growth</p>
           <h4 className="text-lg font-semibold text-slate-900">Height trend</h4>
+          {chartStats?.last?.x ? (
+            <p className="text-xs text-slate-500 mt-1">Last update: {new Date(chartStats.last.x).toLocaleString()}</p>
+          ) : null}
         </div>
         <span className="text-xs text-emerald-700 px-3 py-1 rounded-full border border-emerald-100 bg-emerald-50">
           {hasData ? "Live from Firebase" : "Waiting..."}
@@ -1282,9 +1733,24 @@ function HeightChartCard({ points, isLight }) {
       </div>
 
       {hasData ? (
-        <div className="h-64">
-          <Line data={data} options={options} />
-        </div>
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <ChartStat label="Latest" value={`${chartStats?.last?.y?.toFixed?.(2) ?? "-"} mm`} />
+            <ChartStat
+              label="Change"
+              value={`${(chartStats?.change ?? 0) >= 0 ? "+" : ""}${(chartStats?.change ?? 0).toFixed(2)} mm`}
+              hint="oldest to latest"
+            />
+            <ChartStat
+              label="Range"
+              value={`${chartStats?.min?.toFixed?.(2) ?? "-"} to ${chartStats?.max?.toFixed?.(2) ?? "-"} mm`}
+            />
+            <ChartStat label="Samples" value={`${chartStats?.count ?? 0}`} hint={`Spread: ${(chartStats?.spread ?? 0).toFixed(2)} mm`} />
+          </div>
+          <div className="h-72 rounded-2xl border border-emerald-100 bg-gradient-to-b from-emerald-50/80 to-white p-3">
+            <Line data={data} options={options} />
+          </div>
+        </>
       ) : (
         <div className="text-sm text-slate-700 rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3">
           No height points yet. Once a Jar is selected and either a plant history or live sensor height is available, the chart will populate automatically.

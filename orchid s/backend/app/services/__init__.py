@@ -1,3 +1,3 @@
-from app.services import growth, disease, env
+from app.services import companion, disease, env, growth
 
-__all__ = ["growth", "disease", "env"]
+__all__ = ["growth", "disease", "env", "companion"]
