@@ -1,0 +1,103 @@
+export const orchidQuizQuestions = [
+  {
+    id: "q1",
+    question: "How often should most indoor orchids be watered?",
+    options: ["When the potting mix is almost dry", "Every day", "Once a month only", "Only when leaves droop"],
+    answerIndex: 0,
+    explanation: "Most orchids prefer drying slightly between waterings instead of staying constantly wet.",
+  },
+  {
+    id: "q2",
+    question: "What light is best for a Phalaenopsis orchid?",
+    options: ["Low light corner", "Bright indirect light", "Full midday direct sun", "No natural light"],
+    answerIndex: 1,
+    explanation: "Phalaenopsis orchids perform best in bright, indirect light with filtered sun.",
+  },
+  {
+    id: "q3",
+    question: "A common sign of overwatering is:",
+    options: ["Silvery roots and firm leaves", "Shriveled pseudobulbs", "Yellow leaves with mushy roots", "Dry bark and white roots"],
+    answerIndex: 2,
+    explanation: "Mushy roots and yellowing leaves often indicate root rot from too much water.",
+  },
+  {
+    id: "q4",
+    question: "What humidity range is generally comfortable for many orchids?",
+    options: ["10-20%", "25-35%", "40-70%", "80-95%"],
+    answerIndex: 2,
+    explanation: "Most home-grown orchids do well in roughly 40-70% humidity with airflow.",
+  },
+  {
+    id: "q5",
+    question: "Why is airflow important around orchids?",
+    options: ["It dries roots instantly", "It reduces fungal and bacterial problems", "It increases pot weight", "It stops flowering"],
+    answerIndex: 1,
+    explanation: "Gentle airflow helps prevent disease by reducing prolonged dampness on leaves and roots.",
+  },
+  {
+    id: "q6",
+    question: "When should you usually repot an orchid?",
+    options: [
+      "Only if the pot breaks",
+      "Every 5-6 years",
+      "Every 1-2 years or when medium decomposes",
+      "Every week",
+    ],
+    answerIndex: 2,
+    explanation: "Repot when the medium breaks down, roots outgrow the pot, or roughly every 1-2 years.",
+  },
+  {
+    id: "q7",
+    question: "What does the phrase 'weakly, weekly' mean for orchid fertilizer?",
+    options: [
+      "Use strong fertilizer once a month",
+      "Use diluted fertilizer more regularly",
+      "Do not fertilize orchids",
+      "Use fertilizer only on flowers",
+    ],
+    answerIndex: 1,
+    explanation: "Orchids often benefit from low-strength fertilizer applied on a regular schedule.",
+  },
+  {
+    id: "q8",
+    question: "If orchid leaves are dark green and flowering is poor, the plant may need:",
+    options: ["Less light", "No water", "More light", "More repotting"],
+    answerIndex: 2,
+    explanation: "Very dark leaves can indicate light is too low for strong blooming.",
+  },
+  {
+    id: "q9",
+    question: "The best water quality for sensitive orchids is usually:",
+    options: ["Heavily chlorinated hot water", "High-salt water", "Room-temperature low-mineral water", "Any standing stagnant water"],
+    answerIndex: 2,
+    explanation: "Low-mineral, room-temperature water reduces salt stress and root shock.",
+  },
+  {
+    id: "q10",
+    question: "What should you do first when you suspect root rot?",
+    options: [
+      "Add more fertilizer immediately",
+      "Inspect roots and trim dead tissue with clean tools",
+      "Move to full sun",
+      "Seal the pot with plastic",
+    ],
+    answerIndex: 1,
+    explanation: "First inspect and remove rotted roots, then repot into fresh medium if needed.",
+  },
+  {
+    id: "q11",
+    question: "A nighttime temperature drop can help orchids:",
+    options: ["Absorb less oxygen", "Trigger flower spike development", "Stop root growth", "Reduce humidity to zero"],
+    answerIndex: 1,
+    explanation: "Many orchids respond to cooler nights by initiating flowering.",
+  },
+  {
+    id: "q12",
+    question: "Which potting medium is commonly used for epiphytic orchids?",
+    options: ["Clay soil", "Garden mud", "Bark-based mix", "Concrete dust"],
+    answerIndex: 2,
+    explanation: "Bark-based media provide drainage and aeration for epiphytic orchid roots.",
+  },
+];
+
+export default orchidQuizQuestions;
