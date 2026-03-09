@@ -61,11 +61,13 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <div className="relative min-h-screen overflow-hidden bg-background text-dark transition-colors duration-300">
+      <div className="relative min-h-screen overflow-hidden bg-background text-dark transition-colors duration-300 selection:bg-primary/20">
         <div className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -top-24 left-0 h-80 w-80 rounded-full bg-primary/20 blur-3xl" />
-          <div className="absolute right-0 top-10 h-72 w-72 rounded-full bg-secondary/15 blur-3xl" />
-          <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
+          <div className="absolute -top-24 left-0 h-80 w-80 rounded-full bg-primary/22 blur-3xl" />
+          <div className="absolute right-0 top-10 h-72 w-72 rounded-full bg-secondary/20 blur-3xl" />
+          <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-accent/18 blur-3xl" />
+          <div className="absolute left-[24%] top-[34%] h-56 w-56 rounded-full bg-cyan-300/14 blur-3xl" />
+          <div className="absolute right-[20%] bottom-[14%] h-44 w-44 rounded-full bg-emerald-300/14 blur-3xl" />
         </div>
 
         <div className="mx-auto flex min-h-screen max-w-[1600px]">
@@ -105,8 +107,8 @@ export default function App() {
                   className={({ isActive }) =>
                     `group flex items-center gap-3 rounded-2xl px-3 py-3 text-base transition ${
                       isActive
-                        ? "border border-primary/35 bg-primary/12 text-primary shadow-[0_14px_32px_-24px_rgba(13,148,136,0.9)]"
-                        : "border border-transparent text-subtle hover:border-border/50 hover:bg-paper/70 hover:text-dark"
+                        ? "border border-primary/45 bg-gradient-to-r from-primary/20 via-secondary/10 to-accent/10 text-primary shadow-[0_16px_36px_-24px_rgba(13,148,136,0.95)]"
+                        : "border border-transparent text-subtle hover:border-border/55 hover:bg-gradient-to-r hover:from-paper/80 hover:to-primary/8 hover:text-dark"
                     }`
                   }
                 >
@@ -140,7 +142,7 @@ export default function App() {
           </aside>
 
           <div className="min-w-0 flex-1">
-            <header className="lg:hidden sticky top-0 z-20 border-b border-border/40 bg-paper/80 px-4 py-4 backdrop-blur-xl">
+            <header className="lg:hidden sticky top-0 z-20 border-b border-border/45 bg-gradient-to-r from-paper/90 via-paper/80 to-primary/10 px-4 py-4 backdrop-blur-xl">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="kicker">ORCHID INSIGHTS</p>
@@ -156,8 +158,8 @@ export default function App() {
                     className={({ isActive }) =>
                       `whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-semibold transition ${
                         isActive
-                          ? "border-primary/35 bg-primary/12 text-primary"
-                          : "border-border/40 bg-paper/80 text-subtle"
+                          ? "border-primary/45 bg-gradient-to-r from-primary/20 to-secondary/15 text-primary"
+                          : "border-border/40 bg-paper/85 text-subtle"
                       }`
                     }
                   >
