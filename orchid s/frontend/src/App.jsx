@@ -9,6 +9,7 @@ import PlantDatabase from "./pages/PlantDatabase.jsx";
 import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
+import OrchidCompanion from "./pages/OrchidCompanion.jsx";
 import OrchidAIBot from "./components/monitor/OrchidAIBot.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
@@ -22,6 +23,7 @@ const navItems = [
   { to: "/plants", label: "Plant Database", code: "🌿" },
   { to: "/firebase", label: "Firebase Table", code: "🔥" },
   { to: "/monitor", label: "Env Monitor", code: "🌡️" },
+  { to: "/companion", label: "Orchid Companion", code: "🤖" },
 ];
 
 const TIME_ZONE = "Asia/Colombo";
@@ -174,12 +176,14 @@ export default function App() {
               >
                 <Routes>
                   <Route path="/" element={<Dashboard />} />
+                  <Route path="/dashboard" element={<Dashboard />} />
                   <Route path="/reculture" element={<CultureDetails />} />
                   <Route path="/growth" element={<GrowthTracker />} />
                   <Route path="/history" element={<GrowthHistory />} />
                   <Route path="/plants" element={<PlantDatabase />} />
                   <Route path="/firebase" element={<FirebaseTable />} />
                   <Route path="/monitor" element={<EnvMonitor />} />
+                  <Route path="/companion" element={<OrchidCompanion />} />
                 </Routes>
               </motion.div>
             </main>

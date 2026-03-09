@@ -28,6 +28,41 @@ class HealthResponse(BaseModel):
     timestamp: datetime
 
 
+class CompanionProblem(BaseModel):
+    symptom: str
+    cause: str
+    fix: str
+
+
+class CompanionSection(BaseModel):
+    id: int
+    title: str
+    icon: str
+    tips: List[str] = Field(default_factory=list)
+    warning: Optional[str] = None
+    problems: List[CompanionProblem] = Field(default_factory=list)
+
+
+class CompanionGuideResponse(BaseModel):
+    title: str
+    subtitle: str
+    sections: List[CompanionSection]
+
+
+class CompanionChatRequest(BaseModel):
+    message: str
+    temperature: Optional[float] = None
+    humidity: Optional[float] = None
+    lux: Optional[float] = None
+    mq135: Optional[float] = None
+
+
+class CompanionChatResponse(BaseModel):
+    response: str
+    confidence: float
+    suggestions: List[str]
+
+
 class FirebasePlant(BaseModel):
     id: str
     planting_date: Optional[str] = None

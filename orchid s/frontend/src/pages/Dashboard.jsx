@@ -11,6 +11,7 @@ const cards = [
   { title: "Plant Database", to: "/plants", tone: "from-emerald-500/55 to-teal-500/45", desc: "Searchable plant records synced from your backend." },
   { title: "Firebase Table", to: "/firebase", tone: "from-orange-400/55 to-emerald-500/45", desc: "Live jar sensor values in a compact data table." },
   { title: "Env Monitor", to: "/monitor", tone: "from-sky-500/55 to-teal-500/45", desc: "Real-time environment status with alerts and charts." },
+  { title: "Orchid Companion", to: "/companion", tone: "from-fuchsia-500/50 to-cyan-500/45", desc: "Ask the assistant for orchid care and growth guidance using live monitor context." },
 ];
 const ORCHID_CLIP_DURATION_MS = 5000;
 const orchidClipFrames = [
