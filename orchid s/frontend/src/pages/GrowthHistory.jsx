@@ -688,6 +688,97 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, insight }) => {
   return insight;
 };
 
+const ENABLE_HISTORY_TEST_MOCK = true;
+
+const mergeUniqueByNormalizedId = (primary, secondary, pickId) => {
+  const map = new Map();
+  (secondary || []).forEach((item) => {
+    const key = normalizeId(pickId(item));
+    if (!key) return;
+    map.set(key, item);
+  });
+  (primary || []).forEach((item) => {
+    const key = normalizeId(pickId(item));
+    if (!key) return;
+    map.set(key, item);
+  });
+  return Array.from(map.values());
+};
+
+const HISTORY_TEST_MOCK_PLANTS = [
+  normalizePlantRecord({
+    id: "Jar-91",
+    planting_date: "2025-12-28",
+    location: "Rack T1",
+    cultivar: "Phalaenopsis (test A)",
+    nutrition: "MS + 3% sucrose",
+    heights: [
+      { date: "2026-01-03", height_mm: 18 },
+      { date: "2026-01-10", height_mm: 24 },
+      { date: "2026-01-17", height_mm: 33 },
+      { date: "2026-01-24", height_mm: 45 },
+      { date: "2026-01-31", height_mm: 58 },
+      { date: "2026-02-07", height_mm: 71 },
+      { date: "2026-02-14", height_mm: 86 },
+      { date: "2026-02-21", height_mm: 101 },
+      { date: "2026-02-28", height_mm: 116 },
+      { date: "2026-03-07", height_mm: 129 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-92",
+    planting_date: "2025-12-30",
+    location: "Rack T2",
+    cultivar: "Phalaenopsis (test B)",
+    nutrition: "VW medium",
+    heights: [
+      { date: "2026-01-05", height_mm: 20 },
+      { date: "2026-01-12", height_mm: 26 },
+      { date: "2026-01-19", height_mm: 31 },
+      { date: "2026-01-26", height_mm: 35 },
+      { date: "2026-02-02", height_mm: 38 },
+      { date: "2026-02-09", height_mm: 40 },
+      { date: "2026-02-16", height_mm: 42 },
+      { date: "2026-02-23", height_mm: 43 },
+      { date: "2026-03-02", height_mm: 45 },
+      { date: "2026-03-09", height_mm: 46 },
+    ],
+  }),
+].filter(Boolean);
+
+const HISTORY_TEST_MOCK_CULTURE = [
+  normalizeCultureRecord("Jar-91", {
+    jarId: "Jar-91",
+    cultureDate: "2025-12-28",
+    rackNo: "T1",
+    orchidType: "Phalaenopsis (test A)",
+    nutrition: "MS + 3% sucrose",
+    addHormone: true,
+    hormoneDetail: "BA 1.0 mg/L + NAA 0.1 mg/L",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Coconut water 10%",
+    recultures: [
+      { date: "2026-01-24", note: "Hormone: BA 1.0 mg/L + NAA 0.1 mg/L" },
+      { date: "2026-02-21", note: "Special nutrition: coconut water 10%" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-92", {
+    jarId: "Jar-92",
+    cultureDate: "2025-12-30",
+    rackNo: "T2",
+    orchidType: "Phalaenopsis (test B)",
+    nutrition: "VW medium",
+    addHormone: true,
+    hormoneDetail: "BA 0.5 mg/L",
+    addSpecialNutrition: false,
+    recultures: [
+      { date: "2026-02-09", note: "Hormone reduced to BA 0.5 mg/L" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+].filter(Boolean);
+
 export default function GrowthHistory() {
   const { theme } = useTheme();
   const isLight = theme === "light";
@@ -713,13 +804,16 @@ export default function GrowthHistory() {
       plantsRef,
       (snap) => {
         const normalized = normalizePlantSnapshot(snap.val());
-        setPlants(normalized);
+        const next = ENABLE_HISTORY_TEST_MOCK
+          ? mergeUniqueByNormalizedId(normalized, HISTORY_TEST_MOCK_PLANTS, (item) => item?.id)
+          : normalized;
+        setPlants(next);
         setPlantsError("");
       },
       (err) => {
         const message = err?.message || "Failed to load plant records from Firebase";
         setPlantsError(message);
-        setPlants([]);
+        setPlants(ENABLE_HISTORY_TEST_MOCK ? HISTORY_TEST_MOCK_PLANTS : []);
       }
     );
 
@@ -732,13 +826,16 @@ export default function GrowthHistory() {
       entriesRef,
       (snap) => {
         const data = snap.val() || {};
-        const next = Object.entries(data).map(([key, value]) => normalizeCultureRecord(key, value)).filter(Boolean);
+        const liveEntries = Object.entries(data).map(([key, value]) => normalizeCultureRecord(key, value)).filter(Boolean);
+        const next = ENABLE_HISTORY_TEST_MOCK
+          ? mergeUniqueByNormalizedId(liveEntries, HISTORY_TEST_MOCK_CULTURE, (item) => item?.jarId)
+          : liveEntries;
         setCultureEntries(next);
         setCultureError("");
       },
       (err) => {
         setCultureError(err?.message || "Failed to load culture entries");
-        setCultureEntries([]);
+        setCultureEntries(ENABLE_HISTORY_TEST_MOCK ? HISTORY_TEST_MOCK_CULTURE : []);
       }
     );
 
@@ -1213,6 +1310,8 @@ function LookupCard({
 function ChartCard({ record, history, isLight, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const pieCanvasRef = useRef(null);
+  const pieChartRef = useRef(null);
   const cleanedPoints = useMemo(() => {
     const rawPoints = history
       .map((row) => toValidPoint(row.ts, row.height_mm))
@@ -1355,13 +1454,33 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       const after = cleanedPoints.filter((point) => point.x >= event.x && point.x <= event.x + windowMs);
       const beforeRate = computeRate(before);
       const afterRate = computeRate(after);
+      const beforeDays =
+        before.length >= 2 ? Math.max(0, (before[before.length - 1].x - before[0].x) / DAY_MS) : 0;
+      const afterDays =
+        after.length >= 2 ? Math.max(0, (after[after.length - 1].x - after[0].x) / DAY_MS) : 0;
       const afterDelta =
         after.length >= 2 ? Number(after[after.length - 1].y) - Number(after[0].y) : null;
+      const rateDelta =
+        beforeRate !== null && afterRate !== null ? Number((afterRate - beforeRate).toFixed(4)) : null;
+      const outcome =
+        rateDelta === null
+          ? "insufficient"
+          : Math.abs(rateDelta) < 0.05
+            ? "no_clear_change"
+            : rateDelta > 0
+              ? "improved"
+              : "slowed";
+      const confidence =
+        before.length >= 4 && after.length >= 4 && beforeDays >= 7 && afterDays >= 7
+          ? "High"
+          : before.length >= 3 && after.length >= 3 && beforeDays >= 4 && afterDays >= 4
+            ? "Medium"
+            : "Low";
       const effectText = (() => {
         if (beforeRate === null && afterRate === null) return "Not enough data around this change.";
         if (beforeRate === null && afterRate !== null) return `After change: ${afterRate.toFixed(2)} mm/day`;
         if (beforeRate !== null && afterRate === null) return `Before change: ${beforeRate.toFixed(2)} mm/day`;
-        const diff = afterRate - beforeRate;
+        const diff = rateDelta;
         if (Math.abs(diff) < 0.05) return "Growth rate stayed almost the same.";
         return diff > 0
           ? `Growth got faster by ${diff.toFixed(2)} mm/day`
@@ -1373,15 +1492,110 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         beforeRate,
         afterRate,
         afterDelta,
+        rateDelta,
+        outcome,
+        confidence,
+        beforeCount: before.length,
+        afterCount: after.length,
         effectText,
       };
     });
   }, [nutritionMarkers, cleanedPoints]);
+  const segmentSeries = useMemo(() => {
+    if (chartPoints.length < 2) return [];
+    const startX = chartPoints[0].x;
+    const endX = chartPoints[chartPoints.length - 1].x;
+    const cuts = nutritionEvents
+      .map((event) => Number(event.ts))
+      .filter((ts) => Number.isFinite(ts) && ts > startX && ts < endX)
+      .sort((a, b) => a - b);
+    const boundaries = [startX, ...cuts, endX];
+    const nextSegments = [];
 
+    for (let i = 0; i < boundaries.length - 1; i += 1) {
+      const segStart = boundaries[i];
+      const segEnd = boundaries[i + 1];
+      let segmentPoints = chartPoints.filter((point) =>
+        i === boundaries.length - 2 ? point.x >= segStart && point.x <= segEnd : point.x >= segStart && point.x < segEnd
+      );
+      if (!segmentPoints.length) continue;
+
+      if (i > 0) {
+        const prevLast = nextSegments[nextSegments.length - 1]?.points?.slice(-1)[0];
+        if (prevLast && segmentPoints[0]?.x !== prevLast.x) {
+          segmentPoints = [prevLast, ...segmentPoints];
+        }
+      }
+
+      const stats = computeSeriesStats(segmentPoints);
+      const rate = stats?.rate ?? null;
+      const prevRate = nextSegments.length ? nextSegments[nextSegments.length - 1].rate : null;
+      const deltaVsPrev = prevRate !== null && rate !== null ? rate - prevRate : null;
+      const outcome =
+        deltaVsPrev === null
+          ? "baseline"
+          : Math.abs(deltaVsPrev) < 0.08
+            ? "no_clear_change"
+            : deltaVsPrev > 0
+              ? "improved"
+              : "slowed";
+      const eventLabel = i === 0 ? "Baseline" : firstText(nutritionEvents[i - 1]?.label, `Change ${i}`);
+      nextSegments.push({
+        idx: i,
+        points: segmentPoints,
+        rate,
+        prevRate,
+        deltaVsPrev,
+        outcome,
+        label: eventLabel,
+      });
+    }
+    return nextSegments;
+  }, [chartPoints, nutritionEvents]);
+  const impactPieData = useMemo(() => {
+    if (!nutritionImpactRows.length) return null;
+    const counts = {
+      improved: 0,
+      slowed: 0,
+      no_clear_change: 0,
+      insufficient: 0,
+    };
+    nutritionImpactRows.forEach((row) => {
+      if (Object.prototype.hasOwnProperty.call(counts, row.outcome)) counts[row.outcome] += 1;
+      else counts.insufficient += 1;
+    });
+    const total = counts.improved + counts.slowed + counts.no_clear_change + counts.insufficient;
+    if (!total) return null;
+    return {
+      labels: ["Improved", "Slowed", "No clear change", "Insufficient data"],
+      values: [counts.improved, counts.slowed, counts.no_clear_change, counts.insufficient],
+      colors: ["#16a34a", "#dc2626", "#64748b", "#f59e0b"],
+      total,
+    };
+  }, [nutritionImpactRows]);
   const seriesStats = useMemo(() => {
     if (!cleanedPoints.length) return null;
     return computeSeriesStats(cleanedPoints);
   }, [cleanedPoints]);
+  const qualityWarnings = useMemo(() => {
+    const warnings = [];
+    if (!cleanedPoints.length) {
+      warnings.push("No valid measurements available for analysis.");
+      return warnings;
+    }
+    if (cleanedPoints.length < 3) {
+      warnings.push(`Only ${cleanedPoints.length} valid point(s) available; trend and intervention impact are not reliable yet.`);
+    }
+    if (seriesStats?.days !== null && seriesStats?.days < 7) {
+      warnings.push("Observed time span is under 7 days; medium-term effects may not be visible.");
+    }
+    if (nutritionEvents.length && !nutritionImpactRows.length) {
+      warnings.push("Culture/nutrition change events exist but there is not enough before/after data for impact scoring.");
+    } else if (nutritionImpactRows.some((row) => row.confidence === "Low")) {
+      warnings.push("Some intervention effects are low confidence due to sparse nearby measurements.");
+    }
+    return warnings;
+  }, [cleanedPoints, seriesStats, nutritionEvents, nutritionImpactRows]);
 
   const timeSpanText = useMemo(() => {
     if (!seriesStats || seriesStats.days === null) return "-";
@@ -1408,6 +1622,14 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         event.beforeRate !== null ? `${event.beforeRate.toFixed(2)} mm/day` : "n/a",
         event.afterRate !== null ? `${event.afterRate.toFixed(2)} mm/day` : "n/a",
         event.afterDelta !== null ? `${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : "n/a",
+        event.confidence,
+        event.outcome === "improved"
+          ? "Improved"
+          : event.outcome === "slowed"
+            ? "Slowed"
+            : event.outcome === "no_clear_change"
+              ? "No clear change"
+              : "Insufficient data",
       ]),
     [nutritionImpactRows]
   );
@@ -1435,7 +1657,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       sections.splice(1, 0, {
         heading: "Nutrition / culture changes",
         content: renderDataTable(
-          ["Event", "Date", "Nutrition", "Before rate", "After rate", "After 14d change"],
+          ["Event", "Date", "Nutrition", "Before rate", "After rate", "After 14d change", "Confidence", "Outcome"],
           reportNutritionRows
         ),
       });
@@ -1469,24 +1691,59 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       return Math.ceil((maxVal + 10) / 25) * 25;
     })();
     const pointRadius = chartPoints.length > 60 ? 0 : chartPoints.length > 24 ? 1.6 : 2.4;
-    const datasets = [
-      {
-        label: record?.id || "Height",
-        data: chartPoints,
-        borderColor: "#f97316",
-        backgroundColor: "rgba(249, 115, 22, 0.08)",
+    const segmentColor = (outcome) => {
+      if (outcome === "improved") return "#16a34a";
+      if (outcome === "slowed") return "#dc2626";
+      if (outcome === "no_clear_change") return "#64748b";
+      return "#f97316";
+    };
+    const segmentedDatasets = segmentSeries.map((segment, idx) => {
+      const color = segmentColor(segment.outcome);
+      const suffix =
+        segment.outcome === "improved"
+          ? "improved"
+          : segment.outcome === "slowed"
+            ? "slowed"
+            : segment.outcome === "no_clear_change"
+              ? "stable"
+              : "baseline";
+      return {
+        label: `${segment.label} (${suffix})`,
+        data: segment.points,
+        borderColor: color,
+        backgroundColor: `${color}1a`,
         tension: 0.22,
         cubicInterpolationMode: "monotone",
-        borderWidth: 2.4,
+        borderWidth: idx === 0 ? 2.6 : 2.4,
         pointRadius,
         pointHoverRadius: pointRadius ? 4 : 3,
-        pointBackgroundColor: "#ea580c",
+        pointBackgroundColor: color,
         pointBorderColor: "#fff7ed",
         pointBorderWidth: 1,
         fill: false,
         spanGaps: true,
-      },
-    ];
+      };
+    });
+    const datasets = segmentedDatasets.length
+      ? segmentedDatasets
+      : [
+          {
+            label: record?.id || "Height",
+            data: chartPoints,
+            borderColor: "#f97316",
+            backgroundColor: "rgba(249, 115, 22, 0.08)",
+            tension: 0.22,
+            cubicInterpolationMode: "monotone",
+            borderWidth: 2.4,
+            pointRadius,
+            pointHoverRadius: pointRadius ? 4 : 3,
+            pointBackgroundColor: "#ea580c",
+            pointBorderColor: "#fff7ed",
+            pointBorderWidth: 1,
+            fill: false,
+            spanGaps: true,
+          },
+        ];
     if (nutritionMarkers.length) {
       datasets.push({
         type: "scatter",
@@ -1536,7 +1793,16 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           },
         },
         plugins: {
-          legend: { display: false },
+          legend: {
+            display: segmentedDatasets.length > 1,
+            position: "bottom",
+            labels: {
+              color: theme.axis,
+              usePointStyle: true,
+              pointStyle: "line",
+              boxWidth: 26,
+            },
+          },
           tooltip: {
             intersect: false,
             mode: "nearest",
@@ -1564,7 +1830,59 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     return () => {
       chartRef.current?.destroy();
     };
-  }, [chartPoints, nutritionMarkers, record?.id, isLight]);
+  }, [chartPoints, segmentSeries, nutritionMarkers, record?.id, isLight]);
+  useEffect(() => {
+    if (pieChartRef.current) {
+      pieChartRef.current.destroy();
+      pieChartRef.current = null;
+    }
+    if (!impactPieData || !pieCanvasRef.current) return;
+
+    const theme = chartTheme(isLight);
+    pieChartRef.current = new Chart(pieCanvasRef.current, {
+      type: "pie",
+      data: {
+        labels: impactPieData.labels,
+        datasets: [
+          {
+            data: impactPieData.values,
+            backgroundColor: impactPieData.colors,
+            borderColor: isLight ? "#ffffff" : "#0f172a",
+            borderWidth: 1.2,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: {
+            display: true,
+            position: "bottom",
+            labels: {
+              color: theme.axis,
+              boxWidth: 12,
+              usePointStyle: true,
+              pointStyle: "circle",
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const val = Number(ctx.parsed);
+                const pct = impactPieData.total ? (val / impactPieData.total) * 100 : 0;
+                return `${ctx.label}: ${val} (${pct.toFixed(0)}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return () => {
+      pieChartRef.current?.destroy();
+    };
+  }, [impactPieData, isLight]);
 
   return (
     <motion.div
@@ -1613,13 +1931,21 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           </div>
         </div>
       )}
+      {qualityWarnings.length ? (
+        <div className="rounded-xl border border-amber-300/40 bg-amber-500/10 px-4 py-3 text-[12px] text-amber-800 dark:text-amber-200 space-y-1">
+          <p className="font-semibold">Data quality notes</p>
+          {qualityWarnings.map((warning, idx) => (
+            <p key={`${warning}-${idx}`}>- {warning}</p>
+          ))}
+        </div>
+      ) : null}
       {nutritionImpactRows.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs uppercase tracking-[0.18em] text-subtle">Nutrition change impact</p>
             <span className="text-[11px] text-subtle">{nutritionImpactRows.length} event(s)</span>
           </div>
-          <div className="space-y-2 max-h-44 overflow-auto pr-1">
+          <div className="grid sm:grid-cols-2 gap-2 max-h-52 overflow-auto pr-1">
             {nutritionImpactRows.map((event) => (
               <div key={`${event.label}-${event.x}`} className="rounded-xl border border-border/40 bg-paper/80 px-3 py-2">
                 <p className="text-xs font-semibold text-dark">
@@ -1632,17 +1958,59 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
                   {event.effectText}
                   {event.afterDelta !== null ? ` | 14-day height change: ${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : ""}
                 </p>
+                <p className="text-[11px] text-subtle">
+                  Confidence:{" "}
+                  <span
+                    className={`font-semibold ${
+                      event.confidence === "High"
+                        ? "text-emerald-700 dark:text-emerald-300"
+                        : event.confidence === "Medium"
+                          ? "text-sky-700 dark:text-sky-300"
+                          : "text-amber-700 dark:text-amber-300"
+                    }`}
+                  >
+                    {event.confidence}
+                  </span>
+                  {` (before ${event.beforeCount} pts, after ${event.afterCount} pts)`}
+                </p>
               </div>
             ))}
           </div>
         </div>
       ) : null}
-      <div className="h-80">
-        {cleanedPoints.length ? (
-          <canvas ref={canvasRef} />
-        ) : (
-          <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
-        )}
+      <div className={`grid gap-4 ${impactPieData ? "lg:grid-cols-[2fr_1fr]" : ""}`}>
+        <div className="h-80">
+          {cleanedPoints.length ? (
+            <canvas ref={canvasRef} />
+          ) : (
+            <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
+          )}
+        </div>
+        {impactPieData ? (
+          <div className="panel-muted px-4 py-3 space-y-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
+              <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
+            </div>
+            <div className="h-56">
+              <canvas ref={pieCanvasRef} />
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+              <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
+                Improved: <span className="font-semibold text-emerald-700 dark:text-emerald-300">{impactPieData.values[0]}</span>
+              </div>
+              <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
+                Slowed: <span className="font-semibold text-rose-700 dark:text-rose-300">{impactPieData.values[1]}</span>
+              </div>
+              <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
+                No clear change: <span className="font-semibold text-slate-700 dark:text-slate-300">{impactPieData.values[2]}</span>
+              </div>
+              <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
+                Insufficient: <span className="font-semibold text-amber-700 dark:text-amber-300">{impactPieData.values[3]}</span>
+              </div>
+            </div>
+          </div>
+        ) : null}
       </div>
     </motion.div>
   );
