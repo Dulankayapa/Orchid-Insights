@@ -3,14 +3,43 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
-import { onValue, ref } from "firebase/database";
+import { limitToLast, onValue, query as fbQuery, ref } from "firebase/database";
 import { db } from "../lib/firebase";
 import { useTheme } from "../context/ThemeContext";
+
+const MAX_VALID_HEIGHT_MM = 190;
 
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+};
+
+const sanitizeHeightMm = (value) => {
+  const num = toNumber(value);
+  if (num === null) return null;
+  return num <= MAX_VALID_HEIGHT_MM ? num : null;
+};
+
+const normalizeId = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const compact = raw.replace(/[\s_-]+/g, "").toLowerCase();
+  const jarMatch = compact.match(/^jar0*(\d+)$/);
+  if (jarMatch) return `jar${Number(jarMatch[1])}`;
+  const jMatch = compact.match(/^j0*(\d+)$/);
+  if (jMatch) return `jar${Number(jMatch[1])}`;
+  const numericMatch = compact.match(/^0*(\d+)$/);
+  if (numericMatch) return `jar${Number(numericMatch[1])}`;
+  return compact;
+};
+
+const canonicalPlantId = (value) => {
+  const norm = normalizeId(value);
+  if (!norm) return "";
+  const match = norm.match(/^jar(\d+)$/);
+  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
+  return String(value || "").trim().toLowerCase();
 };
 
 const coerceTimestamp = (value) => {
@@ -21,24 +50,30 @@ const coerceTimestamp = (value) => {
 
 const normalizeHeightEntry = (entry) => {
   if (entry === undefined || entry === null) return null;
-  if (typeof entry === "number") return { height_mm: entry };
+  if (typeof entry === "number") {
+    const num = sanitizeHeightMm(entry);
+    return num === null ? null : { height_mm: num };
+  }
   if (typeof entry === "string") {
-    const num = toNumber(entry);
+    const num = sanitizeHeightMm(entry);
     return num === null ? null : { height_mm: num };
   }
   if (typeof entry !== "object") return null;
+  const sourceTag = String(entry.source || entry.origin || "").toLowerCase();
+  if (sourceTag.includes("dataset-biweekly") || sourceTag.includes("mock")) return null;
 
   const heightMm = toNumber(entry.height_mm ?? entry.height ?? entry.heightMm ?? entry.heightMM ?? entry.current_height);
   const heightCm = toNumber(entry.height_cm ?? entry.heightCm);
   const resolvedHeight = heightMm ?? (heightCm !== null ? heightCm * 10 : null);
-  if (resolvedHeight === null) return null;
+  const sanitizedHeight = sanitizeHeightMm(resolvedHeight);
+  if (sanitizedHeight === null) return null;
 
   const ts = coerceTimestamp(entry.timestamp ?? entry.ts ?? entry.time ?? entry.logged_at ?? entry.loggedAt);
   const date = entry.date || entry.recorded_at || entry.recordedAt || (ts ? new Date(ts).toISOString().split("T")[0] : null);
 
   return {
     ...entry,
-    height_mm: resolvedHeight,
+    height_mm: sanitizedHeight,
     timestamp: ts,
     date,
   };
@@ -82,6 +117,98 @@ const normalizePlantSnapshot = (data) => {
   return Object.entries(data)
     .map(([key, value]) => normalizePlantRecord({ id: key, ...(value || {}) }))
     .filter(Boolean);
+};
+
+const asText = (value) => {
+  if (value === undefined || value === null) return "";
+  return String(value).trim();
+};
+
+const firstText = (...values) => {
+  for (const value of values) {
+    const next = asText(value);
+    if (next) return next;
+  }
+  return "";
+};
+
+const buildNutritionSnapshot = ({
+  baseNutrition,
+  hormoneEnabled,
+  hormoneDetail,
+  specialEnabled,
+  specialDetail,
+}) => {
+  const parts = [];
+  const base = firstText(baseNutrition);
+  if (base) parts.push(base);
+
+  if (hormoneEnabled || firstText(hormoneDetail)) {
+    const detail = firstText(hormoneDetail);
+    parts.push(detail ? `Hormone: ${detail}` : "Hormone added");
+  }
+
+  if (specialEnabled || firstText(specialDetail)) {
+    const detail = firstText(specialDetail);
+    parts.push(detail ? `Special nutrition: ${detail}` : "Special nutrition added");
+  }
+
+  return parts.join(" | ");
+};
+
+const normalizeCultureRecord = (key, value) => {
+  const entry = value && typeof value === "object" ? value : {};
+  const jarId = firstText(entry.jarId, key);
+  if (!jarId) return null;
+
+  const hormoneEnabled =
+    entry.addHormone === true ||
+    entry.hasHormone === true ||
+    entry.useHormone === true ||
+    entry.hormone_enabled === true;
+  const specialEnabled =
+    entry.addSpecialNutrition === true ||
+    entry.hasSpecialNutrition === true ||
+    entry.useSpecialNutrition === true ||
+    entry.special_nutrition_enabled === true;
+
+  const hormoneDetail = firstText(entry.hormoneDetail, entry.hormone, entry.hormoneNote, entry.hormone_note);
+  const specialDetail = firstText(
+    entry.specialNutritionDetail,
+    entry.specialNutrition,
+    entry.specialNutritionNote,
+    entry.special_nutrition_detail,
+    entry.special_nutrition_note
+  );
+  const baseNutrition = firstText(
+    entry.nutrition,
+    entry.nutritionStatus,
+    entry.nutrition_status,
+    entry.feedStatus,
+    entry.feed_status
+  );
+  const nutritionSnapshot = buildNutritionSnapshot({
+    baseNutrition,
+    hormoneEnabled,
+    hormoneDetail,
+    specialEnabled,
+    specialDetail,
+  });
+
+  return {
+    jarId,
+    cultureDate: firstText(entry.cultureDate, entry.culture_date, entry.planting_date, entry.plantingDate),
+    rackNo: firstText(entry.rackNo, entry.rack_no, entry.rack),
+    orchidType: firstText(entry.orchidType, entry.cultivar, entry.type),
+    nutrition: baseNutrition,
+    nutritionStatus: firstText(nutritionSnapshot, baseNutrition),
+    addHormone: hormoneEnabled,
+    hormoneDetail,
+    addSpecialNutrition: specialEnabled,
+    specialNutritionDetail: specialDetail,
+    recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+    updatedAt: entry.updatedAt || entry.updated_at || null,
+  };
 };
 
 const normalizeJarIdInput = (value) => {
@@ -271,58 +398,8 @@ const toValidPoint = (x, y) => {
   const xn = Number(x);
   const yn = Number(y);
   if (!Number.isFinite(xn) || !Number.isFinite(yn)) return null;
+  if (yn > MAX_VALID_HEIGHT_MM) return null;
   return { x: xn, y: yn };
-};
-
-const buildPercentileEnvelope = (points) => {
-  if (!Array.isArray(points) || points.length < 3) return null;
-  const sorted = points
-    .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
-    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
-    .sort((a, b) => a.x - b.x);
-  if (sorted.length < 3) return null;
-
-  const first = sorted[0];
-  const last = sorted[sorted.length - 1];
-  const startY = Number(first.y);
-  const endY = Number(last.y);
-  const values = sorted.map((item) => item.y);
-  const observedSpread = Math.max(...values) - Math.min(...values);
-  const span = Math.max(25, Math.abs(endY - startY), observedSpread * 1.15);
-  const xSpan = Math.max(1, Number(last.x) - Number(first.x));
-
-  const logistic = (t, k = 7.4, mid = 0.55) => 1 / (1 + Math.exp(-k * (t - mid)));
-  const l0 = logistic(0);
-  const l1 = logistic(1);
-  const normLogistic = (t) => {
-    const raw = logistic(Math.min(1, Math.max(0, t)));
-    return (raw - l0) / (l1 - l0);
-  };
-
-  const rows = sorted.map((point, idx) => {
-    const fallbackT = sorted.length > 1 ? idx / (sorted.length - 1) : 0;
-    const t = xSpan > 0 ? (point.x - first.x) / xSpan : fallbackT;
-    const shape = normLogistic(t);
-    const center = startY + (endY - startY) * shape + Math.sin(t * Math.PI * 2) * span * 0.015;
-    const spread = span * (0.09 + 0.14 * shape + 0.04 * Math.sin(t * Math.PI));
-
-    return {
-      x: point.x,
-      p10: Math.max(0, center - spread * 1.25),
-      p25: Math.max(0, center - spread * 0.72),
-      p50: Math.max(0, center),
-      p75: Math.max(0, center + spread * 0.72),
-      p90: Math.max(0, center + spread * 1.25),
-    };
-  });
-
-  return {
-    p10: rows.map((row) => ({ x: row.x, y: Number(row.p10.toFixed(2)) })),
-    p25: rows.map((row) => ({ x: row.x, y: Number(row.p25.toFixed(2)) })),
-    p50: rows.map((row) => ({ x: row.x, y: Number(row.p50.toFixed(2)) })),
-    p75: rows.map((row) => ({ x: row.x, y: Number(row.p75.toFixed(2)) })),
-    p90: rows.map((row) => ({ x: row.x, y: Number(row.p90.toFixed(2)) })),
-  };
 };
 
 const rackEndLabelsPlugin = {
@@ -626,6 +703,7 @@ export default function GrowthHistory() {
   const [plantsError, setPlantsError] = useState("");
   const [cultureEntries, setCultureEntries] = useState([]);
   const [cultureError, setCultureError] = useState("");
+  const [liveHistoryRows, setLiveHistoryRows] = useState([]);
 
   useEffect(() => {
     setPlantsError("");
@@ -654,20 +732,7 @@ export default function GrowthHistory() {
       entriesRef,
       (snap) => {
         const data = snap.val() || {};
-        const next = Object.entries(data)
-          .map(([key, value]) => {
-            const entry = value && typeof value === "object" ? value : {};
-            return {
-              jarId: entry.jarId || key,
-              cultureDate: entry.cultureDate,
-              rackNo: entry.rackNo,
-              orchidType: entry.orchidType,
-              nutrition: entry.nutrition,
-              recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
-              updatedAt: entry.updatedAt,
-            };
-          })
-          .filter((entry) => entry.jarId);
+        const next = Object.entries(data).map(([key, value]) => normalizeCultureRecord(key, value)).filter(Boolean);
         setCultureEntries(next);
         setCultureError("");
       },
@@ -683,10 +748,100 @@ export default function GrowthHistory() {
   const cultureMap = useMemo(() => {
     const map = new Map();
     cultureEntries.forEach((entry) => {
-      if (entry?.jarId) map.set(entry.jarId.toLowerCase(), entry);
+      const key = normalizeId(entry?.jarId);
+      if (key) map.set(key, entry);
     });
     return map;
   }, [cultureEntries]);
+
+  const activeCanonicalId = useMemo(() => canonicalPlantId(jarId), [jarId]);
+  const activeNormalizedId = useMemo(() => normalizeId(jarId || activeCanonicalId), [jarId, activeCanonicalId]);
+
+  useEffect(() => {
+    if (!activeCanonicalId && !activeNormalizedId) {
+      setLiveHistoryRows([]);
+      return undefined;
+    }
+
+    const normalizeRows = (rawObj) =>
+      Object.values(rawObj || {})
+        .map((row) => normalizeHeightEntry(row))
+        .filter(Boolean)
+        .map((row) => {
+          const ts = resolveHeightTimestamp(row);
+          if (!Number.isFinite(ts)) return null;
+          return { ...row, ts };
+        })
+        .filter(Boolean);
+
+    let byJarRows = [];
+    let globalRows = [];
+
+    const mergeAndSet = () => {
+      const byTs = new Map();
+      byJarRows.forEach((row) => {
+        byTs.set(row.ts, row);
+      });
+      globalRows.forEach((row) => {
+        if (!byTs.has(row.ts)) byTs.set(row.ts, row);
+      });
+      setLiveHistoryRows(Array.from(byTs.values()).sort((a, b) => a.ts - b.ts));
+    };
+
+    const unsubs = [];
+
+    if (activeCanonicalId) {
+      const historyRef = fbQuery(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(300));
+      const offByJar = onValue(
+        historyRef,
+        (snap) => {
+          byJarRows = normalizeRows(snap.val());
+          mergeAndSet();
+        },
+        () => {
+          byJarRows = [];
+          mergeAndSet();
+        }
+      );
+      unsubs.push(offByJar);
+    }
+
+    if (activeNormalizedId) {
+      const globalRef = fbQuery(ref(db, "growthLogs"), limitToLast(1200));
+      const offGlobal = onValue(
+        globalRef,
+        (snap) => {
+          const matched = Object.values(snap.val() || {}).filter((row) => {
+            if (!row || typeof row !== "object") return false;
+            const aliases = [
+              row.jarId,
+              row.jar_id,
+              row.id,
+              row.jar,
+              row.jarKey,
+              row.plantId,
+              row.plant_id,
+            ]
+              .map((value) => normalizeId(value))
+              .filter(Boolean);
+            return aliases.includes(activeNormalizedId);
+          });
+
+          globalRows = normalizeRows(matched);
+          mergeAndSet();
+        },
+        () => {
+          globalRows = [];
+          mergeAndSet();
+        }
+      );
+      unsubs.push(offGlobal);
+    }
+
+    return () => {
+      unsubs.forEach((off) => off && off());
+    };
+  }, [activeCanonicalId, activeNormalizedId]);
 
   const demoIds = useMemo(() => {
     const ids = new Set();
@@ -707,13 +862,14 @@ export default function GrowthHistory() {
 
   const combinedRecords = useMemo(() => {
     return plants.map((plant) => {
-      const culture = cultureMap.get(plant.id.toLowerCase());
+      const culture = cultureMap.get(normalizeId(plant.id));
       const location = culture?.rackNo ? `Rack ${culture.rackNo}` : plant.location;
       const planting_date = culture?.cultureDate || plant.planting_date;
       const cultivar = culture?.orchidType || plant.cultivar;
-      const nutrition = culture?.nutrition || plant.nutrition;
+      const nutrition = firstText(culture?.nutrition, plant.nutrition, plant.nutritionStatus);
+      const nutritionStatus = firstText(culture?.nutritionStatus, nutrition);
       const recultures = culture?.recultures || [];
-      return { ...plant, location, planting_date, cultivar, nutrition, recultures };
+      return { ...plant, location, planting_date, cultivar, nutrition, nutritionStatus, recultures };
     });
   }, [cultureMap, plants]);
 
@@ -725,11 +881,10 @@ export default function GrowthHistory() {
 
   const record = useMemo(() => {
     if (!jarId) return null;
-    const id = jarId.trim().toLowerCase();
-    const heightsRecord = plants.find((p) => String(p.id).toLowerCase() === id) || null;
+    const id = normalizeId(jarId);
+    const heightsRecord = plants.find((p) => normalizeId(p.id) === id) || null;
     const culture = cultureMap.get(id) || null;
-
-    if (!heightsRecord && !culture) return null;
+    if (!heightsRecord && !culture && !liveHistoryRows.length) return null;
 
     const baseId = culture?.jarId || heightsRecord?.id || jarId.trim();
     const merged = {
@@ -738,22 +893,38 @@ export default function GrowthHistory() {
       planting_date: culture?.cultureDate || heightsRecord?.planting_date,
       location: culture?.rackNo ? `Rack ${culture.rackNo}` : heightsRecord?.location,
       cultivar: culture?.orchidType || heightsRecord?.cultivar,
-      nutrition: culture?.nutrition || heightsRecord?.nutrition,
+      nutrition: firstText(culture?.nutrition, heightsRecord?.nutrition, heightsRecord?.nutritionStatus),
+      nutritionStatus: firstText(
+        culture?.nutritionStatus,
+        culture?.nutrition,
+        heightsRecord?.nutritionStatus,
+        heightsRecord?.nutrition
+      ),
       recultures: culture?.recultures || [],
     };
     return merged;
-  }, [jarId, cultureMap, plants]);
+  }, [jarId, cultureMap, plants, liveHistoryRows]);
 
   const history = useMemo(() => {
     if (!record) return [];
-    return (record.heights || [])
+    const baseRows = (record.heights || [])
       .map((h) => {
         const ts = resolveHeightTimestamp(h);
         return { ...h, ts: Number.isFinite(ts) ? ts : null };
       })
-      .filter((h) => h.ts !== null)
-      .sort((a, b) => a.ts - b.ts);
-  }, [record]);
+      .filter((h) => h.ts !== null);
+
+    const byTs = new Map();
+    baseRows.forEach((row) => {
+      byTs.set(row.ts, row);
+    });
+    liveHistoryRows.forEach((row) => {
+      if (row?.ts === null || row?.ts === undefined) return;
+      byTs.set(row.ts, row);
+    });
+
+    return Array.from(byTs.values()).sort((a, b) => a.ts - b.ts);
+  }, [record, liveHistoryRows]);
 
   const historyStats = useMemo(() => {
     if (!history.length) return null;
@@ -954,13 +1125,15 @@ function LookupCard({
       return;
     }
 
-    const match = demoIds.find((id) => id.toLowerCase() === term.toLowerCase());
+    const normalizedTerm = normalizeId(term);
+    const match = demoIds.find((id) => normalizeId(id) === normalizedTerm);
     if (match) {
       setJarId(match);
       setStatus(`Loaded ${match} from Firebase.`);
     } else {
-      setJarId("");
-      setStatus(`No record for that Jar ID. Try ${demoIdHint || "a known ID"}.`);
+      // Allow direct lookup even when the ID is not in preloaded demo lists.
+      setJarId(term);
+      setStatus(`Searching ${term} in live history...`);
     }
   };
 
@@ -1040,35 +1213,233 @@ function LookupCard({
 function ChartCard({ record, history, isLight, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
-  const seriesStats = useMemo(() => {
-    const points = history.map((row) => toValidPoint(row.ts, row.height_mm)).filter(Boolean);
-    if (!points.length) return null;
-    return computeSeriesStats(points);
+  const cleanedPoints = useMemo(() => {
+    const rawPoints = history
+      .map((row) => toValidPoint(row.ts, row.height_mm))
+      .filter(Boolean)
+      .sort((a, b) => a.x - b.x);
+    if (!rawPoints.length) return [];
+
+    // Keep only the latest reading per day to reduce visual noise.
+    const byDay = new Map();
+    rawPoints.forEach((point) => {
+      const dayKey = new Date(point.x).toISOString().slice(0, 10);
+      const prev = byDay.get(dayKey);
+      if (!prev || point.x >= prev.x) {
+        byDay.set(dayKey, point);
+      }
+    });
+    let points = Array.from(byDay.values()).sort((a, b) => a.x - b.x);
+
+    // Drop placeholder zeros when enough real measurements exist.
+    const nonZero = points.filter((point) => point.y > 0.5);
+    if (nonZero.length >= Math.max(3, Math.floor(points.length * 0.25))) {
+      points = nonZero;
+    }
+
+    // Remove isolated sensor spikes/dips that immediately revert.
+    if (points.length >= 6) {
+      points = points.filter((point, idx, arr) => {
+        if (idx === 0 || idx === arr.length - 1) return true;
+        const prev = arr[idx - 1];
+        const next = arr[idx + 1];
+        const prevGapDays = Math.max((point.x - prev.x) / DAY_MS, 1 / 24);
+        const nextGapDays = Math.max((next.x - point.x) / DAY_MS, 1 / 24);
+        const slopeToPrev = Math.abs(point.y - prev.y) / prevGapDays;
+        const slopeToNext = Math.abs(next.y - point.y) / nextGapDays;
+        const midpoint = (prev.y + next.y) / 2;
+        const deviation = Math.abs(point.y - midpoint);
+        const neighborSpread = Math.abs(next.y - prev.y);
+        const isSpike = deviation > 18 && neighborSpread < 12 && slopeToPrev > 40 && slopeToNext > 40;
+        return !isSpike;
+      });
+    }
+
+    // Downsample very dense series for readability.
+    const maxPoints = 120;
+    if (points.length > maxPoints) {
+      const stride = Math.ceil(points.length / maxPoints);
+      points = points.filter((_, idx) => idx % stride === 0 || idx === points.length - 1);
+    }
+
+    return points;
   }, [history]);
+  const chartPoints = useMemo(() => {
+    if (cleanedPoints.length < 5) return cleanedPoints;
+    const windowRadius = cleanedPoints.length > 30 ? 2 : 1;
+    return cleanedPoints.map((point, idx, arr) => {
+      const start = Math.max(0, idx - windowRadius);
+      const end = Math.min(arr.length - 1, idx + windowRadius);
+      const ys = arr
+        .slice(start, end + 1)
+        .map((p) => p.y)
+        .sort((a, b) => a - b);
+      const median = ys[Math.floor(ys.length / 2)];
+      return { x: point.x, y: Number(median.toFixed(2)) };
+    });
+  }, [cleanedPoints]);
+  const nutritionEvents = useMemo(() => {
+    if (!record) return [];
+
+    const baseNutrition = firstText(record?.nutritionStatus, record?.nutrition);
+    const events = [];
+    const pushEvent = ({ ts, label, nutritionText }) => {
+      if (!Number.isFinite(ts)) return;
+      events.push({ ts, label, nutritionText: firstText(nutritionText, baseNutrition) });
+    };
+
+    const cultureTs = Date.parse(record?.planting_date || "");
+    if (Number.isFinite(cultureTs)) {
+      pushEvent({
+        ts: cultureTs,
+        label: "Culture start",
+        nutritionText: baseNutrition,
+      });
+    }
+
+    (record?.recultures || []).forEach((row, idx) => {
+      const ts = Date.parse(row?.date || "");
+      if (!Number.isFinite(ts)) return;
+      pushEvent({
+        ts,
+        label: `Re-culture ${idx + 1}`,
+        nutritionText: firstText(row?.note, baseNutrition),
+      });
+    });
+
+    const byDay = new Map();
+    events
+      .sort((a, b) => a.ts - b.ts)
+      .forEach((event) => {
+        const dayKey = new Date(event.ts).toISOString().slice(0, 10);
+        if (!byDay.has(dayKey)) byDay.set(dayKey, event);
+      });
+
+    return Array.from(byDay.values());
+  }, [record]);
+  const nutritionMarkers = useMemo(() => {
+    if (!nutritionEvents.length || !cleanedPoints.length) return [];
+    return nutritionEvents.map((event) => {
+      let nearest = cleanedPoints[0];
+      let minDiff = Math.abs(cleanedPoints[0].x - event.ts);
+      for (let i = 1; i < cleanedPoints.length; i += 1) {
+        const diff = Math.abs(cleanedPoints[i].x - event.ts);
+        if (diff < minDiff) {
+          minDiff = diff;
+          nearest = cleanedPoints[i];
+        }
+      }
+      return {
+        x: event.ts,
+        y: nearest.y,
+        label: event.label,
+        nutritionText: event.nutritionText,
+      };
+    });
+  }, [nutritionEvents, cleanedPoints]);
+  const nutritionImpactRows = useMemo(() => {
+    if (!nutritionMarkers.length || cleanedPoints.length < 3) return [];
+
+    const windowMs = 14 * DAY_MS;
+    const computeRate = (points) => {
+      if (!points || points.length < 2) return null;
+      const first = points[0];
+      const last = points[points.length - 1];
+      const days = (last.x - first.x) / DAY_MS;
+      if (!Number.isFinite(days) || days <= 0) return null;
+      return (last.y - first.y) / days;
+    };
+
+    return nutritionMarkers.map((event) => {
+      const before = cleanedPoints.filter((point) => point.x >= event.x - windowMs && point.x <= event.x);
+      const after = cleanedPoints.filter((point) => point.x >= event.x && point.x <= event.x + windowMs);
+      const beforeRate = computeRate(before);
+      const afterRate = computeRate(after);
+      const afterDelta =
+        after.length >= 2 ? Number(after[after.length - 1].y) - Number(after[0].y) : null;
+      const effectText = (() => {
+        if (beforeRate === null && afterRate === null) return "Not enough data around this change.";
+        if (beforeRate === null && afterRate !== null) return `After change: ${afterRate.toFixed(2)} mm/day`;
+        if (beforeRate !== null && afterRate === null) return `Before change: ${beforeRate.toFixed(2)} mm/day`;
+        const diff = afterRate - beforeRate;
+        if (Math.abs(diff) < 0.05) return "Growth rate stayed almost the same.";
+        return diff > 0
+          ? `Growth got faster by ${diff.toFixed(2)} mm/day`
+          : `Growth slowed by ${Math.abs(diff).toFixed(2)} mm/day`;
+      })();
+
+      return {
+        ...event,
+        beforeRate,
+        afterRate,
+        afterDelta,
+        effectText,
+      };
+    });
+  }, [nutritionMarkers, cleanedPoints]);
+
+  const seriesStats = useMemo(() => {
+    if (!cleanedPoints.length) return null;
+    return computeSeriesStats(cleanedPoints);
+  }, [cleanedPoints]);
+
+  const timeSpanText = useMemo(() => {
+    if (!seriesStats || seriesStats.days === null) return "-";
+    if (seriesStats.days < 1) return `${(seriesStats.days * 24).toFixed(1)} hrs`;
+    return seriesStats.days < 10 ? `${seriesStats.days.toFixed(1)} days` : `${seriesStats.days.toFixed(0)} days`;
+  }, [seriesStats]);
+
+  const growthRateText = useMemo(() => {
+    if (!seriesStats || seriesStats.rate === null || !Number.isFinite(seriesStats.rate)) return "-";
+    if (seriesStats.days !== null && seriesStats.days < 0.25) return "-";
+    return `${seriesStats.rate.toFixed(2)} mm/day`;
+  }, [seriesStats]);
+
   const reportDateRows = useMemo(
-    () =>
-      history.map((row) => [formatDate(row.ts), `${Number(row.height_mm).toFixed(1)} mm`]),
-    [history]
+    () => cleanedPoints.map((point) => [formatDate(point.x), `${Number(point.y).toFixed(1)} mm`]),
+    [cleanedPoints]
   );
+  const reportNutritionRows = useMemo(
+    () =>
+      nutritionImpactRows.map((event) => [
+        event.label,
+        formatDate(event.x),
+        event.nutritionText || "-",
+        event.beforeRate !== null ? `${event.beforeRate.toFixed(2)} mm/day` : "n/a",
+        event.afterRate !== null ? `${event.afterRate.toFixed(2)} mm/day` : "n/a",
+        event.afterDelta !== null ? `${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : "n/a",
+      ]),
+    [nutritionImpactRows]
+  );
+
   const handleReport = () => {
-    if (!history.length) return;
+    if (!cleanedPoints.length) return;
     const chartImage = chartRef.current?.toBase64Image?.();
     const statsRows = [
       ["Jar ID", record?.id || "-"],
       ["Planting date", record?.planting_date || "-"],
       ["Location", record?.location || "-"],
       ["Cultivar", record?.cultivar || "-"],
-      ["Nutrition", record?.nutrition || "-"],
-      ["Measurements", history.length ? `${history.length} entries` : "0"],
+      ["Nutrition status", record?.nutritionStatus || record?.nutrition || "-"],
+      ["Measurements", cleanedPoints.length ? `${cleanedPoints.length} entries` : "0"],
       ["Average height", seriesStats?.avg !== null ? `${seriesStats.avg.toFixed(1)} mm` : "-"],
       ["Change", seriesStats?.delta !== null ? `${seriesStats.delta >= 0 ? "+" : ""}${seriesStats.delta.toFixed(1)} mm` : "-"],
-      ["Growth rate", seriesStats?.rate !== null ? `${seriesStats.rate.toFixed(2)} mm/day` : "-"],
+      ["Growth rate", growthRateText],
     ];
 
     const sections = [
       { heading: "Summary", content: renderKeyValueTable(statsRows) },
       { heading: "Measurements", content: renderDataTable(["Date", "Height"], reportDateRows) },
     ];
+    if (reportNutritionRows.length) {
+      sections.splice(1, 0, {
+        heading: "Nutrition / culture changes",
+        content: renderDataTable(
+          ["Event", "Date", "Nutrition", "Before rate", "After rate", "After 14d change"],
+          reportNutritionRows
+        ),
+      });
+    }
     if (includeInsight && reportInsightText) {
       sections.unshift({
         heading: "Assistant conclusion",
@@ -1089,94 +1460,47 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       chartRef.current.destroy();
       chartRef.current = null;
     }
-    if (!history.length || !canvasRef.current) return;
+    if (!chartPoints.length || !canvasRef.current) return;
 
     const theme = chartTheme(isLight);
-    const dataPoints = history.map((row) => toValidPoint(row.ts, row.height_mm)).filter(Boolean);
-    if (!dataPoints.length) return;
-    const envelope = buildPercentileEnvelope(dataPoints);
-    const envelopeMax = envelope ? Math.max(...envelope.p90.map((point) => point.y)) : null;
-    const dataMax = dataPoints.length ? Math.max(...dataPoints.map((point) => point.y)) : null;
+    const dataMax = Math.max(...chartPoints.map((point) => point.y));
     const yMax = (() => {
-      const maxVal = Math.max(
-        50,
-        Number.isFinite(envelopeMax) ? envelopeMax : 0,
-        Number.isFinite(dataMax) ? dataMax : 0
-      );
+      const maxVal = Math.max(50, Number.isFinite(dataMax) ? dataMax : 0);
       return Math.ceil((maxVal + 10) / 25) * 25;
     })();
-
-    const datasets = [];
-    if (envelope) {
-      datasets.push(
-        {
-          label: "P90 guide",
-          data: envelope.p90,
-          borderColor: "rgba(17, 24, 39, 0.95)",
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.4,
-          cubicInterpolationMode: "monotone",
-          fill: false,
-        },
-        {
-          label: "P75 guide",
-          data: envelope.p75,
-          borderColor: "rgba(17, 24, 39, 0.82)",
-          borderWidth: 2,
-          pointRadius: 0,
-          tension: 0.4,
-          cubicInterpolationMode: "monotone",
-          fill: false,
-        },
-        {
-          label: "P25 guide",
-          data: envelope.p25,
-          borderColor: "rgba(249, 115, 22, 0.92)",
-          backgroundColor: "rgba(251, 146, 60, 0.34)",
-          borderWidth: 1.9,
-          pointRadius: 0,
-          tension: 0.38,
-          cubicInterpolationMode: "monotone",
-          fill: "-1",
-        },
-        {
-          label: "P10 guide",
-          data: envelope.p10,
-          borderColor: "rgba(249, 115, 22, 0.92)",
-          borderWidth: 1.8,
-          pointRadius: 0,
-          tension: 0.38,
-          cubicInterpolationMode: "monotone",
-          fill: false,
-        },
-        {
-          label: "P50 guide",
-          data: envelope.p50,
-          borderColor: "rgba(17, 24, 39, 0.7)",
-          borderWidth: 1.6,
-          pointRadius: 0,
-          tension: 0.38,
-          cubicInterpolationMode: "monotone",
-          borderDash: [4, 4],
-          fill: false,
-        }
-      );
+    const pointRadius = chartPoints.length > 60 ? 0 : chartPoints.length > 24 ? 1.6 : 2.4;
+    const datasets = [
+      {
+        label: record?.id || "Height",
+        data: chartPoints,
+        borderColor: "#f97316",
+        backgroundColor: "rgba(249, 115, 22, 0.08)",
+        tension: 0.22,
+        cubicInterpolationMode: "monotone",
+        borderWidth: 2.4,
+        pointRadius,
+        pointHoverRadius: pointRadius ? 4 : 3,
+        pointBackgroundColor: "#ea580c",
+        pointBorderColor: "#fff7ed",
+        pointBorderWidth: 1,
+        fill: false,
+        spanGaps: true,
+      },
+    ];
+    if (nutritionMarkers.length) {
+      datasets.push({
+        type: "scatter",
+        label: "Nutrition/culture changes",
+        data: nutritionMarkers,
+        pointRadius: 5.5,
+        pointHoverRadius: 7,
+        pointStyle: "triangle",
+        pointBackgroundColor: "#0284c7",
+        pointBorderColor: "#f8fafc",
+        pointBorderWidth: 1.4,
+        showLine: false,
+      });
     }
-    datasets.push({
-      label: record?.id || "Height",
-      data: dataPoints,
-      borderColor: "#f97316",
-      backgroundColor: "rgba(249, 115, 22, 0.14)",
-      tension: 0.42,
-      cubicInterpolationMode: "monotone",
-      borderWidth: 3,
-      pointRadius: 3.6,
-      pointBackgroundColor: "#ea580c",
-      pointBorderColor: "#fff7ed",
-      pointBorderWidth: 1,
-      fill: false,
-    });
 
     chartRef.current = new Chart(canvasRef.current, {
       type: "line",
@@ -1185,19 +1509,29 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         responsive: true,
         maintainAspectRatio: false,
         parsing: false,
+        interaction: { intersect: false, mode: "nearest" },
         scales: {
           x: {
-            type: "time",
-            time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
+            type: "timeseries",
+            time: {
+              unit: "day",
+              tooltipFormat: "MMM d, yyyy HH:mm",
+              displayFormats: {
+                hour: "MMM d, HH:mm",
+                day: "MMM d",
+                week: "MMM d",
+                month: "MMM yyyy",
+              },
+            },
             grid: { color: theme.grid },
-            ticks: { color: theme.ticks },
-            title: { display: true, text: "Measurement date", color: theme.axis },
+            ticks: { color: theme.ticks, maxTicksLimit: 9, maxRotation: 0 },
+            title: { display: true, text: "Time", color: theme.axis },
           },
           y: {
             beginAtZero: true,
             max: yMax,
             grid: { color: theme.grid },
-            ticks: { color: theme.ticks },
+            ticks: { color: theme.ticks, maxTicksLimit: 7 },
             title: { display: true, text: "Plant height (mm)", color: theme.axis },
           },
         },
@@ -1205,9 +1539,22 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           legend: { display: false },
           tooltip: {
             intersect: false,
-            mode: "index",
+            mode: "nearest",
             callbacks: {
-              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
+              label: (ctx) => {
+                if (ctx.dataset?.label === "Nutrition/culture changes") {
+                  const label = firstText(ctx.raw?.label, "Change");
+                  return `${label}: ${Number(ctx.parsed.y).toFixed(1)} mm`;
+                }
+                return `${ctx.dataset.label}: ${ctx.parsed.y} mm`;
+              },
+              afterLabel: (ctx) => {
+                if (ctx.dataset?.label === "Nutrition/culture changes") {
+                  const nutritionText = firstText(ctx.raw?.nutritionText);
+                  return nutritionText ? `Nutrition: ${nutritionText}` : "";
+                }
+                return "";
+              },
             },
           },
         },
@@ -1217,7 +1564,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     return () => {
       chartRef.current?.destroy();
     };
-  }, [history, record?.id, isLight]);
+  }, [chartPoints, nutritionMarkers, record?.id, isLight]);
 
   return (
     <motion.div
@@ -1232,7 +1579,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           <h3 className="text-xl font-semibold text-dark">Height over time</h3>
         </div>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-subtle">{history.length} points</span>
+          <span className="text-xs text-subtle">{cleanedPoints.length} points</span>
           <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
             Report
           </button>
@@ -1243,7 +1590,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           <div className="panel-muted px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Time span</p>
             <p className="text-sm font-semibold text-dark">
-              {seriesStats.days !== null ? `${seriesStats.days.toFixed(0)} days` : "-"}
+              {timeSpanText}
             </p>
           </div>
           <div className="panel-muted px-3 py-2">
@@ -1261,13 +1608,37 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           <div className="panel-muted px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Growth rate</p>
             <p className="text-sm font-semibold text-dark">
-              {seriesStats.rate !== null ? `${seriesStats.rate.toFixed(2)} mm/day` : "-"}
+              {growthRateText}
             </p>
           </div>
         </div>
       )}
+      {nutritionImpactRows.length ? (
+        <div className="panel-muted px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Nutrition change impact</p>
+            <span className="text-[11px] text-subtle">{nutritionImpactRows.length} event(s)</span>
+          </div>
+          <div className="space-y-2 max-h-44 overflow-auto pr-1">
+            {nutritionImpactRows.map((event) => (
+              <div key={`${event.label}-${event.x}`} className="rounded-xl border border-border/40 bg-paper/80 px-3 py-2">
+                <p className="text-xs font-semibold text-dark">
+                  {event.label} - {formatDate(event.x)}
+                </p>
+                <p className="text-[11px] text-subtle">
+                  Nutrition: {event.nutritionText || "-"}
+                </p>
+                <p className="text-[11px] text-subtle">
+                  {event.effectText}
+                  {event.afterDelta !== null ? ` | 14-day height change: ${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       <div className="h-80">
-        {history.length ? (
+        {cleanedPoints.length ? (
           <canvas ref={canvasRef} />
         ) : (
           <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
@@ -2130,6 +2501,7 @@ function SummaryCard({ record, history }) {
   const stats = [
     { label: "Planting date", value: record?.planting_date || "-" },
     { label: "Location", value: record?.location || "-" },
+    { label: "Nutrition status", value: record?.nutritionStatus || record?.nutrition || "-" },
     { label: "Measurements", value: history.length ? `${history.length} entries` : "0 entries" },
     { label: "Latest height", value: latest ? `${latest.height_mm.toFixed(1)} mm` : "-" },
     { label: "Avg height", value: avg !== null ? `${avg.toFixed(1)} mm` : "-" },
