@@ -19,7 +19,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+# Include routers with the configured API prefix, ensuring it is properly formatted.
 api_prefix = settings.api_prefix.rstrip("/")
 
 app.include_router(health.router, prefix=api_prefix)
