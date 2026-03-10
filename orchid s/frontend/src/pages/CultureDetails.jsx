@@ -447,7 +447,16 @@ function FormCard({
           <p className="kicker">Jar details</p>
           <h2 className="text-lg font-semibold text-dark">Create or update a jar</h2>
         </div>
-        <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={clearForm}
+            className="btn-soft text-xs px-3 py-1.5"
+          >
+            Add new jar
+          </button>
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
@@ -577,13 +586,13 @@ function FormCard({
           onClick={clearForm}
           className="btn-soft px-4 py-3"
         >
-          Clear
+          Reset form
         </button>
       </div>
 
       {isEditing && (
         <p className="text-xs text-subtle">
-          Jar ID and culture date are locked while editing. Use “Clear” to create a new jar.
+          Jar ID and culture date are locked while editing. Use "Add new jar" to create a new record.
         </p>
       )}
 
@@ -1072,3 +1081,4 @@ function EmptyState({ message }) {
     </div>
   );
 }
+
