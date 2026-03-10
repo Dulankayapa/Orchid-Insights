@@ -14,7 +14,7 @@ from app.core.config import BASE_DIR, ROOT_DIR, get_settings
 def _first_existing(paths):
     return next((p for p in paths if p and Path(p).exists()), None)
 
-
+# New folder/backend/app/services/growth.py
 @lru_cache(maxsize=1)
 def load_model():
     settings = get_settings()
@@ -42,7 +42,7 @@ def load_model():
     metadata = joblib.load(meta_path)
     return model, metadata
 
-
+# Parses strings like '3–10 mm' into numeric min/max, tolerant to odd dashes/characters.
 def _parse_range_to_min_max(s: str) -> Tuple[Optional[float], Optional[float]]:
     """Parse strings like '3–10 mm' into numeric min/max, tolerant to odd dashes/characters."""
     s = str(s)
@@ -71,7 +71,7 @@ def build_age_lookup_from_dataset():
     if "expected_height_range" not in df.columns or "age_days" not in df.columns:
         return None
 
-    df["h_min"], df["h_max"] = zip(*df["expected_height_range"].map(_parse_range_to_min_max))
+    df["h_min"], df["h_max"] = zip(*df["expected_height_range"].map(_parse_range_to_min_max))# Extract the most common height range for each age group
     age_lookup = []
     for age, sub in df.groupby("age_days"):
         cnt = Counter(zip(sub["h_min"], sub["h_max"]))
@@ -81,7 +81,7 @@ def build_age_lookup_from_dataset():
     age_lookup.sort(key=lambda x: x[0])
     return age_lookup
 
-
+# Uses dataset lookup if available, otherwise falls back to legacy heuristic buckets.
 def expected_range_from_lookup(age_days: int):
     lookup = build_age_lookup_from_dataset()
     if not lookup:
@@ -123,7 +123,7 @@ def compute_age_days(planting_date_str: str, current_date_str: str, date_format:
     current_date = datetime.strptime(current_date_str, date_format)
     return (current_date - planting_date).days
 
-
+# Main function to classify growth, using dataset lookup for expected ranges if available, otherwise falling back to legacy heuristics.
 def classify_growth(planting_date: str, current_date: str, height_mm: float, age_days_override: Optional[int] = None):
     model, metadata = load_model()
 
