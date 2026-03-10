@@ -267,6 +267,127 @@ const buildTrendlinePoints = (points) => {
   ];
 };
 
+const toValidPoint = (x, y) => {
+  const xn = Number(x);
+  const yn = Number(y);
+  if (!Number.isFinite(xn) || !Number.isFinite(yn)) return null;
+  return { x: xn, y: yn };
+};
+
+const buildPercentileEnvelope = (points) => {
+  if (!Array.isArray(points) || points.length < 3) return null;
+  const sorted = points
+    .map((point) => ({ x: Number(point.x), y: Number(point.y) }))
+    .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+    .sort((a, b) => a.x - b.x);
+  if (sorted.length < 3) return null;
+
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const startY = Number(first.y);
+  const endY = Number(last.y);
+  const values = sorted.map((item) => item.y);
+  const observedSpread = Math.max(...values) - Math.min(...values);
+  const span = Math.max(25, Math.abs(endY - startY), observedSpread * 1.15);
+  const xSpan = Math.max(1, Number(last.x) - Number(first.x));
+
+  const logistic = (t, k = 7.4, mid = 0.55) => 1 / (1 + Math.exp(-k * (t - mid)));
+  const l0 = logistic(0);
+  const l1 = logistic(1);
+  const normLogistic = (t) => {
+    const raw = logistic(Math.min(1, Math.max(0, t)));
+    return (raw - l0) / (l1 - l0);
+  };
+
+  const rows = sorted.map((point, idx) => {
+    const fallbackT = sorted.length > 1 ? idx / (sorted.length - 1) : 0;
+    const t = xSpan > 0 ? (point.x - first.x) / xSpan : fallbackT;
+    const shape = normLogistic(t);
+    const center = startY + (endY - startY) * shape + Math.sin(t * Math.PI * 2) * span * 0.015;
+    const spread = span * (0.09 + 0.14 * shape + 0.04 * Math.sin(t * Math.PI));
+
+    return {
+      x: point.x,
+      p10: Math.max(0, center - spread * 1.25),
+      p25: Math.max(0, center - spread * 0.72),
+      p50: Math.max(0, center),
+      p75: Math.max(0, center + spread * 0.72),
+      p90: Math.max(0, center + spread * 1.25),
+    };
+  });
+
+  return {
+    p10: rows.map((row) => ({ x: row.x, y: Number(row.p10.toFixed(2)) })),
+    p25: rows.map((row) => ({ x: row.x, y: Number(row.p25.toFixed(2)) })),
+    p50: rows.map((row) => ({ x: row.x, y: Number(row.p50.toFixed(2)) })),
+    p75: rows.map((row) => ({ x: row.x, y: Number(row.p75.toFixed(2)) })),
+    p90: rows.map((row) => ({ x: row.x, y: Number(row.p90.toFixed(2)) })),
+  };
+};
+
+const rackEndLabelsPlugin = {
+  id: "rackEndLabels",
+  afterDatasetsDraw(chart, _args, pluginOptions) {
+    if (!pluginOptions?.enabled) return;
+    const { ctx, chartArea } = chart;
+    if (!chartArea) return;
+
+    const labels = [];
+    chart.data.datasets.forEach((dataset, datasetIndex) => {
+      if (!dataset || dataset.hidden || dataset.yAxisID === "yDelta") return;
+      const meta = chart.getDatasetMeta(datasetIndex);
+      if (!meta || meta.hidden || !meta.data?.length) return;
+
+      const lastElement = meta.data[meta.data.length - 1];
+      const lastPoint = dataset.data?.[dataset.data.length - 1];
+      const yValue = Number(lastPoint?.y ?? lastPoint);
+      if (!lastElement || !Number.isFinite(lastElement.x) || !Number.isFinite(lastElement.y) || !Number.isFinite(yValue)) return;
+
+      labels.push({
+        x: lastElement.x + 10,
+        y: lastElement.y,
+        text: `${dataset.label} ${yValue.toFixed(1)} mm`,
+        color: typeof dataset.borderColor === "string" ? dataset.borderColor : "#0f172a",
+      });
+    });
+    if (!labels.length) return;
+
+    labels.sort((a, b) => a.y - b.y);
+    const minGap = Number(pluginOptions?.minGap) || 16;
+    const top = chartArea.top + 10;
+    const bottom = chartArea.bottom - 10;
+
+    labels[0].y = Math.max(top, labels[0].y);
+    for (let i = 1; i < labels.length; i += 1) {
+      labels[i].y = Math.max(labels[i].y, labels[i - 1].y + minGap);
+    }
+    for (let i = labels.length - 1; i >= 0; i -= 1) {
+      if (labels[i].y > bottom) {
+        labels[i].y = bottom;
+        if (i > 0) labels[i - 1].y = Math.min(labels[i - 1].y, labels[i].y - minGap);
+      }
+    }
+
+    ctx.save();
+    ctx.font = pluginOptions?.font || "600 11px Inter, sans-serif";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.lineWidth = 4;
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = pluginOptions?.haloColor || "rgba(255, 255, 255, 0.92)";
+
+    labels.forEach((item) => {
+      const textWidth = ctx.measureText(item.text).width;
+      const safeX = Math.min(item.x, chartArea.right - textWidth - 2);
+      ctx.strokeText(item.text, safeX, item.y);
+      ctx.fillStyle = item.color;
+      ctx.fillText(item.text, safeX, item.y);
+    });
+
+    ctx.restore();
+  },
+};
+
 const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
   const cutoffMs = (() => {
     const now = Date.now();
@@ -281,11 +402,8 @@ const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
     const plant = combinedRecords.find((p) => p.id === id);
     if (!plant) return;
     const sorted = (plant.heights || [])
-      .map((h) => {
-        const ts = Date.parse(h.date);
-        return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
-      })
-      .filter((p) => p.x !== null && (cutoffMs === null || p.x >= cutoffMs))
+      .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+      .filter((p) => p !== null && (cutoffMs === null || p.x >= cutoffMs))
       .sort((a, b) => a.x - b.x);
     if (!sorted.length) return;
     const stats = computeSeriesStats(sorted);
@@ -306,11 +424,8 @@ const buildRackStats = (rackPlants) => {
   if (!rackPlants.length) return [];
   const stats = rackPlants.map((plant) => {
     const points = (plant.heights || [])
-      .map((h) => {
-        const ts = Date.parse(h.date);
-        return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
-      })
-      .filter((p) => p.x !== null)
+      .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+      .filter((p) => p !== null)
       .sort((a, b) => a.x - b.x);
     const summary = computeSeriesStats(points);
     return {
@@ -642,7 +757,8 @@ export default function GrowthHistory() {
 
   const historyStats = useMemo(() => {
     if (!history.length) return null;
-    const points = history.map((row) => ({ x: row.ts, y: Number(row.height_mm) }));
+    const points = history.map((row) => toValidPoint(row.ts, row.height_mm)).filter(Boolean);
+    if (!points.length) return null;
     return computeSeriesStats(points);
   }, [history]);
   const growthInsight = useMemo(
@@ -925,7 +1041,8 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const seriesStats = useMemo(() => {
-    const points = history.map((row) => ({ x: row.ts, y: Number(row.height_mm) }));
+    const points = history.map((row) => toValidPoint(row.ts, row.height_mm)).filter(Boolean);
+    if (!points.length) return null;
     return computeSeriesStats(points);
   }, [history]);
   const reportDateRows = useMemo(
@@ -975,26 +1092,95 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     if (!history.length || !canvasRef.current) return;
 
     const theme = chartTheme(isLight);
-    const dataPoints = history.map((row) => ({ x: row.ts, y: Number(row.height_mm) }));
+    const dataPoints = history.map((row) => toValidPoint(row.ts, row.height_mm)).filter(Boolean);
+    if (!dataPoints.length) return;
+    const envelope = buildPercentileEnvelope(dataPoints);
+    const envelopeMax = envelope ? Math.max(...envelope.p90.map((point) => point.y)) : null;
+    const dataMax = dataPoints.length ? Math.max(...dataPoints.map((point) => point.y)) : null;
+    const yMax = (() => {
+      const maxVal = Math.max(
+        50,
+        Number.isFinite(envelopeMax) ? envelopeMax : 0,
+        Number.isFinite(dataMax) ? dataMax : 0
+      );
+      return Math.ceil((maxVal + 10) / 25) * 25;
+    })();
+
+    const datasets = [];
+    if (envelope) {
+      datasets.push(
+        {
+          label: "P90 guide",
+          data: envelope.p90,
+          borderColor: "rgba(17, 24, 39, 0.95)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.4,
+          cubicInterpolationMode: "monotone",
+          fill: false,
+        },
+        {
+          label: "P75 guide",
+          data: envelope.p75,
+          borderColor: "rgba(17, 24, 39, 0.82)",
+          borderWidth: 2,
+          pointRadius: 0,
+          tension: 0.4,
+          cubicInterpolationMode: "monotone",
+          fill: false,
+        },
+        {
+          label: "P25 guide",
+          data: envelope.p25,
+          borderColor: "rgba(249, 115, 22, 0.92)",
+          backgroundColor: "rgba(251, 146, 60, 0.34)",
+          borderWidth: 1.9,
+          pointRadius: 0,
+          tension: 0.38,
+          cubicInterpolationMode: "monotone",
+          fill: "-1",
+        },
+        {
+          label: "P10 guide",
+          data: envelope.p10,
+          borderColor: "rgba(249, 115, 22, 0.92)",
+          borderWidth: 1.8,
+          pointRadius: 0,
+          tension: 0.38,
+          cubicInterpolationMode: "monotone",
+          fill: false,
+        },
+        {
+          label: "P50 guide",
+          data: envelope.p50,
+          borderColor: "rgba(17, 24, 39, 0.7)",
+          borderWidth: 1.6,
+          pointRadius: 0,
+          tension: 0.38,
+          cubicInterpolationMode: "monotone",
+          borderDash: [4, 4],
+          fill: false,
+        }
+      );
+    }
+    datasets.push({
+      label: record?.id || "Height",
+      data: dataPoints,
+      borderColor: "#f97316",
+      backgroundColor: "rgba(249, 115, 22, 0.14)",
+      tension: 0.42,
+      cubicInterpolationMode: "monotone",
+      borderWidth: 3,
+      pointRadius: 3.6,
+      pointBackgroundColor: "#ea580c",
+      pointBorderColor: "#fff7ed",
+      pointBorderWidth: 1,
+      fill: false,
+    });
 
     chartRef.current = new Chart(canvasRef.current, {
       type: "line",
-      data: {
-        datasets: [
-          {
-            label: record?.id || "Height",
-            data: dataPoints,
-            borderColor: "#d946ef", // primary (teal-500)
-            backgroundColor: "rgba(217, 70, 239, 0.15)",
-            tension: 0.28,
-            borderWidth: 2.4,
-            pointRadius: 4,
-            pointBackgroundColor: "#a21caf", // teal-700
-            pointBorderColor: "#fdf4ff", // background color
-            fill: true,
-          },
-        ],
-      },
+      data: { datasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
@@ -1009,6 +1195,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           },
           y: {
             beginAtZero: true,
+            max: yMax,
             grid: { color: theme.grid },
             ticks: { color: theme.ticks },
             title: { display: true, text: "Plant height (mm)", color: theme.axis },
@@ -1020,7 +1207,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
             intersect: false,
             mode: "index",
             callbacks: {
-              label: (ctx) => `Height: ${ctx.parsed.y} mm`,
+              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
             },
           },
         },
@@ -1041,7 +1228,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     >
       <div className="flex items-center justify-between gap-3">
         <div>
-          <p className="kicker">Trend line</p>
+          <p className="kicker">Growth curves</p>
           <h3 className="text-xl font-semibold text-dark">Height over time</h3>
         </div>
         <div className="flex items-center gap-2">
@@ -1409,11 +1596,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
       const plant = combinedRecords.find((p) => p.id === id);
       if (!plant) return;
       const sorted = (plant.heights || [])
-        .map((h) => {
-          const ts = Date.parse(h.date);
-          return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
-        })
-        .filter((p) => p.x !== null && (cutoffMs === null || p.x >= cutoffMs))
+        .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+        .filter((p) => p !== null && (cutoffMs === null || p.x >= cutoffMs))
         .sort((a, b) => a.x - b.x);
       if (!sorted.length) return;
 
@@ -1423,7 +1607,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
         data: sorted,
         borderColor: color,
         backgroundColor: `${color}33`,
-        tension: 0.25,
+        tension: 0.38,
+        cubicInterpolationMode: "monotone",
         borderWidth: 2.2,
         pointRadius: 4,
         pointBackgroundColor: color,
@@ -1493,14 +1678,19 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
     if (!datasets.length || !canvasRef.current) return;
 
     const theme = chartTheme(isLight);
+    const hasDelta = datasets.some((dataset) => dataset.yAxisID === "yDelta");
     chartRef.current = new Chart(canvasRef.current, {
       type: "line",
       data: { datasets },
+      plugins: [rackEndLabelsPlugin],
       options: {
         responsive: true,
         maintainAspectRatio: false,
         parsing: false,
-        interaction: { mode: "nearest", intersect: false },
+        interaction: { mode: "index", intersect: false },
+        layout: {
+          padding: { right: 140 },
+        },
         scales: {
           x: {
             type: "time",
@@ -1635,16 +1825,15 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
   };
 
   const datasets = useMemo(() => {
-    const palette = ["#d946ef", "#a855f7", "#6366f1", "#06b6d4", "#22c55e", "#f59e0b", "#ef4444", "#0ea5e9"];
+    const palette = ["#0f172a", "#dc2626", "#2563eb", "#16a34a", "#d97706", "#9333ea", "#0ea5e9", "#e11d48"];
+    const dashPatterns = [[], [10, 6], [3, 5], [14, 4, 3, 4], [2, 4], [8, 4]];
+    const pointStyles = ["circle", "rectRot", "triangle", "rectRounded", "crossRot", "star"];
 
-    return rackPlants
+    const mainSeries = rackPlants
       .map((plant, idx) => {
         const sorted = (plant.heights || [])
-          .map((h) => {
-            const ts = Date.parse(h.date);
-            return { x: Number.isFinite(ts) ? ts : null, y: Number(h.height_mm) };
-          })
-          .filter((p) => p.x !== null)
+          .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+          .filter((p) => p !== null)
           .sort((a, b) => a.x - b.x);
 
         if (!sorted.length) return null;
@@ -1653,16 +1842,84 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
           label: plant.id,
           data: sorted,
           borderColor: color,
-          backgroundColor: `${color}33`,
-          tension: 0.24,
-          borderWidth: 2,
-          pointRadius: 3,
+          backgroundColor: `${color}26`,
+          borderDash: dashPatterns[idx % dashPatterns.length],
+          tension: 0.36,
+          cubicInterpolationMode: "monotone",
+          borderWidth: idx === 0 ? 3.2 : 2.6,
+          pointRadius: idx === 0 ? 4.8 : 4,
+          pointHoverRadius: 7,
+          pointStyle: pointStyles[idx % pointStyles.length],
           pointBackgroundColor: color,
+          pointBorderColor: "#ffffff",
+          pointBorderWidth: 1.3,
           fill: false,
+          yAxisID: "y",
+          order: 2,
         };
       })
       .filter(Boolean);
+
+    if (mainSeries.length <= 1) return mainSeries;
+
+    const baseline = mainSeries[0];
+    const baselineMap = new Map(
+      (baseline.data || [])
+        .map((point) => [Number(point.x), Number(point.y)])
+        .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
+    );
+
+    const deltaSeries = mainSeries
+      .slice(1)
+      .map((series) => {
+        const deltaData = (series.data || [])
+          .map((point) => {
+            const x = Number(point.x);
+            const y = Number(point.y);
+            const baseY = baselineMap.get(x);
+            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(baseY)) return null;
+            return { x, y: Number((y - baseY).toFixed(2)) };
+          })
+          .filter(Boolean);
+
+        if (deltaData.length < 2) return null;
+        return {
+          label: `Δ ${series.label} vs ${baseline.label}`,
+          data: deltaData,
+          borderColor: series.borderColor,
+          borderDash: [3, 6],
+          borderWidth: 1.8,
+          pointRadius: 0,
+          tension: 0.28,
+          cubicInterpolationMode: "monotone",
+          fill: false,
+          yAxisID: "yDelta",
+          order: 1,
+        };
+      })
+      .filter(Boolean);
+
+    return [...mainSeries, ...deltaSeries];
   }, [rackPlants]);
+
+  const deltaMaxAbs = useMemo(() => {
+    const absValues = datasets
+      .filter((dataset) => dataset.yAxisID === "yDelta")
+      .flatMap((dataset) => (dataset.data || []).map((point) => Math.abs(Number(point.y))))
+      .filter((value) => Number.isFinite(value));
+    if (!absValues.length) return 5;
+    const maxVal = Math.max(...absValues, 1);
+    return Math.ceil((maxVal + 0.5) / 1) * 1;
+  }, [datasets]);
+  const jarLineCount = useMemo(
+    () => datasets.filter((dataset) => dataset.yAxisID !== "yDelta").length,
+    [datasets]
+  );
+  const deltaLineCount = useMemo(
+    () => datasets.filter((dataset) => dataset.yAxisID === "yDelta").length,
+    [datasets]
+  );
+  const hasDelta = useMemo(() => deltaLineCount > 0, [deltaLineCount]);
 
   useEffect(() => {
     if (chartRef.current) {
@@ -1694,12 +1951,52 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
             ticks: { color: theme.ticks },
             title: { display: true, text: "Height (mm)", color: theme.axis },
           },
+          ...(hasDelta
+            ? {
+                yDelta: {
+                  position: "right",
+                  min: -deltaMaxAbs,
+                  max: deltaMaxAbs,
+                  grid: { drawOnChartArea: false, color: "rgba(148,163,184,0.15)" },
+                  ticks: {
+                    color: theme.ticks,
+                    callback: (value) => `${Number(value).toFixed(1)}`,
+                  },
+                  title: { display: true, text: "Delta vs baseline (mm)", color: theme.axis },
+                },
+              }
+            : {}),
         },
         plugins: {
-          legend: { display: true, position: "bottom", labels: { color: theme.axis } },
+          legend: {
+            display: true,
+            position: "bottom",
+            labels: {
+              color: theme.axis,
+              usePointStyle: true,
+              pointStyle: "line",
+              boxWidth: 30,
+            },
+          },
+          rackEndLabels: {
+            enabled: true,
+            minGap: 16,
+            haloColor: isLight ? "rgba(255,255,255,0.95)" : "rgba(15,23,42,0.85)",
+          },
           tooltip: {
+            mode: "index",
             callbacks: {
-              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
+              title: (items) => {
+                const ts = items[0]?.parsed?.x;
+                return ts ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(ts) : "";
+              },
+              label: (ctx) => {
+                const value = Number(ctx.parsed.y);
+                if (ctx.dataset.yAxisID === "yDelta") {
+                  return `${ctx.dataset.label}: ${value >= 0 ? "+" : ""}${value.toFixed(2)} mm`;
+                }
+                return `${ctx.dataset.label}: ${value.toFixed(1)} mm`;
+              },
             },
           },
         },
@@ -1709,7 +2006,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
     return () => {
       chartRef.current?.destroy();
     };
-  }, [datasets, isLight]);
+  }, [datasets, isLight, deltaMaxAbs]);
 
   return (
     <motion.div
@@ -1722,11 +2019,15 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
         <div>
           <p className="kicker">Rack summary</p>
           <h3 className="text-xl font-semibold text-dark">Growth by rack</h3>
-          <p className="text-sm text-subtle">Lines show each jar found on the rack label you searched.</p>
+          <p className="text-sm text-subtle">Solid lines show jar heights. Dashed lines show differences vs the first jar.</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">
-            {datasets.length ? `${datasets.length} jar${datasets.length > 1 ? "s" : ""}` : rackQuery ? "No matches" : "Waiting"}
+            {jarLineCount
+              ? `${jarLineCount} jar${jarLineCount > 1 ? "s" : ""}${deltaLineCount ? ` + ${deltaLineCount} delta line${deltaLineCount > 1 ? "s" : ""}` : ""}`
+              : rackQuery
+                ? "No matches"
+                : "Waiting"}
           </span>
           <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
             Report
