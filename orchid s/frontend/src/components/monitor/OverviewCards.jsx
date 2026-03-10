@@ -86,7 +86,7 @@ const OverviewCards = ({ data, lastUpdate }) => {
                         key={idx}
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        className="relative flex flex-col justify-between overflow-hidden rounded-2xl border border-slate-100 bg-white p-5 shadow-sm transition-shadow hover:shadow-md dark:border-slate-800 dark:bg-slate-900"
+                        className="dashboard-card dashboard-card-hover group relative flex flex-col justify-between overflow-hidden p-5"
                     >
                         <div className={`absolute -right-2 -top-2 p-4 text-7xl opacity-5 ${card.color}`}>
                             {card.icon}
@@ -94,8 +94,10 @@ const OverviewCards = ({ data, lastUpdate }) => {
 
                         <div>
                             <div className="mb-2 flex items-center gap-2">
-                                <span className={`rounded-lg p-2 text-lg ${card.bg} ${card.color}`}>{card.icon}</span>
-                                <span className="text-xs font-medium uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                                <span className={`rounded-xl border border-white/70 p-2 text-lg shadow-[0_8px_20px_-16px_rgba(15,23,42,0.5)] transition-transform duration-200 group-hover:scale-105 ${card.bg} ${card.color}`}>
+                                    {card.icon}
+                                </span>
+                                <span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
                                     {card.title}
                                 </span>
                             </div>
@@ -104,11 +106,11 @@ const OverviewCards = ({ data, lastUpdate }) => {
                                     key={card.value}
                                     initial={{ opacity: 0.5 }}
                                     animate={{ opacity: 1 }}
-                                    className="text-3xl font-bold text-slate-800 dark:text-white"
+                                    className="text-3xl font-bold text-slate-900 dark:text-slate-100"
                                 >
                                     {card.value}
                                 </motion.span>
-                                <span className="text-sm font-semibold text-slate-400">{card.unit}</span>
+                                <span className="text-sm font-semibold text-slate-500 dark:text-slate-400">{card.unit}</span>
                             </div>
                         </div>
 

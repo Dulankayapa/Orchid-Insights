@@ -362,17 +362,6 @@ export default function OrchidCompanion() {
           {guideStatus.error && <p className="oc-error-text">{guideStatus.error}</p>}
           {guideStatus.loading && <p className="oc-muted-text">Loading companion guide...</p>}
         </div>
-        <div className="oc-live-grid">
-          {Object.keys(HEALTH_DEFAULTS).map((key) => {
-            const rule = HEALTH_DEFAULTS[key];
-            return (
-              <div key={key} className="oc-live-card">
-                <span>{rule.label}</span>
-                <strong>{fmtMetric(sensors[rule.source], rule.unit)}</strong>
-              </div>
-            );
-          })}
-        </div>
       </section>
 
       <section className="oc-grid oc-primary-grid">
