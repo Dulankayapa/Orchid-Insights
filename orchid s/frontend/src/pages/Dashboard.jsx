@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
+import { useMonitorData } from "../hooks/useMonitorData";
 
 const FEEDBACK_STORAGE_KEY = "orchid-insights-dashboard-feedback";
 
@@ -73,8 +75,14 @@ const orchidClipFrames = [
   "/orchid-clip/frame-7.jpg",
   "/orchid-clip/frame-8.jpg",
 ];
+const isFiniteNumber = (value) => Number.isFinite(Number(value));
+const toNumber = (value) => {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+};
 
 export default function Dashboard() {
+  const { latest: liveMonitorLatest, connectionStatus: monitorConnectionStatus } = useMonitorData();
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [showStats, setShowStats] = useState(true);
@@ -186,9 +194,26 @@ export default function Dashboard() {
   const currentClipFrame = availableClipFrames.length
     ? availableClipFrames[clipFrameIndex % availableClipFrames.length]
     : null;
-  const activeSensorServices = health
-    ? [health.model_loaded, health.firebase_connected, health.status === "ok"].filter(Boolean).length
-    : 0;
+  const totalSensors = 4;
+  const activeSensorCount = [
+    liveMonitorLatest?.temperature,
+    liveMonitorLatest?.humidity,
+    liveMonitorLatest?.lux,
+    liveMonitorLatest?.mq135,
+  ].filter(isFiniteNumber).length;
+  const hasLiveSensorStream = activeSensorCount > 0;
+  const liveSensorTrend =
+    monitorConnectionStatus === "connected"
+      ? "Live now"
+      : monitorConnectionStatus === "stale"
+      ? "Stale feed"
+      : "Pending";
+  const liveSensorTrendTone =
+    monitorConnectionStatus === "connected"
+      ? "text-primary"
+      : monitorConnectionStatus === "stale"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-rose-600 dark:text-rose-400";
   const statItems = [
     {
       label: "Plants Monitored",
@@ -200,11 +225,13 @@ export default function Dashboard() {
     },
     {
       label: "Active Sensors",
-      value: health ? `${activeSensorServices}/3` : "--",
+      value: `${activeSensorCount}/${totalSensors}`,
       icon: "\u{1F4F6}",
-      detail: health ? "Core services reporting live" : "Waiting for health telemetry",
-      trend: health ? "Live now" : "Pending",
-      trendTone: health ? "text-primary" : "text-amber-600 dark:text-amber-400",
+      detail: hasLiveSensorStream
+        ? `${activeSensorCount} of ${totalSensors} sensors reporting live`
+        : "Waiting for real-time sensor telemetry",
+      trend: liveSensorTrend,
+      trendTone: liveSensorTrendTone,
     },
     {
       label: "Avg Humidity",
@@ -223,6 +250,76 @@ export default function Dashboard() {
       trendTone: error ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400",
     },
   ];
+  const handleExportDashboardReport = () => {
+    const doc = new jsPDF();
+    const generatedAt = new Date().toLocaleString();
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const contentBottom = pageHeight - 16;
+    const temperature = toNumber(liveMonitorLatest?.temperature);
+    const humidity = toNumber(liveMonitorLatest?.humidity);
+    const lux = toNumber(liveMonitorLatest?.lux);
+    const mq135 = toNumber(liveMonitorLatest?.mq135);
+    const moduleDetails = [
+      ["Culture Details", "Manage culture and reculture records, rack placement, orchid type, and nutrition notes."],
+      ["Growth Tracker", "Analyze plant growth using age and height to generate predictive growth status."],
+      ["Growth History", "View jar-wise historical height trends with comparison and rack-based analysis."],
+      ["Plant Database", "Browse and search stored orchid plant records synced from backend and Firebase."],
+      ["Firebase Table", "Inspect live sensor payloads and merged values from Firebase in tabular form."],
+      ["Env Monitor", "Track real-time temperature, humidity, light, air quality, alerts, and AI tips."],
+      ["Orchid Companion", "Get context-aware orchid care guidance using live monitor sensor data."],
+    ];
+
+    doc.setFontSize(20);
+    doc.text("Orchid Insights Dashboard Report", 14, 20);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text(`Generated: ${generatedAt}`, 14, 27);
+    doc.text(`Live connection: ${String(monitorConnectionStatus || "unknown").toUpperCase()}`, 14, 33);
+
+    doc.setFontSize(13);
+    doc.setTextColor(0, 0, 0);
+    doc.text("Live Snapshot", 14, 45);
+
+    doc.setFontSize(10);
+    const rows = [
+      ["Temperature", temperature === null ? "--" : `${temperature.toFixed(1)} C`],
+      ["Humidity", humidity === null ? "--" : `${humidity.toFixed(1)} %`],
+      ["Light", lux === null ? "--" : `${Math.round(lux)} lx`],
+      ["Air Quality (MQ135)", mq135 === null ? "--" : `${Math.round(mq135)}`],
+      ["Active Sensors", `${activeSensorCount}/${totalSensors}`],
+    ];
+
+    let y = 53;
+    const ensureSpace = (needed = 8) => {
+      if (y + needed <= contentBottom) return;
+      doc.addPage();
+      y = 20;
+    };
+
+    rows.forEach(([label, value]) => {
+      ensureSpace(7);
+      doc.text(`${label}:`, 14, y);
+      doc.text(value, 80, y);
+      y += 7;
+    });
+
+    ensureSpace(10);
+    doc.setFontSize(12);
+    y += 8;
+    doc.text("Module Details", 14, y);
+    doc.setFontSize(10);
+    y += 7;
+
+    moduleDetails.forEach(([name, detail]) => {
+      const wrapped = doc.splitTextToSize(`- ${name}: ${detail}`, 180);
+      ensureSpace(wrapped.length * 5 + 2);
+      doc.text(wrapped, 14, y);
+      y += wrapped.length * 5 + 2;
+    });
+
+    doc.save(`Orchid_Dashboard_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
 
   return (
     <div className="space-y-6">
@@ -287,15 +384,27 @@ export default function Dashboard() {
             <p className="kicker">Live Snapshot</p>
             <p className="text-sm text-subtle">Quick health and monitoring summary.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => setShowStats((prev) => !prev)}
-            className="btn-soft btn-soft-emphasis rounded-xl px-3 py-1.5 text-sm"
-            aria-expanded={showStats}
-          >
-            <span className="inline-flex h-2 w-2 rounded-full bg-primary" />
-            {showStats ? "Hide Charts" : "Show Charts"}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleExportDashboardReport}
+              className="btn-soft rounded-xl px-3 py-1.5 text-sm"
+              title="Generate report"
+              aria-label="Generate dashboard report"
+            >
+              <span className="text-base leading-none" aria-hidden="true">{"\u{1F4C4}"}</span>
+              <span>Report</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowStats((prev) => !prev)}
+              className="btn-soft btn-soft-emphasis rounded-xl px-3 py-1.5 text-sm"
+              aria-expanded={showStats}
+            >
+              <span className="inline-flex h-2 w-2 rounded-full bg-primary" />
+              {showStats ? "Hide Charts" : "Show Charts"}
+            </button>
+          </div>
         </div>
 
         {showStats ? (

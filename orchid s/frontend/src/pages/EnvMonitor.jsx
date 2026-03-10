@@ -28,7 +28,7 @@ class SectionErrorBoundary extends React.Component {
 }
 
 const EnvMonitor = () => {
-  const { latest, history, connectionStatus, lastUpdate, alerts, aiTip } = useMonitorData();
+  const { latest, history, growthLogs, connectionStatus, lastUpdate, alerts, aiTip } = useMonitorData();
   const [showCharts, setShowCharts] = useState(true);
   const safeHistory = Array.isArray(history)
     ? history.filter((row) => row && Number.isFinite(Number(row.ts ?? row.timestamp)))
@@ -40,8 +40,14 @@ const EnvMonitor = () => {
     return Number.isFinite(parsed) ? parsed : null;
   };
 
+  const toTimestampMs = (value) => {
+    const ts = toNumber(value);
+    if (ts === null) return null;
+    return ts < 10000000000 ? ts * 1000 : ts;
+  };
+
   const formatDate = (timestamp) => {
-    const ts = toNumber(timestamp);
+    const ts = toTimestampMs(timestamp);
     if (ts === null) return '--';
     return new Date(ts).toLocaleDateString([], {
       year: 'numeric',
@@ -51,7 +57,7 @@ const EnvMonitor = () => {
   };
 
   const formatTime = (timestamp) => {
-    const ts = toNumber(timestamp);
+    const ts = toTimestampMs(timestamp);
     if (ts === null) return '--';
     return new Date(ts).toLocaleTimeString([], {
       hour: '2-digit',
@@ -72,47 +78,110 @@ const EnvMonitor = () => {
     return `${Math.round(num)} ${unit}`;
   };
 
+  const formatDateTime = (timestamp) => {
+    const ts = toTimestampMs(timestamp);
+    if (ts === null) return '--';
+    return new Date(ts).toLocaleString([], {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  };
+
+  const getHeightMm = (entry) => {
+    const mm = toNumber(entry?.height_mm ?? entry?.height ?? entry?.heightMm ?? entry?.heightMM ?? entry?.current_height);
+    if (mm !== null) return mm;
+    const cm = toNumber(entry?.height_cm ?? entry?.heightCm);
+    return cm !== null ? cm * 10 : null;
+  };
+
   const handleExportPDF = () => {
     const doc = new jsPDF();
     const date = new Date().toLocaleString();
+    const marginX = 14;
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const contentBottom = pageHeight - 16;
+    let y = 50;
+
+    const ensureSpace = (needed = 8) => {
+      if (y + needed <= contentBottom) return;
+      doc.addPage();
+      y = 20;
+    };
+
+    const getLogTimestamp = (log) => {
+      const direct = toTimestampMs(log?.timestamp ?? log?.ts ?? log?.time ?? log?.logged_at ?? log?.loggedAt);
+      if (direct !== null) return direct;
+      if (!log?.date) return null;
+      const parsed = Date.parse(log.date);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const normalizedGrowthLogs = (Array.isArray(growthLogs) ? growthLogs : [])
+      .map((log) => ({
+        timestamp: getLogTimestamp(log),
+        jarId: String(log?.jarId ?? log?.jar_id ?? log?.jar ?? log?.plantId ?? log?.plant_id ?? '--'),
+        heightMm: getHeightMm(log),
+        status: String(log?.predicted_label ?? log?.classification ?? log?.status ?? '--')
+      }))
+      .filter((log) => log.timestamp !== null || log.heightMm !== null || log.jarId !== '--')
+      .sort((a, b) => (b.timestamp ?? 0) - (a.timestamp ?? 0));
+
+    const latestGrowthLogs = normalizedGrowthLogs.slice(0, 8);
+    const loggedHeights = normalizedGrowthLogs
+      .map((log) => log.heightMm)
+      .filter((value) => value !== null);
+    const latestSensorHeight = getHeightMm(latest || {});
+    const latestLoggedHeight = latestGrowthLogs.find((log) => log.heightMm !== null)?.heightMm ?? null;
+    const latestHeight = latestSensorHeight ?? latestLoggedHeight;
+    const averageLoggedHeight = loggedHeights.length
+      ? loggedHeights.reduce((sum, value) => sum + value, 0) / loggedHeights.length
+      : null;
 
     doc.setFontSize(20);
     doc.setTextColor(40, 40, 40);
-    doc.text('Orchid Environmental Report', 14, 22);
+    doc.text('Orchid Environmental Report', marginX, 22);
 
     doc.setFontSize(10);
     doc.setTextColor(100, 100, 100);
-    doc.text(`Generated: ${date}`, 14, 28);
-    doc.text(`Status: ${connectionStatus.toUpperCase()}`, 14, 34);
+    doc.text(`Generated: ${date}`, marginX, 28);
+    doc.text(`Status: ${connectionStatus.toUpperCase()}`, marginX, 34);
 
-    let y = 50;
     doc.setFontSize(14);
     doc.setTextColor(0, 0, 0);
-    doc.text('Current Snapshot', 14, y);
+    doc.text('Current Snapshot', marginX, y);
     y += 10;
+
+    const temp = toNumber(latest?.temperature);
+    const humidity = toNumber(latest?.humidity);
+    const lux = toNumber(latest?.lux);
+    const air = toNumber(latest?.mq135);
 
     const headers = ['Metric', 'Value', 'Status'];
     const data = [
-      ['Temperature', `${latest?.temperature ?? '--'} \u00B0C`,
-        (latest?.temperature > 28 || latest?.temperature < 18) ? 'Out of Range' : 'Optimal'],
-      ['Humidity', `${latest?.humidity ?? '--'} %`,
-        (latest?.humidity < 40 || latest?.humidity > 70) ? 'Warning' : 'Good'],
-      ['Light', `${latest?.lux ?? '--'} lx`, 'Normal'],
-      ['Air Quality (MQ135)', `${latest?.mq135 ?? '--'}`, (latest?.mq135 > 150) ? 'High' : 'Good']
+      ['Temperature', temp === null ? '--' : `${temp.toFixed(1)} \u00B0C`,
+        temp === null ? 'No data' : (temp > 28 || temp < 18) ? 'Out of Range' : 'Optimal'],
+      ['Humidity', humidity === null ? '--' : `${humidity.toFixed(1)} %`,
+        humidity === null ? 'No data' : (humidity < 40 || humidity > 70) ? 'Warning' : 'Good'],
+      ['Light', lux === null ? '--' : `${Math.round(lux)} lx`, lux === null ? 'No data' : 'Normal'],
+      ['Air Quality (MQ135)', air === null ? '--' : `${Math.round(air)}`, air === null ? 'No data' : (air > 150) ? 'High' : 'Good'],
+      ['Plant Height', latestHeight === null ? '--' : `${latestHeight.toFixed(1)} mm`, latestHeight === null ? 'No data' : 'Tracking']
     ];
 
     doc.setFontSize(10);
     let rowY = y;
     doc.setFont('helvetica', 'bold');
-    doc.text(headers[0], 14, rowY);
+    doc.text(headers[0], marginX, rowY);
     doc.text(headers[1], 80, rowY);
     doc.text(headers[2], 140, rowY);
     rowY += 8;
-    doc.line(14, rowY - 6, 190, rowY - 6);
+    doc.line(marginX, rowY - 6, 190, rowY - 6);
 
     doc.setFont('helvetica', 'normal');
     data.forEach((row) => {
-      doc.text(row[0], 14, rowY);
+      doc.text(row[0], marginX, rowY);
       doc.text(row[1], 80, rowY);
       doc.text(row[2], 140, rowY);
       rowY += 8;
@@ -120,14 +189,124 @@ const EnvMonitor = () => {
 
     if (aiTip) {
       rowY += 10;
+      if (rowY + 16 > contentBottom) {
+        doc.addPage();
+        rowY = 20;
+      }
       doc.setFontSize(12);
       doc.setFont('helvetica', 'bold');
-      doc.text('AI Insight:', 14, rowY);
+      doc.text('AI Insight:', marginX, rowY);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(10);
       const splitTip = doc.splitTextToSize(aiTip, 180);
-      doc.text(splitTip, 14, rowY + 6);
+      doc.text(splitTip, marginX, rowY + 6);
+      rowY += splitTip.length * 5 + 8;
     }
+
+    y = rowY + 4;
+    ensureSpace(12);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Growth Logs & Height', marginX, y);
+    y += 8;
+
+    if (!latestGrowthLogs.length) {
+      ensureSpace(8);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text('No growth logs available yet.', marginX, y);
+      y += 8;
+    } else {
+      ensureSpace(9);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Date / Time', marginX, y);
+      doc.text('Jar', 84, y);
+      doc.text('Height', 114, y);
+      doc.text('Status', 145, y);
+      y += 6;
+      doc.line(marginX, y - 4, 190, y - 4);
+      doc.setFont('helvetica', 'normal');
+
+      latestGrowthLogs.forEach((log) => {
+        ensureSpace(8);
+        const jarText = log.jarId.length > 12 ? `${log.jarId.slice(0, 12)}...` : log.jarId;
+        const statusText = log.status.length > 20 ? `${log.status.slice(0, 20)}...` : log.status;
+
+        doc.text(formatDateTime(log.timestamp), marginX, y);
+        doc.text(jarText, 84, y);
+        doc.text(log.heightMm === null ? '--' : `${log.heightMm.toFixed(1)} mm`, 114, y);
+        doc.text(statusText || '--', 145, y);
+        y += 7;
+      });
+    }
+
+    const minHeight = loggedHeights.length ? Math.min(...loggedHeights) : null;
+    const maxHeight = loggedHeights.length ? Math.max(...loggedHeights) : null;
+    ensureSpace(26);
+    doc.setFontSize(12);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Height Summary', marginX, y);
+    y += 7;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+    [
+      `Latest recorded height: ${latestHeight === null ? '--' : `${latestHeight.toFixed(1)} mm`}`,
+      `Average logged height: ${averageLoggedHeight === null ? '--' : `${averageLoggedHeight.toFixed(1)} mm`}`,
+      `Height range: ${minHeight === null || maxHeight === null ? '--' : `${minHeight.toFixed(1)} mm to ${maxHeight.toFixed(1)} mm`}`,
+      `Growth log count: ${normalizedGrowthLogs.length}`,
+    ].forEach((line) => {
+      ensureSpace(6);
+      doc.text(line, marginX, y);
+      y += 5;
+    });
+
+    ensureSpace(14);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Project Summary', marginX, y);
+    y += 8;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+
+    const projectSummary = [
+      'Orchid Insights is a smart orchid-care platform that combines IoT monitoring, growth tracking, and AI-assisted guidance for hydroponic cultivation.',
+      'The system monitors temperature, humidity, light, air quality, and plant height in real time using Firebase live data streams.',
+      'Core modules in this project include Dashboard, Culture Details, Growth Tracker, Growth History, Plant Database, Firebase Table, Env Monitor, and Orchid Companion.',
+      'The frontend is built with React, while FastAPI and ML services power growth analysis and predictive insights.',
+      `Current system snapshot in this report: ${safeHistory.length} environmental readings, ${normalizedGrowthLogs.length} growth logs, ${alerts.length} active alert${alerts.length === 1 ? '' : 's'}, status ${connectionStatus.toUpperCase()}.`,
+    ];
+    const moduleDetails = [
+      'Culture Details: Manage culture and reculture records, rack placement, orchid type, and nutrition notes.',
+      'Growth Tracker: Analyze plant growth using age and height to generate predictive growth status.',
+      'Growth History: View jar-wise historical height trends with comparison and rack-based analysis.',
+      'Plant Database: Browse and search stored orchid plant records synced from backend and Firebase.',
+      'Firebase Table: Inspect live sensor payloads and merged values from Firebase in tabular form.',
+      'Env Monitor: Track real-time temperature, humidity, light, air quality, alerts, and AI tips.',
+      'Orchid Companion: Get context-aware orchid care guidance using live monitor sensor data.'
+    ];
+
+    projectSummary.forEach((line) => {
+      const wrapped = doc.splitTextToSize(`- ${line}`, 180);
+      ensureSpace(wrapped.length * 5 + 1);
+      doc.text(wrapped, marginX, y);
+      y += wrapped.length * 5 + 1;
+    });
+
+    ensureSpace(12);
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.text('Module Details', marginX, y);
+    y += 7;
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'normal');
+
+    moduleDetails.forEach((line) => {
+      const wrapped = doc.splitTextToSize(`- ${line}`, 180);
+      ensureSpace(wrapped.length * 5 + 1);
+      doc.text(wrapped, marginX, y);
+      y += wrapped.length * 5 + 1;
+    });
 
     doc.save(`Orchid_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
   };
