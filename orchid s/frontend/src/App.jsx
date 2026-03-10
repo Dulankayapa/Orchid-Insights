@@ -11,19 +11,20 @@ import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
 import OrchidCompanion from "./pages/OrchidCompanion.jsx";
 import OrchidAIBot from "./components/monitor/OrchidAIBot.jsx";
+import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
 
 const navItems = [
-  { to: "/", label: "Dashboard", code: "📊" },
-  { to: "/reculture", label: "Culture Details", code: "🧪" },
-  { to: "/growth", label: "Growth Tracker", code: "📈" },
-  { to: "/history", label: "Growth History", code: "🕒" },
-  { to: "/plants", label: "Plant Database", code: "🌿" },
-  { to: "/firebase", label: "Firebase Table", code: "🔥" },
-  { to: "/monitor", label: "Env Monitor", code: "🌡️" },
-  { to: "/companion", label: "Orchid Companion", code: "🤖" },
+  { to: "/", label: "Dashboard", code: "\u{1F4CA}" },
+  { to: "/reculture", label: "Culture Details", code: "\u{1F9EA}" },
+  { to: "/growth", label: "Growth Tracker", code: "\u{1F4C8}" },
+  { to: "/history", label: "Growth History", code: "\u{1F552}" },
+  { to: "/plants", label: "Plant Database", code: "\u{1F33F}" },
+  { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
+  { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
+  { to: "/companion", label: "Orchid Companion", code: "\u{1F916}" },
 ];
 
 const TIME_ZONE = "Asia/Colombo";
@@ -63,27 +64,25 @@ export default function App() {
     <ThemeProvider>
       <div className="relative min-h-screen overflow-hidden bg-background text-dark transition-colors duration-300 selection:bg-primary/20">
         <div className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -top-24 left-0 h-80 w-80 rounded-full bg-primary/22 blur-3xl" />
-          <div className="absolute right-0 top-10 h-72 w-72 rounded-full bg-secondary/20 blur-3xl" />
-          <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-accent/18 blur-3xl" />
-          <div className="absolute left-[24%] top-[34%] h-56 w-56 rounded-full bg-cyan-300/14 blur-3xl" />
-          <div className="absolute right-[20%] bottom-[14%] h-44 w-44 rounded-full bg-emerald-300/14 blur-3xl" />
+          <div className="absolute -top-24 left-0 h-80 w-80 rounded-full bg-primary/10 blur-3xl" />
+          <div className="absolute right-0 top-10 h-72 w-72 rounded-full bg-secondary/10 blur-3xl" />
+          <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
+          <div className="absolute left-[24%] top-[34%] h-56 w-56 rounded-full bg-slate-200/45 blur-3xl dark:bg-indigo-400/10" />
+          <div className="absolute right-[20%] bottom-[14%] h-44 w-44 rounded-full bg-teal-200/35 blur-3xl dark:bg-teal-400/10" />
         </div>
 
         <div className="mx-auto flex min-h-screen max-w-[1600px]">
           <aside className="hidden lg:flex lg:w-80 lg:flex-col px-6 py-7">
-            <div className="panel space-y-5">
+            <div className="sidebar-spotlight space-y-5">
               <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-primary to-secondary text-lg shadow-[0_18px_32px_-20px_rgba(13,148,136,0.9)] ring-4 ring-primary/10">
-                  🌸
-                </div>
+                <div className="brand-orb">{"\u{1F338}"}</div>
                 <div>
-                  <p className="kicker text-[12px] tracking-[0.28em] text-primary/80">ORCHID INSIGHTS</p>
+                  <p className="topic-3d">ORCHID INSIGHTS</p>
                 </div>
               </div>
 
-              <div className="rounded-3xl border border-border/30 bg-paper/90 px-4 py-3 shadow-[0_12px_30px_-22px_rgba(15,23,42,0.28)]">
-                <p className="text-[11px] uppercase tracking-[0.22em] text-primary/75">Today</p>
+              <div className="sidebar-modern-card px-4 py-3">
+                <p className="sidebar-meta-label">Today</p>
                 <div className="mt-2 space-y-1">
                   <p className="text-base font-semibold text-dark">{todayLabel}</p>
                   <p className="text-[13px] font-medium leading-5 text-dark [font-variant-numeric:tabular-nums]">
@@ -93,39 +92,44 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="flex items-center justify-between rounded-2xl border border-border/40 bg-paper/70 px-4 py-3">
-                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-subtle">Theme</p>
+              <div className="sidebar-modern-card flex items-center justify-between px-4 py-3">
+                <p className="sidebar-label text-subtle/90">Theme</p>
                 <ThemeToggle />
               </div>
             </div>
 
-            <nav className="mt-7 space-y-2">
+            <nav className="mt-7 space-y-1.5">
               {navItems.map((item) => (
                 <NavLink
                   key={item.to}
                   to={item.to}
-                  className={({ isActive }) =>
-                    `group flex items-center gap-3 rounded-2xl px-3 py-3 text-base transition ${
-                      isActive
-                        ? "border border-primary/45 bg-gradient-to-r from-primary/20 via-secondary/10 to-accent/10 text-primary shadow-[0_16px_36px_-24px_rgba(13,148,136,0.95)]"
-                        : "border border-transparent text-subtle hover:border-border/55 hover:bg-gradient-to-r hover:from-paper/80 hover:to-primary/8 hover:text-dark"
-                    }`
-                  }
+                  className="group block"
                 >
                   {({ isActive }) => (
-                    <>
+                    <div
+                      className={`relative flex items-center gap-3 overflow-hidden rounded-2xl border px-3 py-3 transition-all duration-200 ${
+                        isActive
+                          ? "border-primary/30 bg-primary/10 text-primary shadow-[0_14px_28px_-22px_rgba(0,180,150,0.8)]"
+                          : "border-transparent text-subtle hover:border-border/65 hover:bg-paper/85 hover:text-dark"
+                      }`}
+                    >
                       <span
-                        className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border text-[14px] leading-none ${
+                        className={`absolute left-0 top-2.5 h-[calc(100%-20px)] w-[3px] rounded-r-full bg-primary transition-opacity duration-200 ${
+                          isActive ? "opacity-100" : "opacity-0"
+                        }`}
+                      />
+                      <span
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-xl border text-[17px] leading-none transition-transform duration-200 ${
                           isActive
-                            ? "border-primary/45 bg-primary/15 text-primary"
-                            : "border-border/45 bg-paper/75 text-subtle group-hover:text-dark"
+                            ? "scale-105 border-primary/35 bg-primary/15 text-primary"
+                            : "border-border/45 bg-paper/75 text-subtle group-hover:scale-105 group-hover:text-dark"
                         }`}
                       >
                         {item.code}
                       </span>
-                      <span className="flex-1 font-semibold">{item.label}</span>
-                      <span className={`text-sm ${isActive ? "text-primary/70" : "text-subtle/60"}`}>-&gt;</span>
-                    </>
+                      <span className="sidebar-label flex-1">{item.label}</span>
+                      <span className={`text-sm transition-colors duration-200 ${isActive ? "text-primary/80" : "text-subtle/60 group-hover:text-dark"}`}>-&gt;</span>
+                    </div>
                   )}
                 </NavLink>
               ))}
@@ -135,6 +139,10 @@ export default function App() {
               <OrchidAIBot compact />
             </div>
 
+            <div className="mt-4">
+              <SidebarOrchidBloom />
+            </div>
+
             <div className="mt-auto panel-muted px-4 py-3">
               <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">Stack</p>
               <p className="mt-1 text-xs text-subtle">FastAPI + ML + Firebase</p>
@@ -142,7 +150,7 @@ export default function App() {
           </aside>
 
           <div className="min-w-0 flex-1">
-            <header className="lg:hidden sticky top-0 z-20 border-b border-border/45 bg-gradient-to-r from-paper/90 via-paper/80 to-primary/10 px-4 py-4 backdrop-blur-xl">
+            <header className="lg:hidden sticky top-0 z-20 border-b border-border/50 bg-gradient-to-r from-paper/95 via-paper/90 to-primary/10 px-4 py-4 backdrop-blur-xl">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="kicker">ORCHID INSIGHTS</p>
@@ -156,10 +164,10 @@ export default function App() {
                     key={item.to}
                     to={item.to}
                     className={({ isActive }) =>
-                      `whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-semibold transition ${
+                      `whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-medium transition-all duration-200 ${
                         isActive
-                          ? "border-primary/45 bg-gradient-to-r from-primary/20 to-secondary/15 text-primary"
-                          : "border-border/40 bg-paper/85 text-subtle"
+                          ? "border-primary/35 bg-primary/10 text-primary"
+                          : "border-border/45 bg-paper/90 text-subtle hover:border-border/75 hover:text-dark"
                       }`
                     }
                   >
@@ -195,3 +203,5 @@ export default function App() {
     </ThemeProvider>
   );
 }
+
+

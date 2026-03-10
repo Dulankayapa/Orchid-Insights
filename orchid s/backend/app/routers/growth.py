@@ -8,6 +8,7 @@ from app.services import growth
 router = APIRouter(prefix="/growth", tags=["growth"])
 
 
+#Endpoint to analyze plant growth based on the provided data
 @router.post("/analyze", response_model=GrowthResponse)
 def analyze_growth(payload: GrowthRequest):
     try:

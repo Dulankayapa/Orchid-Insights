@@ -138,17 +138,17 @@ const MonitorCharts = ({ history }) => {
     }), [points]);
 
     return (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <ChartCard title="Temperature Trend" icon="🌡️">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <ChartCard title="Temperature Trend" icon="TMP">
                 <Line data={datasets.temp} options={commonOptions} />
             </ChartCard>
-            <ChartCard title="Humidity Trend" icon="💧">
+            <ChartCard title="Humidity Trend" icon="HUM">
                 <Line data={datasets.hum} options={commonOptions} />
             </ChartCard>
-            <ChartCard title="Light Intensity" icon="☀️">
+            <ChartCard title="Light Intensity" icon="LUX">
                 <Line data={datasets.light} options={commonOptions} />
             </ChartCard>
-            <ChartCard title="Air Quality (MQ135)" icon="💨">
+            <ChartCard title="Air Quality (MQ135)" icon="AIR">
                 <Line data={datasets.air} options={commonOptions} />
             </ChartCard>
         </div>
@@ -156,12 +156,13 @@ const MonitorCharts = ({ history }) => {
 };
 
 const ChartCard = ({ title, icon, children }) => (
-    <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm h-[300px] flex flex-col">
-        <h3 className="text-sm font-bold text-slate-700 mb-4 flex items-center gap-2">
-            <span>{icon}</span> {title}
+    <div className="dashboard-card dashboard-card-hover group flex h-[300px] flex-col p-6">
+        <h3 className="mb-4 flex items-center gap-2 text-[14px] font-semibold text-slate-700 dark:text-slate-200">
+            <span className="inline-flex h-6 min-w-[2.25rem] items-center justify-center rounded-md border border-slate-200/80 bg-white/80 px-2 text-[10px] font-bold tracking-[0.08em] text-slate-600 transition-transform duration-200 group-hover:scale-105 dark:border-slate-700/70 dark:bg-slate-800/70 dark:text-slate-300">{icon}</span>{" "}{title}
         </h3>
-        <div className="flex-1 w-full relative min-h-0">{children}</div>
+        <div className="relative min-h-0 w-full flex-1">{children}</div>
     </div>
 );
 
 export default MonitorCharts;
+
