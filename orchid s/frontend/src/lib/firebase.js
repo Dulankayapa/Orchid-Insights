@@ -1,5 +1,6 @@
 import { initializeApp } from "firebase/app";
 import { getDatabase } from "firebase/database";
+import { getAuth } from "firebase/auth";
 
 const DEFAULT_FIREBASE_DB_URL = "https://orchid-86ea4-default-rtdb.asia-southeast1.firebasedatabase.app";
 export const resolvedDatabaseURL = import.meta.env.VITE_FIREBASE_DB_URL || DEFAULT_FIREBASE_DB_URL;
@@ -17,3 +18,4 @@ if (!firebaseConfig.databaseURL) {
 
 const app = initializeApp(firebaseConfig);
 export const db = getDatabase(app);
+export const auth = getAuth(app);
