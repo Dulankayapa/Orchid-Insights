@@ -524,6 +524,274 @@ const buildRackStats = (rackPlants) => {
   });
 };
 
+// START CLUSTER_UI_STEP: jar-id-based K-Means helpers (safe to remove as one block)
+const CLUSTER_FEATURE_KEYS = ["height_cm", "days_since_planting", "growth_rate"];
+const NO_GROWTH_RATE_CM_PER_DAY = 0.001;
+const SLOW_GROWTH_RATE_CM_PER_DAY = 0.03;
+const ATTENTION_MIN_DAYS_SINCE_PLANTING = 90;
+const CLUSTER_LABEL_COLORS = {
+  "slow growth": "#dc2626",
+  "normal growth": "#2563eb",
+  "fast growth": "#16a34a",
+};
+
+const buildJarClusterFeatures = (combinedRecords, { mockIdSet, includeIdSet } = {}) => {
+  const allowMockOnly = mockIdSet && mockIdSet.size;
+  const allowSubsetOnly = includeIdSet && includeIdSet.size;
+  return (combinedRecords || [])
+    .filter((record) => {
+      if (!record?.id) return false;
+      const idKey = normalizeId(record.id);
+      if (!idKey) return false;
+      if (allowMockOnly && !mockIdSet.has(idKey)) return false;
+      if (allowSubsetOnly && !includeIdSet.has(idKey)) return false;
+      return true;
+    })
+    .map((record) => {
+      const points = (record.heights || [])
+        .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+        .filter(Boolean)
+        .sort((a, b) => a.x - b.x);
+      if (points.length < 2) return null;
+
+      const first = points[0];
+      const last = points[points.length - 1];
+      const elapsedDays = (last.x - first.x) / DAY_MS;
+
+      const plantingTs = record.planting_date ? Date.parse(`${record.planting_date}T12:00:00Z`) : null;
+      const daysSincePlanting = Number.isFinite(plantingTs)
+        ? Math.max(0, (last.x - plantingTs) / DAY_MS)
+        : Math.max(0, elapsedDays);
+
+      const growthRate = elapsedDays > 0 ? ((last.y - first.y) / 10) / elapsedDays : 0;
+      const heightCm = last.y / 10;
+
+      if (!Number.isFinite(heightCm) || !Number.isFinite(daysSincePlanting) || !Number.isFinite(growthRate)) return null;
+
+      return {
+        jar_id: record.id,
+        height_cm: heightCm,
+        days_since_planting: daysSincePlanting,
+        growth_rate: growthRate,
+      };
+    })
+    .filter(Boolean);
+};
+
+const buildZScoreStats = (rows, keys) =>
+  keys.map((key) => {
+    const values = rows.map((row) => row[key]);
+    const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+    const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+    const std = Math.sqrt(variance) || 1;
+    return { key, mean, std };
+  });
+
+const normalizeFeatureVectors = (rows, stats) =>
+  rows.map((row) => stats.map((s) => (row[s.key] - s.mean) / s.std));
+
+const euclideanSq = (a, b) => a.reduce((sum, value, i) => sum + (value - b[i]) ** 2, 0);
+
+const meanVector = (vectors) => {
+  const dims = vectors[0].length;
+  const sums = new Array(dims).fill(0);
+  vectors.forEach((vector) => {
+    vector.forEach((value, idx) => {
+      sums[idx] += value;
+    });
+  });
+  return sums.map((sum) => sum / vectors.length);
+};
+
+const initGrowthCentroids = (vectors) => {
+  const byGrowth = [...vectors].sort((a, b) => a[2] - b[2]);
+  const low = byGrowth[0];
+  const mid = byGrowth[Math.floor(byGrowth.length / 2)];
+  const high = byGrowth[byGrowth.length - 1];
+  return [low, mid, high].map((v) => [...v]);
+};
+
+const runKMeans = (vectors, k = 3, maxIters = 100) => {
+  if (vectors.length < k) return null;
+
+  let centroids = initGrowthCentroids(vectors);
+  let assignments = new Array(vectors.length).fill(-1);
+
+  for (let iter = 0; iter < maxIters; iter += 1) {
+    let changed = false;
+    vectors.forEach((vector, idx) => {
+      let bestCluster = 0;
+      let bestDist = Number.POSITIVE_INFINITY;
+      centroids.forEach((centroid, cIdx) => {
+        const dist = euclideanSq(vector, centroid);
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestCluster = cIdx;
+        }
+      });
+      if (assignments[idx] !== bestCluster) {
+        assignments[idx] = bestCluster;
+        changed = true;
+      }
+    });
+
+    const clusters = Array.from({ length: k }, () => []);
+    assignments.forEach((clusterIdx, idx) => {
+      clusters[clusterIdx].push(vectors[idx]);
+    });
+
+    centroids = centroids.map((oldCentroid, cIdx) => {
+      const vectorsInCluster = clusters[cIdx];
+      if (!vectorsInCluster.length) return oldCentroid;
+      return meanVector(vectorsInCluster);
+    });
+
+    if (!changed) return { centroids, assignments, iterations: iter + 1 };
+  }
+
+  return { centroids, assignments, iterations: maxIters };
+};
+
+const labelClustersByGrowth = (centroids) => {
+  const ranked = centroids
+    .map((centroid, idx) => ({ idx, growthSignal: centroid[2] }))
+    .sort((a, b) => a.growthSignal - b.growthSignal);
+  const map = new Map();
+  map.set(ranked[0].idx, "slow growth");
+  map.set(ranked[1].idx, "normal growth");
+  map.set(ranked[2].idx, "fast growth");
+  return map;
+};
+
+const classifyGrowthByRule = ({ growth_rate, height_cm }) => {
+  const rate = Number(growth_rate);
+  const height = Number(height_cm);
+  if ((Number.isFinite(rate) && rate < SLOW_GROWTH_RATE_CM_PER_DAY) || (Number.isFinite(height) && height < 12))
+    return "slow growth";
+  if ((Number.isFinite(rate) && rate > 0.1) || (Number.isFinite(height) && height >= 16)) return "fast growth";
+  return "normal growth";
+};
+
+const buildGrowthAttentionWarnings = (
+  features,
+  { minDaysSincePlanting = ATTENTION_MIN_DAYS_SINCE_PLANTING } = {}
+) => {
+  const map = new Map();
+  (features || []).forEach((item) => {
+    const days = Number(item?.days_since_planting);
+    if (!Number.isFinite(days) || days < minDaysSincePlanting) return;
+
+    const rate = Number(item?.growth_rate);
+    const noGrowth = Number.isFinite(rate) && rate <= NO_GROWTH_RATE_CM_PER_DAY;
+    const slowGrowth =
+      !noGrowth &&
+      ((Number.isFinite(rate) && rate <= SLOW_GROWTH_RATE_CM_PER_DAY) || classifyGrowthByRule(item) === "slow growth");
+    if (!noGrowth && !slowGrowth) return;
+
+    const jarId = item?.jar_id;
+    if (!jarId) return;
+    const severity = noGrowth ? "no growth" : "slow growth";
+    const existing = map.get(jarId);
+    if (!existing || severity === "no growth") {
+      map.set(jarId, { jar_id: jarId, severity, days_since_planting: days });
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) =>
+    String(a.jar_id).localeCompare(String(b.jar_id), undefined, { numeric: true, sensitivity: "base" })
+  );
+};
+
+const buildGrowthClusterResult = (combinedRecords, { mockIdSet, includeIdSet } = {}) => {
+  const features = buildJarClusterFeatures(combinedRecords, { mockIdSet, includeIdSet });
+  const sourceLabel = includeIdSet && includeIdSet.size ? "selected jar/rack scope" : "all mock jars";
+
+  if (!features.length) {
+    return {
+      ready: false,
+      reason: "No eligible jars found for current selection. Choose a jar or rack with growth records.",
+      assignments: [],
+      counts: {},
+      sourceLabel,
+    };
+  }
+
+  if (features.length < 3) {
+    const assignments = features
+      .map((item) => {
+        const clusterLabel = classifyGrowthByRule(item);
+        return {
+          ...item,
+          cluster_id: -1,
+          cluster_label: clusterLabel,
+          color: CLUSTER_LABEL_COLORS[clusterLabel] || "#2563eb",
+        };
+      })
+      .sort((a, b) => String(a.jar_id).localeCompare(String(b.jar_id), undefined, { numeric: true, sensitivity: "base" }));
+
+    const counts = assignments.reduce((acc, item) => {
+      acc[item.cluster_label] = (acc[item.cluster_label] || 0) + 1;
+      return acc;
+    }, {});
+
+    return {
+      ready: true,
+      reason: "",
+      mode: "rule-based",
+      note: `Only ${assignments.length} jar(s) available in this selection. Rule-based grouping shown; K-Means starts from 3 jars.`,
+      assignments,
+      counts,
+      iterations: 0,
+      totalJars: assignments.length,
+      sourceLabel,
+    };
+  }
+
+  const normStats = buildZScoreStats(features, CLUSTER_FEATURE_KEYS);
+  const vectors = normalizeFeatureVectors(features, normStats);
+  const kmeans = runKMeans(vectors, 3, 100);
+  if (!kmeans) {
+    return {
+      ready: false,
+      reason: "K-Means could not run with current records.",
+      assignments: [],
+      counts: {},
+    };
+  }
+
+  const labels = labelClustersByGrowth(kmeans.centroids);
+  const assignments = features
+    .map((item, idx) => {
+      const clusterId = kmeans.assignments[idx];
+      const clusterLabel = labels.get(clusterId) || "normal growth";
+      return {
+        ...item,
+        cluster_id: clusterId,
+        cluster_label: clusterLabel,
+        color: CLUSTER_LABEL_COLORS[clusterLabel] || "#2563eb",
+      };
+    })
+    .sort((a, b) => String(a.jar_id).localeCompare(String(b.jar_id), undefined, { numeric: true, sensitivity: "base" }));
+
+  const counts = assignments.reduce((acc, item) => {
+    acc[item.cluster_label] = (acc[item.cluster_label] || 0) + 1;
+    return acc;
+  }, {});
+
+  return {
+    ready: true,
+    reason: "",
+    mode: "kmeans",
+    note: "",
+    assignments,
+    counts,
+    iterations: kmeans.iterations,
+    totalJars: assignments.length,
+    sourceLabel,
+  };
+};
+// END CLUSTER_UI_STEP
+
 const buildGrowthInsight = ({ stats, record, history }) => {
   if (!stats || !history.length) {
     return "No measurements yet. Add at least two entries to generate a growth conclusion.";
@@ -713,38 +981,269 @@ const HISTORY_TEST_MOCK_PLANTS = [
     cultivar: "Phalaenopsis (test A)",
     nutrition: "MS + 3% sucrose",
     heights: [
-      { date: "2026-01-03", height_mm: 18 },
-      { date: "2026-01-10", height_mm: 24 },
-      { date: "2026-01-17", height_mm: 33 },
-      { date: "2026-01-24", height_mm: 45 },
-      { date: "2026-01-31", height_mm: 58 },
-      { date: "2026-02-07", height_mm: 71 },
-      { date: "2026-02-14", height_mm: 86 },
-      { date: "2026-02-21", height_mm: 101 },
-      { date: "2026-02-28", height_mm: 116 },
-      { date: "2026-03-07", height_mm: 129 },
+      { date: "2026-01-28", height_mm: 18 },
+      { date: "2026-02-11", height_mm: 27 },
+      { date: "2026-02-25", height_mm: 38 },
+      { date: "2026-03-11", height_mm: 51 },
+      { date: "2026-03-25", height_mm: 66 },
+      { date: "2026-04-08", height_mm: 83 },
+      { date: "2026-04-22", height_mm: 102 },
+      { date: "2026-05-06", height_mm: 123 },
+      { date: "2026-05-20", height_mm: 146 },
+      { date: "2026-06-03", height_mm: 170 },
     ],
   }),
   normalizePlantRecord({
     id: "Jar-92",
     planting_date: "2025-12-30",
-    location: "Rack T2",
+    location: "Rack T1",
     cultivar: "Phalaenopsis (test B)",
     nutrition: "VW medium",
     heights: [
-      { date: "2026-01-05", height_mm: 20 },
-      { date: "2026-01-12", height_mm: 26 },
-      { date: "2026-01-19", height_mm: 31 },
-      { date: "2026-01-26", height_mm: 35 },
-      { date: "2026-02-02", height_mm: 38 },
-      { date: "2026-02-09", height_mm: 40 },
-      { date: "2026-02-16", height_mm: 42 },
-      { date: "2026-02-23", height_mm: 43 },
-      { date: "2026-03-02", height_mm: 45 },
-      { date: "2026-03-09", height_mm: 46 },
+      { date: "2026-01-30", height_mm: 20 },
+      { date: "2026-02-13", height_mm: 22 },
+      { date: "2026-02-27", height_mm: 24 },
+      { date: "2026-03-13", height_mm: 27 },
+      { date: "2026-03-27", height_mm: 30 },
+      { date: "2026-04-10", height_mm: 33 },
+      { date: "2026-04-24", height_mm: 36 },
+      { date: "2026-05-08", height_mm: 40 },
+      { date: "2026-05-22", height_mm: 44 },
+      { date: "2026-06-05", height_mm: 49 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-93",
+    planting_date: "2025-12-26",
+    location: "Rack T1",
+    cultivar: "Dendrobium (test C)",
+    nutrition: "MS + banana extract",
+    heights: [
+      { date: "2026-01-26", height_mm: 16 },
+      { date: "2026-02-09", height_mm: 23 },
+      { date: "2026-02-23", height_mm: 31 },
+      { date: "2026-03-09", height_mm: 40 },
+      { date: "2026-03-23", height_mm: 50 },
+      { date: "2026-04-06", height_mm: 62 },
+      { date: "2026-04-20", height_mm: 75 },
+      { date: "2026-05-04", height_mm: 89 },
+      { date: "2026-05-18", height_mm: 106 },
+      { date: "2026-06-01", height_mm: 128 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-94",
+    planting_date: "2025-12-29",
+    location: "Rack T1",
+    cultivar: "Vanda (test D)",
+    nutrition: "VW + peptone",
+    heights: [
+      { date: "2026-01-29", height_mm: 22 },
+      { date: "2026-02-12", height_mm: 32 },
+      { date: "2026-02-26", height_mm: 44 },
+      { date: "2026-03-12", height_mm: 58 },
+      { date: "2026-03-26", height_mm: 74 },
+      { date: "2026-04-09", height_mm: 92 },
+      { date: "2026-04-23", height_mm: 112 },
+      { date: "2026-05-07", height_mm: 134 },
+      { date: "2026-05-21", height_mm: 158 },
+      { date: "2026-06-04", height_mm: 184 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-95",
+    planting_date: "2026-01-02",
+    location: "Rack T2",
+    cultivar: "Cattleya (test E)",
+    nutrition: "Half-strength MS",
+    heights: [
+      { date: "2026-02-02", height_mm: 15 },
+      { date: "2026-02-16", height_mm: 21 },
+      { date: "2026-03-02", height_mm: 28 },
+      { date: "2026-03-16", height_mm: 36 },
+      { date: "2026-03-30", height_mm: 45 },
+      { date: "2026-04-13", height_mm: 56 },
+      { date: "2026-04-27", height_mm: 69 },
+      { date: "2026-05-11", height_mm: 84 },
+      { date: "2026-05-25", height_mm: 100 },
+      { date: "2026-06-08", height_mm: 118 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-96",
+    planting_date: "2026-01-04",
+    location: "Rack T2",
+    cultivar: "Oncidium (test F)",
+    nutrition: "MS + activated charcoal",
+    heights: [
+      { date: "2026-02-04", height_mm: 18 },
+      { date: "2026-02-18", height_mm: 29 },
+      { date: "2026-03-04", height_mm: 41 },
+      { date: "2026-03-18", height_mm: 55 },
+      { date: "2026-04-01", height_mm: 70 },
+      { date: "2026-04-15", height_mm: 87 },
+      { date: "2026-04-29", height_mm: 106 },
+      { date: "2026-05-13", height_mm: 127 },
+      { date: "2026-05-27", height_mm: 151 },
+      { date: "2026-06-10", height_mm: 178 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-97",
+    planting_date: "2026-01-01",
+    location: "Rack T2",
+    cultivar: "Miltonia (test G)",
+    nutrition: "VW + coconut water",
+    heights: [
+      { date: "2026-02-01", height_mm: 17 },
+      { date: "2026-02-15", height_mm: 23 },
+      { date: "2026-03-01", height_mm: 30 },
+      { date: "2026-03-15", height_mm: 38 },
+      { date: "2026-03-29", height_mm: 47 },
+      { date: "2026-04-12", height_mm: 58 },
+      { date: "2026-04-26", height_mm: 71 },
+      { date: "2026-05-10", height_mm: 86 },
+      { date: "2026-05-24", height_mm: 103 },
+      { date: "2026-06-07", height_mm: 121 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-98",
+    planting_date: "2026-01-06",
+    location: "Rack T3",
+    cultivar: "Brassia (test H)",
+    nutrition: "MS + casein hydrolysate",
+    heights: [
+      { date: "2026-02-06", height_mm: 14 },
+      { date: "2026-02-20", height_mm: 19 },
+      { date: "2026-03-06", height_mm: 25 },
+      { date: "2026-03-20", height_mm: 32 },
+      { date: "2026-04-03", height_mm: 40 },
+      { date: "2026-04-17", height_mm: 49 },
+      { date: "2026-05-01", height_mm: 59 },
+      { date: "2026-05-15", height_mm: 69 },
+      { date: "2026-05-29", height_mm: 78 },
+      { date: "2026-06-12", height_mm: 86 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-99",
+    planting_date: "2026-01-08",
+    location: "Rack T3",
+    cultivar: "Cymbidium (test I)",
+    nutrition: "Half-strength VW",
+    heights: [
+      { date: "2026-02-08", height_mm: 13 },
+      { date: "2026-02-22", height_mm: 15 },
+      { date: "2026-03-08", height_mm: 17 },
+      { date: "2026-03-22", height_mm: 20 },
+      { date: "2026-04-05", height_mm: 23 },
+      { date: "2026-04-19", height_mm: 27 },
+      { date: "2026-05-03", height_mm: 31 },
+      { date: "2026-05-17", height_mm: 36 },
+      { date: "2026-05-31", height_mm: 41 },
+      { date: "2026-06-14", height_mm: 46 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-100",
+    planting_date: "2026-01-10",
+    location: "Rack T3",
+    cultivar: "Paphiopedilum (test J)",
+    nutrition: "MS + low nitrate",
+    heights: [
+      { date: "2026-02-10", height_mm: 30 },
+      { date: "2026-02-24", height_mm: 30 },
+      { date: "2026-03-10", height_mm: 30 },
+      { date: "2026-03-24", height_mm: 30 },
+      { date: "2026-04-07", height_mm: 30 },
+      { date: "2026-04-21", height_mm: 30 },
+      { date: "2026-05-05", height_mm: 31 },
+      { date: "2026-05-19", height_mm: 31 },
+      { date: "2026-06-02", height_mm: 31 },
+      { date: "2026-06-16", height_mm: 31 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-101",
+    planting_date: "2026-01-12",
+    location: "Rack T4",
+    cultivar: "Ascocenda (test K)",
+    nutrition: "VW + amino acids",
+    heights: [
+      { date: "2026-02-12", height_mm: 19 },
+      { date: "2026-02-26", height_mm: 30 },
+      { date: "2026-03-12", height_mm: 43 },
+      { date: "2026-03-26", height_mm: 58 },
+      { date: "2026-04-09", height_mm: 74 },
+      { date: "2026-04-23", height_mm: 92 },
+      { date: "2026-05-07", height_mm: 113 },
+      { date: "2026-05-21", height_mm: 136 },
+      { date: "2026-06-04", height_mm: 158 },
+      { date: "2026-06-18", height_mm: 175 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-102",
+    planting_date: "2026-01-14",
+    location: "Rack T4",
+    cultivar: "Rhynchostylis (test L)",
+    nutrition: "MS + coconut water",
+    heights: [
+      { date: "2026-02-14", height_mm: 21 },
+      { date: "2026-02-28", height_mm: 27 },
+      { date: "2026-03-14", height_mm: 34 },
+      { date: "2026-03-28", height_mm: 42 },
+      { date: "2026-04-11", height_mm: 51 },
+      { date: "2026-04-25", height_mm: 62 },
+      { date: "2026-05-09", height_mm: 75 },
+      { date: "2026-05-23", height_mm: 90 },
+      { date: "2026-06-06", height_mm: 109 },
+      { date: "2026-06-20", height_mm: 132 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-103",
+    planting_date: "2026-01-16",
+    location: "Rack T1",
+    cultivar: "Spathoglottis (test M)",
+    nutrition: "MS + myo-inositol",
+    heights: [
+      { date: "2026-02-16", height_mm: 24 },
+      { date: "2026-03-02", height_mm: 31 },
+      { date: "2026-03-16", height_mm: 39 },
+      { date: "2026-03-30", height_mm: 48 },
+      { date: "2026-04-13", height_mm: 59 },
+      { date: "2026-04-27", height_mm: 71 },
+      { date: "2026-05-11", height_mm: 85 },
+      { date: "2026-05-25", height_mm: 101 },
+      { date: "2026-06-08", height_mm: 119 },
+      { date: "2026-06-22", height_mm: 140 },
+    ],
+  }),
+  normalizePlantRecord({
+    id: "Jar-104",
+    planting_date: "2026-01-18",
+    location: "Rack T4",
+    cultivar: "Phaius (test N)",
+    nutrition: "MS baseline",
+    heights: [
+      { date: "2026-02-18", height_mm: 28 },
+      { date: "2026-03-04", height_mm: 28 },
+      { date: "2026-03-18", height_mm: 28 },
+      { date: "2026-04-01", height_mm: 28 },
+      { date: "2026-04-15", height_mm: 28 },
+      { date: "2026-04-29", height_mm: 28 },
+      { date: "2026-05-13", height_mm: 28 },
+      { date: "2026-05-27", height_mm: 28 },
+      { date: "2026-06-10", height_mm: 28 },
+      { date: "2026-06-24", height_mm: 28 },
     ],
   }),
 ].filter(Boolean);
+const HISTORY_TEST_MOCK_ID_SET = new Set(
+  HISTORY_TEST_MOCK_PLANTS.map((item) => normalizeId(item?.id)).filter(Boolean)
+);
 
 const HISTORY_TEST_MOCK_CULTURE = [
   normalizeCultureRecord("Jar-91", {
@@ -766,7 +1265,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
   normalizeCultureRecord("Jar-92", {
     jarId: "Jar-92",
     cultureDate: "2025-12-30",
-    rackNo: "T2",
+    rackNo: "T1",
     orchidType: "Phalaenopsis (test B)",
     nutrition: "VW medium",
     addHormone: true,
@@ -774,6 +1273,188 @@ const HISTORY_TEST_MOCK_CULTURE = [
     addSpecialNutrition: false,
     recultures: [
       { date: "2026-02-09", note: "Hormone reduced to BA 0.5 mg/L" },
+      { date: "2026-03-23", note: "Observed slow growth; pH corrected to 5.6 and medium refreshed." },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-93", {
+    jarId: "Jar-93",
+    cultureDate: "2025-12-26",
+    rackNo: "T1",
+    orchidType: "Dendrobium (test C)",
+    nutrition: "MS + banana extract",
+    addHormone: true,
+    hormoneDetail: "Kinetin 0.8 mg/L",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Banana extract 5%",
+    recultures: [
+      { date: "2026-01-31", note: "Special nutrition refreshed: banana extract 5%" },
+      { date: "2026-02-28", note: "Hormone maintained at Kinetin 0.8 mg/L" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-94", {
+    jarId: "Jar-94",
+    cultureDate: "2025-12-29",
+    rackNo: "T1",
+    orchidType: "Vanda (test D)",
+    nutrition: "VW + peptone",
+    addHormone: true,
+    hormoneDetail: "BA 1.2 mg/L",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Peptone 0.2%",
+    recultures: [
+      { date: "2026-02-01", note: "Increased BA to 1.2 mg/L" },
+      { date: "2026-03-01", note: "Peptone refreshed at 0.2%" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-95", {
+    jarId: "Jar-95",
+    cultureDate: "2026-01-02",
+    rackNo: "T2",
+    orchidType: "Cattleya (test E)",
+    nutrition: "Half-strength MS",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: false,
+    recultures: [
+      { date: "2026-02-10", note: "No hormone protocol, baseline nutrition kept stable" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-96", {
+    jarId: "Jar-96",
+    cultureDate: "2026-01-04",
+    rackNo: "T2",
+    orchidType: "Oncidium (test F)",
+    nutrition: "MS + activated charcoal",
+    addHormone: true,
+    hormoneDetail: "NAA 0.2 mg/L",
+    addSpecialNutrition: false,
+    recultures: [
+      { date: "2026-02-24", note: "NAA kept at 0.2 mg/L for rooting support" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-97", {
+    jarId: "Jar-97",
+    cultureDate: "2026-01-01",
+    rackNo: "T2",
+    orchidType: "Miltonia (test G)",
+    nutrition: "VW + coconut water",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Coconut water 8%",
+    recultures: [
+      { date: "2026-02-16", note: "Special nutrition: coconut water 8%" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-98", {
+    jarId: "Jar-98",
+    cultureDate: "2026-01-06",
+    rackNo: "T3",
+    orchidType: "Brassia (test H)",
+    nutrition: "MS + casein hydrolysate",
+    addHormone: true,
+    hormoneDetail: "Kinetin 0.4 mg/L",
+    addSpecialNutrition: false,
+    recultures: [
+      { date: "2026-02-28", note: "Kinetin kept stable at 0.4 mg/L" },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-99", {
+    jarId: "Jar-99",
+    cultureDate: "2026-01-08",
+    rackNo: "T3",
+    orchidType: "Cymbidium (test I)",
+    nutrition: "Half-strength VW",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Seaweed extract 0.15%",
+    recultures: [
+      { date: "2026-03-06", note: "Slow growth observed; seaweed extract added." },
+      { date: "2026-04-17", note: "No contamination; maintain slow-growth protocol and monitor." },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-100", {
+    jarId: "Jar-100",
+    cultureDate: "2026-01-10",
+    rackNo: "T3",
+    orchidType: "Paphiopedilum (test J)",
+    nutrition: "MS + low nitrate",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: false,
+    recultures: [
+      { date: "2026-03-10", note: "No visible growth after 60 days; sent for contamination test." },
+      { date: "2026-04-21", note: "Still stagnant; planned reculture if unchanged in 14 days." },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-101", {
+    jarId: "Jar-101",
+    cultureDate: "2026-01-12",
+    rackNo: "T4",
+    orchidType: "Ascocenda (test K)",
+    nutrition: "VW + amino acids",
+    addHormone: true,
+    hormoneDetail: "BA 1.1 mg/L",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Amino acid mix 0.2%",
+    recultures: [
+      { date: "2026-03-12", note: "Rapid growth confirmed; continue protocol and monitor spacing." },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-102", {
+    jarId: "Jar-102",
+    cultureDate: "2026-01-14",
+    rackNo: "T4",
+    orchidType: "Rhynchostylis (test L)",
+    nutrition: "MS + coconut water",
+    addHormone: true,
+    hormoneDetail: "NAA 0.15 mg/L",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Coconut water 6%",
+    recultures: [
+      { date: "2026-03-14", note: "Growth steady; no intervention required." },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-103", {
+    jarId: "Jar-103",
+    cultureDate: "2026-01-16",
+    rackNo: "T1",
+    orchidType: "Spathoglottis (test M)",
+    nutrition: "MS + myo-inositol",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: true,
+    specialNutritionDetail: "Rice water filtrate 3%",
+    recultures: [
+      { date: "2026-03-30", note: "Stable normal growth; continue current medium." },
+    ],
+    updatedAt: "2026-03-10T00:00:00.000Z",
+  }),
+  normalizeCultureRecord("Jar-104", {
+    jarId: "Jar-104",
+    cultureDate: "2026-01-18",
+    rackNo: "T4",
+    orchidType: "Phaius (test N)",
+    nutrition: "MS baseline",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: false,
+    specialNutritionDetail: "",
+    recultures: [
+      { date: "2026-04-29", note: "No growth trend after 100 days; contamination and pH review started." },
+      { date: "2026-05-27", note: "Still stagnant; flagged for urgent reculture decision." },
     ],
     updatedAt: "2026-03-10T00:00:00.000Z",
   }),
@@ -1064,6 +1745,51 @@ export default function GrowthHistory() {
   );
   const [includeRackInsight, setIncludeRackInsight] = useState(true);
   const [rackReportInsight, setRackReportInsight] = useState("");
+  const clusterSelectionIds = useMemo(() => {
+    const set = new Set();
+    (compareIds || []).forEach((id) => {
+      const key = normalizeId(id);
+      if (key) set.add(key);
+    });
+    if (record?.id) {
+      const key = normalizeId(record.id);
+      if (key) set.add(key);
+    }
+    if ((rackQuery || "").trim()) {
+      (rackPlants || []).forEach((plant) => {
+        const key = normalizeId(plant?.id);
+        if (key) set.add(key);
+      });
+    }
+    return set;
+  }, [compareIds, record, rackQuery, rackPlants]);
+  const hasClusterScope = clusterSelectionIds.size > 0;
+  const clusterResult = useMemo(
+    () => {
+      if (!hasClusterScope) {
+        return {
+          ready: false,
+          reason: "Select a rack or jar to view growth clustering.",
+          assignments: [],
+          counts: {},
+          mode: "kmeans",
+          note: "",
+          iterations: 0,
+          totalJars: 0,
+          sourceLabel: "no active selection",
+        };
+      }
+      return buildGrowthClusterResult(combinedRecords, {
+        mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+        includeIdSet: clusterSelectionIds,
+      });
+    },
+    [combinedRecords, clusterSelectionIds, hasClusterScope]
+  );
+  const globalGrowthFeatures = useMemo(() => buildJarClusterFeatures(combinedRecords), [combinedRecords]);
+  const heroWarnings = useMemo(() => {
+    return buildGrowthAttentionWarnings(globalGrowthFeatures);
+  }, [globalGrowthFeatures]);
 
   useEffect(() => {
     setGrowthReportInsight(growthBrief);
@@ -1080,7 +1806,7 @@ export default function GrowthHistory() {
   return (
     <div className="relative space-y-8">
       <Backdrop isLight={isLight} />
-      <Hero />
+      <Hero warnings={heroWarnings} />
       <LookupCard
         jarId={jarId}
         setJarId={setJarId}
@@ -1194,6 +1920,7 @@ export default function GrowthHistory() {
             })
           }
         />
+        {hasClusterScope ? <GrowthClusterPanel clusterResult={clusterResult} /> : null}
       </div>
     </div>
   );
@@ -2819,6 +3546,253 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
   );
 }
 
+// START CLUSTER_UI_STEP: UI block for mock-data cluster visualization
+function GrowthClusterPanel({ clusterResult }) {
+  const actionByCluster = useMemo(
+    () => ({
+      "slow growth":
+        "Decision: check medium, pH, nutrients, and contamination risk now. If no improvement in next 14 days, plan reculture.",
+      "normal growth":
+        "Decision: keep current protocol and continue biweekly measurements. No major change needed now.",
+      "fast growth":
+        "Decision: maintain current setup, but monitor spacing/light to avoid stress from very rapid growth.",
+    }),
+    []
+  );
+  const scatter = useMemo(() => {
+    if (!clusterResult?.ready || !clusterResult.assignments?.length) return null;
+
+    const width = 920;
+    const height = 320;
+    const padding = { left: 56, right: 24, top: 18, bottom: 46 };
+    const innerW = width - padding.left - padding.right;
+    const innerH = height - padding.top - padding.bottom;
+    const xs = clusterResult.assignments.map((row) => row.days_since_planting);
+    const ys = clusterResult.assignments.map((row) => row.height_cm);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const safeMaxX = maxX === minX ? maxX + 1 : maxX;
+    const safeMaxY = maxY === minY ? maxY + 1 : maxY;
+    const safeMinY = minY === safeMaxY ? minY - 1 : Math.max(0, minY - 0.1 * (safeMaxY - minY));
+
+    const scaleX = (value) => padding.left + ((value - minX) / (safeMaxX - minX)) * innerW;
+    const scaleY = (value) => padding.top + ((safeMaxY - value) / (safeMaxY - safeMinY)) * innerH;
+
+    const xTicks = Array.from({ length: 5 }, (_, idx) => minX + ((safeMaxX - minX) * idx) / 4);
+    const yTicks = Array.from({ length: 5 }, (_, idx) => safeMinY + ((safeMaxY - safeMinY) * idx) / 4);
+
+    const points = clusterResult.assignments.map((row) => ({
+      ...row,
+      cx: scaleX(row.days_since_planting),
+      cy: scaleY(row.height_cm),
+    }));
+
+    return { width, height, padding, xTicks, yTicks, points, scaleX, scaleY };
+  }, [clusterResult]);
+  const clusterHelp = useMemo(() => {
+    if (!clusterResult?.ready || !clusterResult.assignments?.length) return null;
+    const days = clusterResult.assignments.map((item) => item.days_since_planting);
+    const minDays = Math.min(...days);
+    const maxDays = Math.max(...days);
+    const daySpread = maxDays - minDays;
+    return {
+      daySpread,
+      nearlySameDays: daySpread < 2,
+    };
+  }, [clusterResult]);
+  const priorityNote = useMemo(() => {
+    if (!clusterResult?.ready) return "";
+    const slow = clusterResult.counts?.["slow growth"] || 0;
+    const normal = clusterResult.counts?.["normal growth"] || 0;
+    const fast = clusterResult.counts?.["fast growth"] || 0;
+    if (slow >= 2) return `Priority now: review ${slow} slow-growth jar(s) first, then keep tracking ${normal} normal and ${fast} fast jar(s).`;
+    if (slow === 1) return `Priority now: troubleshoot 1 slow-growth jar first. Other jars can remain on current plan.`;
+    return `Priority now: no slow-growth jars detected. Keep current care plan and monitor normal/fast jars.`;
+  }, [clusterResult]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="panel space-y-4"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="kicker">Mock clustering</p>
+          <h3 className="text-xl font-semibold text-dark">
+            {clusterResult?.mode === "kmeans" ? "Jar growth clusters (K-Means, k=3)" : "Jar growth groups (selection mode)"}
+          </h3>
+          <p className="text-sm text-subtle">This panel auto-groups mock jars by similar growth behavior.</p>
+        </div>
+        <span className="text-xs text-subtle">
+          {clusterResult?.ready
+            ? `${clusterResult.totalJars} jars - ${
+                clusterResult.mode === "kmeans" ? `${clusterResult.iterations} rounds` : "rule-based mode"
+              }`
+            : "Waiting for data"}
+        </span>
+      </div>
+
+      {clusterResult?.ready ? (
+        <>
+          <div className="panel-muted px-3 py-3 text-xs text-subtle space-y-1">
+            <p>
+              <span className="font-semibold text-dark">What this chart shows:</span> each dot is one jar. Red means slow growth, blue means normal growth, green means fast growth.
+            </p>
+            <p>
+              It compares jars using days since planting, latest height, and daily growth speed, then groups similar jars automatically.
+            </p>
+            <p>
+              <span className="font-semibold text-dark">What decision to take:</span> {priorityNote}
+            </p>
+            <p>
+              <span className="font-semibold text-dark">Current scope:</span> {clusterResult.sourceLabel}.
+            </p>
+            {clusterResult.note ? <p>{clusterResult.note}</p> : null}
+            {clusterHelp?.nearlySameDays ? (
+              <p>
+                Most jars have similar days since planting, so points can stack vertically. In this case, decisions depend more on height and growth speed.
+              </p>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {["slow growth", "normal growth", "fast growth"].map((label) => {
+              const count = clusterResult.counts?.[label] || 0;
+              const color = CLUSTER_LABEL_COLORS[label];
+              return (
+                <div key={label} className="panel-muted px-3 py-2 text-xs text-dark flex items-center gap-2">
+                  <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: color }} />
+                  <span className="font-semibold">{label}</span>
+                  <span className="text-subtle">{count}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="panel-muted p-3 overflow-x-auto">
+            {scatter ? (
+              <svg viewBox={`0 0 ${scatter.width} ${scatter.height}`} className="w-full min-w-[760px] h-72">
+                <line
+                  x1={scatter.padding.left}
+                  y1={scatter.height - scatter.padding.bottom}
+                  x2={scatter.width - scatter.padding.right}
+                  y2={scatter.height - scatter.padding.bottom}
+                  stroke="rgba(148,163,184,0.7)"
+                  strokeWidth="1.2"
+                />
+                <line
+                  x1={scatter.padding.left}
+                  y1={scatter.padding.top}
+                  x2={scatter.padding.left}
+                  y2={scatter.height - scatter.padding.bottom}
+                  stroke="rgba(148,163,184,0.7)"
+                  strokeWidth="1.2"
+                />
+
+                {scatter.xTicks.map((tick, idx) => {
+                  const x = scatter.scaleX(tick);
+                  return (
+                    <g key={`x-${idx}`}>
+                      <line
+                        x1={x}
+                        y1={scatter.padding.top}
+                        x2={x}
+                        y2={scatter.height - scatter.padding.bottom}
+                        stroke="rgba(148,163,184,0.18)"
+                        strokeDasharray="4 4"
+                      />
+                      <text x={x} y={scatter.height - scatter.padding.bottom + 18} textAnchor="middle" fontSize="11" fill="#64748b">
+                        {tick.toFixed(1)}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {scatter.yTicks.map((tick, idx) => {
+                  const y = scatter.scaleY(tick);
+                  return (
+                    <g key={`y-${idx}`}>
+                      <line
+                        x1={scatter.padding.left}
+                        y1={y}
+                        x2={scatter.width - scatter.padding.right}
+                        y2={y}
+                        stroke="rgba(148,163,184,0.18)"
+                        strokeDasharray="4 4"
+                      />
+                      <text x={scatter.padding.left - 8} y={y + 4} textAnchor="end" fontSize="11" fill="#64748b">
+                        {tick.toFixed(2)}
+                      </text>
+                    </g>
+                  );
+                })}
+
+                {scatter.points.map((point) => (
+                  <g key={point.jar_id}>
+                    <circle cx={point.cx} cy={point.cy} r="5.5" fill={point.color} opacity="0.92" />
+                    <title>
+                      {`${point.jar_id} | ${point.cluster_label} | days ${point.days_since_planting.toFixed(1)} | height ${point.height_cm.toFixed(
+                        2
+                      )} cm | rate ${point.growth_rate.toFixed(4)} cm/day`}
+                    </title>
+                  </g>
+                ))}
+
+                <text
+                  x={(scatter.padding.left + (scatter.width - scatter.padding.right)) / 2}
+                  y={scatter.height - 8}
+                  textAnchor="middle"
+                  fontSize="12"
+                  fill="#475569"
+                >
+                  Days Since Planting
+                </text>
+                <text
+                  x="14"
+                  y={(scatter.padding.top + (scatter.height - scatter.padding.bottom)) / 2}
+                  transform={`rotate(-90 14 ${(scatter.padding.top + (scatter.height - scatter.padding.bottom)) / 2})`}
+                  textAnchor="middle"
+                  fontSize="12"
+                  fill="#475569"
+                >
+                  Latest Height (cm)
+                </text>
+              </svg>
+            ) : (
+              <EmptyState message="Not enough cluster points to render scatter plot." />
+            )}
+          </div>
+
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {clusterResult.assignments.map((item) => (
+              <div key={item.jar_id} className="panel-muted px-3 py-2 text-xs text-dark">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{item.jar_id}</span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                    <span className="text-subtle">{item.cluster_label}</span>
+                  </span>
+                </div>
+                <p className="text-subtle mt-1">Height: {item.height_cm.toFixed(2)} cm</p>
+                <p className="text-subtle">Days: {item.days_since_planting.toFixed(1)}</p>
+                <p className="text-subtle">Daily growth speed: {item.growth_rate.toFixed(4)} cm/day</p>
+                <p className="text-subtle mt-1">{actionByCluster[item.cluster_label] || actionByCluster["normal growth"]}</p>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : (
+        <EmptyState message={clusterResult?.reason || "Cluster panel will appear once enough mock records are available."} />
+      )}
+    </motion.div>
+  );
+}
+// END CLUSTER_UI_STEP
+
 function HistoryList({ history }) {
   const rows = [...history].reverse(); // newest first
 
@@ -2900,7 +3874,10 @@ function SummaryCard({ record, history }) {
   );
 }
 
-function Hero() {
+function Hero({ warnings = [] }) {
+  const hasWarnings = warnings.length > 0;
+  const attentionCount = warnings.length;
+  const warningSummary = warnings.map((item) => `${item.jar_id} (${item.severity})`).join(", ");
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -2910,11 +3887,26 @@ function Hero() {
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
       <div className="relative space-y-3">
-        <p className="kicker">Growth Analysis</p>
+        <div className="flex items-center gap-2">
+          <p className="kicker">Growth Analysis</p>
+          {hasWarnings ? (
+            <span className="inline-flex items-center gap-1 rounded-full border border-rose-300/55 bg-rose-500/12 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-rose-700">
+              <span aria-hidden="true">{"\u26A0"}</span>
+              Alert {attentionCount}
+            </span>
+          ) : null}
+        </div>
         <h1 className="title-lg">Growth History Comparison</h1>
         <p className="text-subtle text-sm md:text-base max-w-2xl">
            Explore historical growth records and compare development trends of culture jars over time.
         </p>
+        {hasWarnings ? (
+          <div className="rounded-xl border border-rose-300/55 bg-rose-500/10 px-3 py-2 text-xs text-rose-800">
+            <span className="font-semibold">Need attention:</span> {attentionCount} jar(s).
+            <br />
+            <span className="font-semibold">Warning jars:</span> {warningSummary}
+          </div>
+        ) : null}
       </div>
     </motion.div>
   );
