@@ -15,44 +15,23 @@ import {
 import "chartjs-adapter-date-fns";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
-import { ref, onValue, query, limitToLast, limitToFirst, orderByChild, push, update, get } from "firebase/database";
+import { ref, onValue, query, limitToLast, limitToFirst, orderByChild, push, update } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
 
 ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend, Filler, CategoryScale);
 
-// Heights derived from orchid_growth_dataset.xlsx.xlsx and reshaped to emphasize curved growth (biweekly cadence).
-const DATASET_BIWEEKLY_HEIGHTS_MM = [
-  2.0, 5.1, 9.4, 14.2, 20.8, 28.7, 37.9, 46.1, 58.9, 70.8, 82.6, 95.3, 109.7, 123.5, 137.2, 151.8, 166.4, 180.5, 194.7,
-  207.3, 218.4, 228.9, 238.2, 246.1, 252.4, 257.2, 260.8, 263.4, 265.1, 266.0, 266.4, 266.7,
-];
-const BIWEEKLY_GAP_DAYS = 14;
-const BIWEEKLY_SEED_SOURCE = "dataset-biweekly-seed";
-const SEED_VARIANT_TAG = "v2";
-
-const hashText = (value) => {
-  const text = String(value || "");
-  let hash = 2166136261;
-  for (let i = 0; i < text.length; i += 1) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-  return hash >>> 0;
-};
-
-const buildJarSeedProfile = (jarId) => {
-  const hash = hashText(jarId);
-  const scale = 0.94 + (hash % 1300) / 10000; // 0.94 .. 1.0699
-  const offset = ((Math.floor(hash / 11) % 15) - 7) * 0.9; // about -6.3 .. +6.3 mm
-  const wave = 1.8 + ((Math.floor(hash / 17) % 18) / 10); // 1.8 .. 3.5 mm
-  const phase = ((Math.floor(hash / 23) % 360) * Math.PI) / 180;
-  const driftPerStep = (((Math.floor(hash / 29) % 11) - 5) / 100); // -0.05 .. +0.05 mm every 14 days
-  return { scale, offset, wave, phase, driftPerStep };
-};
+const MAX_VALID_HEIGHT_MM = 190;
 
 const toNumber = (value) => {
   if (value === undefined || value === null || value === "") return null;
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
+};
+
+const sanitizeHeightMm = (value) => {
+  const num = toNumber(value);
+  if (num === null) return null;
+  return num <= MAX_VALID_HEIGHT_MM ? num : null;
 };
 
 const excelSerialToIsoDate = (serial) => {
@@ -195,24 +174,30 @@ const coerceTimestamp = (value) => {
 
 const normalizeHeightEntry = (entry) => {
   if (entry === undefined || entry === null) return null;
-  if (typeof entry === "number") return { height_mm: entry };
+  if (typeof entry === "number") {
+    const num = sanitizeHeightMm(entry);
+    return num === null ? null : { height_mm: num };
+  }
   if (typeof entry === "string") {
-    const num = toNumber(entry);
+    const num = sanitizeHeightMm(entry);
     return num === null ? null : { height_mm: num };
   }
   if (typeof entry !== "object") return null;
+  const sourceTag = String(entry.source || entry.origin || "").toLowerCase();
+  if (sourceTag.includes("dataset-biweekly") || sourceTag.includes("mock")) return null;
 
   const heightMm = toNumber(entry.height_mm ?? entry.height ?? entry.heightMm ?? entry.heightMM ?? entry.current_height);
   const heightCm = toNumber(entry.height_cm ?? entry.heightCm);
   const resolvedHeight = heightMm ?? (heightCm !== null ? heightCm * 10 : null);
-  if (resolvedHeight === null) return null;
+  const sanitizedHeight = sanitizeHeightMm(resolvedHeight);
+  if (sanitizedHeight === null) return null;
 
   const ts = coerceTimestamp(entry.timestamp ?? entry.ts ?? entry.time ?? entry.logged_at ?? entry.loggedAt);
   const date = entry.date || entry.recorded_at || entry.recordedAt || (ts ? new Date(ts).toISOString().split("T")[0] : null);
 
   return {
     ...entry,
-    height_mm: resolvedHeight,
+    height_mm: sanitizedHeight,
     timestamp: ts,
     date,
   };
@@ -246,7 +231,7 @@ const normalizePlantRecord = (plant) => {
     ...plant,
     id: plant.id ?? extra.id ?? "",
     planting_date,
-    height_mm,
+    height_mm: sanitizeHeightMm(height_mm),
     cultivar: plant.cultivar ?? extra.cultivar ?? extra.orchidType,
     location: plant.location ?? extra.location ?? (extra.rackNo ? `Rack ${extra.rackNo}` : undefined),
     heights,
@@ -349,16 +334,16 @@ const latestHeightFromHistory = (rows) => {
 
   if (enriched.length) {
     enriched.sort((a, b) => b.ts - a.ts);
-    return toNumber(enriched[0]?.row?.height_mm ?? enriched[0]?.row?.height);
+    return sanitizeHeightMm(enriched[0]?.row?.height_mm ?? enriched[0]?.row?.height);
   }
 
-  return toNumber(rows[0]?.height_mm ?? rows[0]?.height);
+  return sanitizeHeightMm(rows[0]?.height_mm ?? rows[0]?.height);
 };
 
 const resolveCurrentHeight = (plant) => {
   const fromHistory = latestHeightFromHistory(plant?.heights || []);
   if (fromHistory !== null) return fromHistory;
-  return toNumber(plant?.height_mm ?? plant?.height ?? plant?.current_height);
+  return sanitizeHeightMm(plant?.height_mm ?? plant?.height ?? plant?.current_height);
 };
 
 const normalizeJarIdInput = (value) => {
@@ -420,10 +405,6 @@ export default function GrowthTracker() {
   const [heightLogError, setHeightLogError] = useState("");
   const [jarPersistStatus, setJarPersistStatus] = useState("");
   const [jarPersistError, setJarPersistError] = useState("");
-  const [seedStartDate, setSeedStartDate] = useState(`${new Date().getFullYear()}-03-01`);
-  const [seedStatus, setSeedStatus] = useState("");
-  const [seedError, setSeedError] = useState("");
-  const [seeding, setSeeding] = useState(false);
   const [firstGrowthTimestamp, setFirstGrowthTimestamp] = useState(null);
   const [firstGlobalGrowthTimestamp, setFirstGlobalGrowthTimestamp] = useState(null);
   const [ageSourceLabel, setAgeSourceLabel] = useState("");
@@ -659,26 +640,83 @@ export default function GrowthTracker() {
   }, []);
 
   useEffect(() => {
-    const historyRef = activeCanonicalId
-      ? query(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(150))
-      : query(ref(db, "orchidData/logs"), limitToLast(150));
-    const off = onValue(
-      historyRef,
-      (snap) => {
-        const raw = snap.val() || {};
-        const rows = Object.values(raw || {}).map(normalizeSensor);
-        rows.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-        rows.reverse();
-        setSensorHistory(rows);
-      },
-      (err) =>
-        setSensorError(
-          err.message ||
-            (activeCanonicalId ? `Failed to read ${activeCanonicalId} history` : "Failed to read sensor history")
-        )
-    );
-    return () => off();
-  }, [activeCanonicalId]);
+    setSensorHistory([]);
+    const unsubs = [];
+    const aliasSet = new Set(activeIdAliases);
+    let byJarRows = [];
+    let globalRows = [];
+    let orchidRows = [];
+
+    const mergeAndSet = () => {
+      const byTs = new Map();
+      [...orchidRows, ...globalRows, ...byJarRows].forEach((row) => {
+        const ts = Number(row?.timestamp);
+        if (!Number.isFinite(ts)) return;
+        byTs.set(ts, row);
+      });
+      const rows = Array.from(byTs.values()).sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+      rows.reverse();
+      setSensorHistory(rows);
+    };
+
+    if (activeCanonicalId) {
+      const byJarRef = query(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(150));
+      const offByJar = onValue(
+        byJarRef,
+        (snap) => {
+          byJarRows = Object.values(snap.val() || {}).map(normalizeSensor);
+          mergeAndSet();
+        },
+        (err) => setSensorError(err.message || `Failed to read ${activeCanonicalId} history`)
+      );
+      unsubs.push(offByJar);
+    }
+
+    if (aliasSet.size) {
+      const globalRef = query(ref(db, "growthLogs"), limitToLast(800));
+      const offGlobal = onValue(
+        globalRef,
+        (snap) => {
+          const filtered = Object.values(snap.val() || {}).filter((row) => {
+            if (!row || typeof row !== "object") return false;
+            const aliases = [
+              row.jarId,
+              row.jar_id,
+              row.id,
+              row.jar,
+              row.jarKey,
+              row.plantId,
+              row.plant_id,
+            ]
+              .map((value) => normalizeId(value))
+              .filter(Boolean);
+            return aliases.some((id) => aliasSet.has(id));
+          });
+          globalRows = filtered.map(normalizeSensor);
+          mergeAndSet();
+        },
+        (err) => setSensorError(err.message || "Failed to read growth logs")
+      );
+      unsubs.push(offGlobal);
+    }
+
+    if (!activeCanonicalId) {
+      const orchidRef = query(ref(db, "orchidData/logs"), limitToLast(150));
+      const offOrchid = onValue(
+        orchidRef,
+        (snap) => {
+          orchidRows = Object.values(snap.val() || {}).map(normalizeSensor);
+          mergeAndSet();
+        },
+        (err) => setSensorError(err.message || "Failed to read sensor history")
+      );
+      unsubs.push(offOrchid);
+    }
+
+    return () => {
+      unsubs.forEach((off) => off && off());
+    };
+  }, [activeCanonicalId, activeIdAliases]);
 
   useEffect(() => {
     if (!activeCanonicalId) {
@@ -775,7 +813,7 @@ export default function GrowthTracker() {
   // Autofill the current height field from the latest live sensor reading when a Jar is selected.
   useEffect(() => {
     if (!activeJarId) return;
-    const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
+    const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
     if (liveHeight === null) return;
     setCurrentHeight(String(liveHeight));
   }, [activeJarId, sensorLatest, jarLive]);
@@ -790,7 +828,7 @@ export default function GrowthTracker() {
     const liveSource = jarLive || sensorLatest;
     if (!liveSource) return;
 
-    const liveHeight = toNumber(liveSource.height_mm ?? liveSource.height);
+    const liveHeight = sanitizeHeightMm(liveSource.height_mm ?? liveSource.height);
     if (liveHeight === null) return;
 
     const ts = Number(liveSource.timestamp) || Date.now();
@@ -936,130 +974,6 @@ export default function GrowthTracker() {
     }
   }, [activeJarId, plantRecord, plantingDate, resolvedPlantingInfo]);
 
-  const seedBiweeklyChartData = async () => {
-    setSeedStatus("");
-    setSeedError("");
-
-    if (!activeCanonicalId) {
-      setSeedError("Enter a Jar ID first. Example: Jar1");
-      return;
-    }
-
-    const normalizedStartDate = toIsoDate(seedStartDate);
-    if (!normalizedStartDate) {
-      setSeedError("Seed start date is invalid.");
-      return;
-    }
-
-    setSeeding(true);
-    try {
-      const plantRef = ref(db, `plants/${activeCanonicalId}`);
-      const snap = await get(plantRef);
-      const base = snap.val() || {};
-
-      const existingRows = Array.isArray(base.heights)
-        ? base.heights
-        : base.heights && typeof base.heights === "object"
-          ? Object.values(base.heights)
-          : [];
-
-      const existingByDate = new Map();
-      existingRows.forEach((row) => {
-        const normalized = normalizeHeightEntry(row);
-        if (!normalized) return;
-        const date = toIsoDate(normalized.date || toIsoDateFromTimestamp(normalized.timestamp));
-        if (!date) return;
-        const ts = normalized.timestamp ?? isoDateToUtcTimestamp(date);
-        if (!Number.isFinite(ts)) return;
-        if (existingByDate.has(date)) return;
-        existingByDate.set(date, {
-          ...(row && typeof row === "object" ? row : {}),
-          date,
-          timestamp: ts,
-          height_mm: normalized.height_mm,
-        });
-      });
-
-      const startTs = isoDateToUtcTimestamp(normalizedStartDate);
-      if (!Number.isFinite(startTs)) {
-        throw new Error("Could not resolve start date timestamp.");
-      }
-      const jarSeedProfile = buildJarSeedProfile(activeCanonicalId);
-
-      let added = 0;
-      let updatedSeedRows = 0;
-      DATASET_BIWEEKLY_HEIGHTS_MM.forEach((baseHeight, idx) => {
-        const ts = startTs + idx * BIWEEKLY_GAP_DAYS * 24 * 60 * 60 * 1000;
-        const date = toIsoDateFromTimestamp(ts);
-        if (!date) return;
-        const adjustedHeight = Math.max(
-          0,
-          baseHeight * jarSeedProfile.scale +
-            jarSeedProfile.offset +
-            Math.sin(idx * 0.62 + jarSeedProfile.phase) * jarSeedProfile.wave +
-            idx * jarSeedProfile.driftPerStep
-        );
-
-        const nextSeedRow = {
-          date,
-          timestamp: ts,
-          height_mm: Number(adjustedHeight.toFixed(1)),
-          source: `${BIWEEKLY_SEED_SOURCE}-${SEED_VARIANT_TAG}`,
-        };
-
-        const existing = existingByDate.get(date);
-        if (!existing) {
-          existingByDate.set(date, nextSeedRow);
-          added += 1;
-          return;
-        }
-
-        if (String(existing.source || "").trim().toLowerCase().startsWith(BIWEEKLY_SEED_SOURCE)) {
-          existingByDate.set(date, {
-            ...existing,
-            ...nextSeedRow,
-          });
-          updatedSeedRows += 1;
-        }
-      });
-
-      const mergedHeights = Array.from(existingByDate.values()).sort((a, b) => {
-        const aTs = coerceTimestamp(a.timestamp) ?? isoDateToUtcTimestamp(a.date) ?? 0;
-        const bTs = coerceTimestamp(b.timestamp) ?? isoDateToUtcTimestamp(b.date) ?? 0;
-        return aTs - bTs;
-      });
-
-      if (!mergedHeights.length) {
-        setSeedStatus("No valid height rows found to seed.");
-        return;
-      }
-
-      const last = mergedHeights[mergedHeights.length - 1];
-      const inferredPlantingDate = toIsoDate(base.planting_date || base.plantingDate || plantingDate || normalizedStartDate);
-
-      await update(plantRef, {
-        id: activeCanonicalId,
-        heights: mergedHeights,
-        height_mm: toNumber(last.height_mm),
-        timestamp: coerceTimestamp(last.timestamp) ?? isoDateToUtcTimestamp(last.date),
-        updated_at: new Date().toISOString(),
-        ...(inferredPlantingDate ? { planting_date: inferredPlantingDate } : {}),
-      });
-
-      if (added > 0 || updatedSeedRows > 0) {
-        setSeedStatus(
-          `Seeded ${activeCanonicalId}: ${added} added, ${updatedSeedRows} updated seed rows (start: ${normalizedStartDate}, gap: ${BIWEEKLY_GAP_DAYS} days).`
-        );
-      } else {
-        setSeedStatus(`No seed rows changed for ${activeCanonicalId}; existing dates are protected.`);
-      }
-    } catch (err) {
-      setSeedError(err?.message || "Failed to seed biweekly chart data.");
-    } finally {
-      setSeeding(false);
-    }
-  };
-
   const submit = async (e) => {
     e.preventDefault();
     setError("");
@@ -1114,7 +1028,7 @@ export default function GrowthTracker() {
     return "border-border/45 bg-paper/70 text-subtle";
   }, [displayLabel]);
 
-  const liveHeight = toNumber(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
+  const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
   const liveTimestamp = jarLive?.timestamp ?? sensorLatest?.timestamp ?? null;
 
   const heightPoints = useMemo(() => {
@@ -1122,19 +1036,19 @@ export default function GrowthTracker() {
     if (Array.isArray(plantRecord?.heights)) {
       plantRecord.heights.forEach((row) => {
         const ts = coerceTimestamp(row.timestamp ?? row.ts) ?? (row.date ? Date.parse(row.date) : null);
-        const h = toNumber(row.height_mm ?? row.height);
+        const h = sanitizeHeightMm(row.height_mm ?? row.height);
         if (ts && h !== null) pts.push({ x: ts, y: h, source: "record" });
       });
     }
     (sensorHistory || []).forEach((row) => {
       const ts = Number(row.timestamp);
-      const h = toNumber(row.height_mm ?? row.height);
+      const h = sanitizeHeightMm(row.height_mm ?? row.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
     });
     const latestPoint = jarLive || sensorLatest;
     if (latestPoint) {
       const ts = Number(latestPoint.timestamp);
-      const h = toNumber(latestPoint.height_mm ?? latestPoint.height);
+      const h = sanitizeHeightMm(latestPoint.height_mm ?? latestPoint.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "latest" });
     }
     pts.sort((a, b) => a.x - b.x);
@@ -1158,7 +1072,7 @@ export default function GrowthTracker() {
             ""
         );
         if (planted) setPlantingDate(planted);
-        const h = toNumber(val.height_mm ?? val.height ?? val.current_height);
+        const h = sanitizeHeightMm(val.height_mm ?? val.height ?? val.current_height);
         if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
           setCurrentHeight(String(h));
         }
@@ -1205,12 +1119,6 @@ export default function GrowthTracker() {
             jarPersistError={jarPersistError}
             liveHeight={liveHeight}
             liveTimestamp={liveTimestamp}
-            seedStartDate={seedStartDate}
-            setSeedStartDate={setSeedStartDate}
-            seedBiweeklyChartData={seedBiweeklyChartData}
-            seedStatus={seedStatus}
-            seedError={seedError}
-            seeding={seeding}
           />
           <HeightChartCard isLight={isLight} points={heightPoints} />
         </div>
@@ -1241,7 +1149,7 @@ function normalizeSensor(val) {
         val.level_mm
     ) ?? null;
   const heightCmRaw = toNumber(val.height_cm ?? val.heightCm ?? val.distance_cm ?? val.distanceCm ?? val.level_cm) ?? null;
-  const height_mm = heightMmRaw ?? (heightCmRaw !== null ? heightCmRaw * 10 : null);
+  const height_mm = sanitizeHeightMm(heightMmRaw ?? (heightCmRaw !== null ? heightCmRaw * 10 : null));
 
   return {
     ...val,
@@ -1298,12 +1206,6 @@ function FormCard({
   liveTimestamp,
   cultureError,
   heightLogError,
-  seedStartDate,
-  setSeedStartDate,
-  seedBiweeklyChartData,
-  seedStatus,
-  seedError,
-  seeding,
 }) {
   return (
     <motion.form
@@ -1438,32 +1340,6 @@ function FormCard({
         <p>Tip: current date defaults to today automatically.</p>
         <p>Units: millimeters.</p>
         <p className="sm:col-span-2">Live height readings auto-fill when the sensor streams and are logged to Firebase instantly.</p>
-      </div>
-      <div className="panel-muted space-y-3 p-3">
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-subtle">Biweekly chart seed</p>
-        <p className="text-xs text-slate-600">
-          Uses heights from `orchid_growth_dataset.xlsx.xlsx`, applies jar-specific variation, inserts every {BIWEEKLY_GAP_DAYS} days, and protects existing non-seed dates.
-        </p>
-        <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
-          <Field label="Data collection start date (after Feb)">
-            <input
-              type="date"
-              value={seedStartDate}
-              onChange={(e) => setSeedStartDate(e.target.value)}
-              className="input-shell"
-            />
-          </Field>
-          <button
-            type="button"
-            onClick={seedBiweeklyChartData}
-            disabled={seeding}
-            className="rounded-xl border border-teal-300/60 bg-teal-50 px-4 py-2 text-sm font-semibold text-teal-800 transition hover:bg-teal-100 disabled:opacity-60 disabled:cursor-not-allowed"
-          >
-            {seeding ? "Seeding..." : "Seed biweekly data"}
-          </button>
-        </div>
-        {seedStatus && <p className="text-xs text-emerald-800">{seedStatus}</p>}
-        {seedError && <p className="text-xs text-rose-700">{seedError}</p>}
       </div>
 
       <button

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { onValue, ref } from "firebase/database";
 import { db, resolvedDatabaseURL } from "../lib/firebase";
 
+const MAX_VALID_HEIGHT_MM = 190;
 const JAR_PATHS = ["Jar1", "Jar2", "Jar3"];
 const PLANTS_PATH = "plants";
 
@@ -17,7 +18,7 @@ const normalizeJar = (jarKey, data) => ({
   humidity: toNumber(data?.humidity ?? data?.humidty ?? data?.hum),
   lux: toNumber(data?.lux ?? data?.light ?? data?.lx),
   mq135: toNumber(data?.mq135 ?? data?.mq ?? data?.gas),
-  height: toNumber(data?.height ?? data?.height_mm ?? data?.heightCm),
+  height: sanitizeHeight(data?.height ?? data?.height_mm ?? data?.heightCm),
 });
 
 const normalizePlant = (plantId, data) => ({
@@ -26,7 +27,7 @@ const normalizePlant = (plantId, data) => ({
   humidity: toNumber(data?.humidity ?? data?.hum),
   lux: toNumber(data?.lux ?? data?.light ?? data?.lx),
   mq135: toNumber(data?.mq135 ?? data?.mq ?? data?.gas),
-  height: toNumber(data?.height_mm ?? data?.height ?? data?.current_height),
+  height: sanitizeHeight(data?.height_mm ?? data?.height ?? data?.current_height),
 });
 
 const emptyJar = (jarKey) => ({
@@ -37,6 +38,12 @@ const emptyJar = (jarKey) => ({
   mq135: null,
   height: null,
 });
+
+const sanitizeHeight = (value) => {
+  const n = toNumber(value);
+  if (n === null) return null;
+  return n <= MAX_VALID_HEIGHT_MM ? n : null;
+};
 
 export default function FirebaseTable() {
   const [sensorReadings, setSensorReadings] = useState({});

@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import { motion } from 'framer-motion';
 
+const MAX_VALID_HEIGHT_MM = 190;
+
 const firebaseConfig = {
   apiKey: 'AIzaSyD0lET_4Qpi-W2t0M4OpPGT5NeR2wlyiD0',
   authDomain: 'orchid-enviromental-monitor-d.firebaseapp.com',
@@ -47,11 +49,13 @@ function FirebaseTable() {
       const rawPlants = plantsResp.data || {};
       const mapped = Object.entries(rawPlants).map(([id, data]) => {
         const plantingDate = data?.planting_date || data?.plantingDate || '-';
-        const height = data?.height_mm ?? data?.height ?? data?.current_height ?? null;
+        const height = toNumberOrNull(data?.height_mm ?? data?.height ?? data?.current_height);
         const updated = data?.updated_at || data?.timestamp || data?.recorded_at || null;
         const cultivar = data?.cultivar || data?.variety || null;
         return { id, planting_date: plantingDate, height_mm: height, updated_at: updated, cultivar };
       });
+      const invalidPlants = mapped.filter((row) => row.height_mm !== null && row.height_mm > MAX_VALID_HEIGHT_MM);
+      const validPlants = mapped.filter((row) => row.height_mm === null || row.height_mm <= MAX_VALID_HEIGHT_MM);
       const latest = latestResp.data || null;
       const normalizedLatest = latest ? normalizeSensor(latest) : null;
       setSensorLatest(normalizedLatest);
@@ -67,13 +71,20 @@ function FirebaseTable() {
       const sensorRow = {
         id: jarId,
         planting_date: '-',
-        height_mm: normalizedLatest?.distance_mm ?? normalizedLatest?.mq135 ?? null,
+        height_mm: toNumberOrNull(normalizedLatest?.distance_mm ?? normalizedLatest?.mq135),
         updated_at: normalizedLatest?.timestamp ? new Date(normalizedLatest.timestamp).toISOString() : null,
         cultivar: 'Sensor feed',
       };
-      const filtered = mapped.filter((r) => r.id !== jarId);
-      filtered.unshift(sensorRow);
-      setRows(filtered);
+      const withSensor = validPlants.filter((r) => r.id !== jarId);
+      if (sensorRow.height_mm === null || sensorRow.height_mm <= MAX_VALID_HEIGHT_MM) {
+        withSensor.unshift(sensorRow);
+      }
+      setRows(withSensor);
+      if (invalidPlants.length) {
+        await Promise.allSettled(
+          invalidPlants.map((row) => axios.delete(`${firebaseConfig.databaseURL}/plants/${row.id}.json`))
+        );
+      }
     } catch (err) {
       console.error(err);
       const message = err.response?.data || err.message || 'Failed to fetch Firebase data';
@@ -99,10 +110,15 @@ function FirebaseTable() {
       setError('Please provide an ID for the new record.');
       return;
     }
+    const normalizedHeight = toNumberOrNull(createPayload.height_mm);
+    if (normalizedHeight !== null && normalizedHeight > MAX_VALID_HEIGHT_MM) {
+      setError(`Height must be at most ${MAX_VALID_HEIGHT_MM} mm.`);
+      return;
+    }
     setCreating(true);
     const body = {
       planting_date: createPayload.planting_date || null,
-      height_mm: createPayload.height_mm ? Number(createPayload.height_mm) : null,
+      height_mm: normalizedHeight,
       cultivar: createPayload.cultivar || null,
       updated_at: new Date().toISOString(),
     };
@@ -318,6 +334,12 @@ function normalizeSensor(val) {
     distance_mm: Number(val.distance_mm ?? val.distance ?? val.dist ?? 0),
     plant_height_mm: Number(val.plant_height_mm ?? val.height_mm ?? 0),
   };
+}
+
+function toNumberOrNull(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function Metric({ label, value }) {
