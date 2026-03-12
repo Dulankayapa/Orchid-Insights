@@ -5,6 +5,7 @@ import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
 import { limitToLast, onValue, query as fbQuery, ref } from "firebase/database";
 import { db } from "../lib/firebase";
+import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 import { useTheme } from "../context/ThemeContext";
 
 const MAX_VALID_HEIGHT_MM = 190;
@@ -197,6 +198,17 @@ const normalizeCultureRecord = (key, value) => {
 
   return {
     jarId,
+    parentJarId: firstText(
+      entry.directParentJarId,
+      entry.direct_parent_jar_id,
+      entry.sourceJarId,
+      entry.source_jar_id,
+      entry.parentJarId,
+      entry.parentJarID,
+      entry.parentJar,
+      entry.parent_id,
+      entry.parent_jar_id
+    ),
     cultureDate: firstText(entry.cultureDate, entry.culture_date, entry.planting_date, entry.plantingDate),
     rackNo: firstText(entry.rackNo, entry.rack_no, entry.rack),
     orchidType: firstText(entry.orchidType, entry.cultivar, entry.type),
@@ -215,6 +227,51 @@ const normalizeJarIdInput = (value) => {
   const next = (value || "").trimStart();
   if (!next) return value || "";
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
+};
+
+const buildLineageIndex = (cultureEntries) => {
+  const parentById = new Map();
+  const childrenById = new Map();
+
+  (cultureEntries || []).forEach((entry) => {
+    const childId = normalizeId(entry?.jarId);
+    const parentId = normalizeId(entry?.parentJarId);
+    if (!childId || !parentId || childId === parentId) return;
+    parentById.set(childId, parentId);
+    const existingChildren = childrenById.get(parentId) || [];
+    childrenById.set(parentId, [...existingChildren, childId]);
+  });
+
+  return { parentById, childrenById };
+};
+
+const collectLineageIds = (seedId, lineageIndex) => {
+  const seed = normalizeId(seedId);
+  if (!seed) return [];
+
+  const { parentById, childrenById } = lineageIndex || {};
+  const visited = new Set([seed]);
+
+  let cursor = seed;
+  while (parentById?.has(cursor)) {
+    const parent = parentById.get(cursor);
+    if (!parent || visited.has(parent)) break;
+    visited.add(parent);
+    cursor = parent;
+  }
+
+  const queue = Array.from(visited);
+  while (queue.length) {
+    const current = queue.shift();
+    const children = childrenById?.get(current) || [];
+    children.forEach((child) => {
+      if (!child || visited.has(child)) return;
+      visited.add(child);
+      queue.push(child);
+    });
+  }
+
+  return Array.from(visited);
 };
 
 const resolveHeightTimestamp = (row) => {
@@ -1531,60 +1588,104 @@ export default function GrowthHistory() {
     });
     return map;
   }, [cultureEntries]);
+  const plantMap = useMemo(() => {
+    const map = new Map();
+    plants.forEach((plant) => {
+      const key = normalizeId(plant?.id);
+      if (key) map.set(key, plant);
+    });
+    return map;
+  }, [plants]);
+  const lineageIndex = useMemo(() => buildLineageIndex(cultureEntries), [cultureEntries]);
 
   const activeCanonicalId = useMemo(() => canonicalPlantId(jarId), [jarId]);
   const activeNormalizedId = useMemo(() => normalizeId(jarId || activeCanonicalId), [jarId, activeCanonicalId]);
+  const activeLineageIds = useMemo(
+    () => collectLineageIds(activeNormalizedId, lineageIndex),
+    [activeNormalizedId, lineageIndex]
+  );
+  const activeLineageCanonicalIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          activeLineageIds
+            .map((lineageId) => cultureMap.get(lineageId)?.jarId || plantMap.get(lineageId)?.id || lineageId)
+            .map((rawId) => canonicalPlantId(rawId))
+            .filter(Boolean)
+        )
+      ),
+    [activeLineageIds, cultureMap, plantMap]
+  );
 
   useEffect(() => {
-    if (!activeCanonicalId && !activeNormalizedId) {
+    if (!activeLineageCanonicalIds.length && !activeLineageIds.length) {
       setLiveHistoryRows([]);
       return undefined;
     }
 
-    const normalizeRows = (rawObj) =>
+    const activeLineageSet = new Set(activeLineageIds);
+    const normalizeRows = (rawObj, fallbackSourceId = "") =>
       Object.values(rawObj || {})
         .map((row) => normalizeHeightEntry(row))
         .filter(Boolean)
         .map((row) => {
           const ts = resolveHeightTimestamp(row);
           if (!Number.isFinite(ts)) return null;
-          return { ...row, ts };
+          const sourceAliases = [
+            row.jarId,
+            row.jar_id,
+            row.id,
+            row.jar,
+            row.jarKey,
+            row.plantId,
+            row.plant_id,
+          ]
+            .map((value) => normalizeId(value))
+            .filter(Boolean);
+          const sourceJarId =
+            sourceAliases.find((alias) => activeLineageSet.has(alias)) ||
+            sourceAliases[0] ||
+            normalizeId(fallbackSourceId) ||
+            "";
+          return { ...row, ts, sourceJarId };
         })
         .filter(Boolean);
 
-    let byJarRows = [];
+    const byJarRowsBySource = new Map();
     let globalRows = [];
 
     const mergeAndSet = () => {
-      const byTs = new Map();
-      byJarRows.forEach((row) => {
-        byTs.set(row.ts, row);
+      const deduped = new Map();
+      const byJarRows = Array.from(byJarRowsBySource.values()).flat();
+      [...byJarRows, ...globalRows].forEach((row) => {
+        if (!row || !Number.isFinite(row.ts)) return;
+        const sourceKey = normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id || row.plant_id);
+        const heightKey = Number(row.height_mm);
+        const entryKey = `${sourceKey || "na"}:${row.ts}:${Number.isFinite(heightKey) ? heightKey.toFixed(3) : "na"}`;
+        if (!deduped.has(entryKey)) deduped.set(entryKey, row);
       });
-      globalRows.forEach((row) => {
-        if (!byTs.has(row.ts)) byTs.set(row.ts, row);
-      });
-      setLiveHistoryRows(Array.from(byTs.values()).sort((a, b) => a.ts - b.ts));
+      setLiveHistoryRows(Array.from(deduped.values()).sort((a, b) => a.ts - b.ts));
     };
 
     const unsubs = [];
 
-    if (activeCanonicalId) {
-      const historyRef = fbQuery(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(300));
+    activeLineageCanonicalIds.forEach((canonicalId) => {
+      const historyRef = fbQuery(ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(canonicalId)}`), limitToLast(300));
       const offByJar = onValue(
         historyRef,
         (snap) => {
-          byJarRows = normalizeRows(snap.val());
+          byJarRowsBySource.set(canonicalId, normalizeRows(snap.val(), canonicalId));
           mergeAndSet();
         },
         () => {
-          byJarRows = [];
+          byJarRowsBySource.set(canonicalId, []);
           mergeAndSet();
         }
       );
       unsubs.push(offByJar);
-    }
+    });
 
-    if (activeNormalizedId) {
+    if (activeLineageSet.size) {
       const globalRef = fbQuery(ref(db, "growthLogs"), limitToLast(1200));
       const offGlobal = onValue(
         globalRef,
@@ -1602,7 +1703,7 @@ export default function GrowthHistory() {
             ]
               .map((value) => normalizeId(value))
               .filter(Boolean);
-            return aliases.includes(activeNormalizedId);
+            return aliases.some((alias) => activeLineageSet.has(alias));
           });
 
           globalRows = normalizeRows(matched);
@@ -1619,7 +1720,7 @@ export default function GrowthHistory() {
     return () => {
       unsubs.forEach((off) => off && off());
     };
-  }, [activeCanonicalId, activeNormalizedId]);
+  }, [activeLineageCanonicalIds, activeLineageIds]);
 
   const demoIds = useMemo(() => {
     const ids = new Set();
@@ -1660,45 +1761,111 @@ export default function GrowthHistory() {
   const record = useMemo(() => {
     if (!jarId) return null;
     const id = normalizeId(jarId);
-    const heightsRecord = plants.find((p) => normalizeId(p.id) === id) || null;
-    const culture = cultureMap.get(id) || null;
-    if (!heightsRecord && !culture && !liveHistoryRows.length) return null;
+    const lineageIds = activeLineageIds.length ? activeLineageIds : (id ? [id] : []);
+    const lineageSet = new Set(lineageIds);
 
-    const baseId = culture?.jarId || heightsRecord?.id || jarId.trim();
-    const merged = {
+    const lineagePlants = plants.filter((plant) => lineageSet.has(normalizeId(plant?.id)));
+    const lineageCultures = lineageIds.map((lineageId) => cultureMap.get(lineageId)).filter(Boolean);
+
+    if (!lineagePlants.length && !lineageCultures.length && !liveHistoryRows.length) return null;
+
+    const directPlant = id ? plantMap.get(id) || null : null;
+    const directCulture = id ? cultureMap.get(id) || null : null;
+    const primaryPlant = directPlant || lineagePlants[0] || null;
+    const primaryCulture = directCulture || lineageCultures[0] || null;
+    const baseId = primaryCulture?.jarId || primaryPlant?.id || jarId.trim();
+
+    const plantingCandidates = [
+      directCulture?.cultureDate,
+      directPlant?.planting_date,
+      ...lineageCultures.map((entry) => entry?.cultureDate),
+      ...lineagePlants.map((plant) => plant?.planting_date),
+    ].filter(Boolean);
+    const plantingDate = plantingCandidates.length ? [...plantingCandidates].sort()[0] : "";
+
+    const rackLabels = Array.from(
+      new Set(
+        lineageCultures
+          .map((entry) => firstText(entry?.rackNo))
+          .filter(Boolean)
+          .map((rack) => `Rack ${rack}`)
+      )
+    );
+    const cultivarLabels = Array.from(
+      new Set(
+        lineageCultures
+          .map((entry) => firstText(entry?.orchidType))
+          .concat(lineagePlants.map((plant) => firstText(plant?.cultivar)))
+          .filter(Boolean)
+      )
+    );
+    const nutritionLabels = Array.from(
+      new Set(
+        lineageCultures
+          .map((entry) => firstText(entry?.nutritionStatus, entry?.nutrition))
+          .concat(lineagePlants.map((plant) => firstText(plant?.nutritionStatus, plant?.nutrition)))
+          .filter(Boolean)
+      )
+    );
+
+    const lineageDisplayIds = lineageIds.map(
+      (lineageId) => cultureMap.get(lineageId)?.jarId || plantMap.get(lineageId)?.id || lineageId
+    );
+
+    const mergedRecultures = lineageCultures
+      .flatMap((entry) =>
+        (Array.isArray(entry?.recultures) ? entry.recultures : []).map((row) => ({
+          ...row,
+          note: firstText(row?.note),
+          sourceJarId: entry?.jarId,
+        }))
+      )
+      .filter((row) => row?.date)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map((row) => ({
+        ...row,
+        note: row.note ? `${row.sourceJarId}: ${row.note}` : `${row.sourceJarId}: Re-culture logged`,
+      }));
+
+    return {
       id: baseId,
-      heights: heightsRecord?.heights || [],
-      planting_date: culture?.cultureDate || heightsRecord?.planting_date,
-      location: culture?.rackNo ? `Rack ${culture.rackNo}` : heightsRecord?.location,
-      cultivar: culture?.orchidType || heightsRecord?.cultivar,
-      nutrition: firstText(culture?.nutrition, heightsRecord?.nutrition, heightsRecord?.nutritionStatus),
-      nutritionStatus: firstText(
-        culture?.nutritionStatus,
-        culture?.nutrition,
-        heightsRecord?.nutritionStatus,
-        heightsRecord?.nutrition
+      heights: lineagePlants.flatMap((plant) =>
+        (plant?.heights || []).map((row) => ({ ...row, sourceJarId: plant?.id || "" }))
       ),
-      recultures: culture?.recultures || [],
+      planting_date: plantingDate || firstText(primaryCulture?.cultureDate, primaryPlant?.planting_date),
+      location: rackLabels.length ? rackLabels.join(", ") : primaryPlant?.location,
+      cultivar:
+        cultivarLabels.length > 1 ? `${cultivarLabels[0]} + ${cultivarLabels.length - 1} linked` : cultivarLabels[0],
+      nutrition: firstText(primaryCulture?.nutrition, primaryPlant?.nutrition, primaryPlant?.nutritionStatus),
+      nutritionStatus: nutritionLabels.length ? nutritionLabels.join(" | ") : "",
+      recultures: mergedRecultures,
+      lineageIds: lineageDisplayIds,
+      lineageCount: lineageDisplayIds.length,
     };
-    return merged;
-  }, [jarId, cultureMap, plants, liveHistoryRows]);
+  }, [jarId, activeLineageIds, cultureMap, plantMap, plants, liveHistoryRows]);
 
   const history = useMemo(() => {
     if (!record) return [];
     const baseRows = (record.heights || [])
       .map((h) => {
         const ts = resolveHeightTimestamp(h);
-        return { ...h, ts: Number.isFinite(ts) ? ts : null };
+        return { ...h, ts: Number.isFinite(ts) ? ts : null, sourceJarId: h?.sourceJarId || record.id };
       })
       .filter((h) => h.ts !== null);
 
     const byTs = new Map();
     baseRows.forEach((row) => {
-      byTs.set(row.ts, row);
+      const sourceKey = normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id);
+      const heightKey = Number(row.height_mm);
+      const key = `${sourceKey || "na"}:${row.ts}:${Number.isFinite(heightKey) ? heightKey.toFixed(3) : "na"}`;
+      byTs.set(key, row);
     });
     liveHistoryRows.forEach((row) => {
       if (row?.ts === null || row?.ts === undefined) return;
-      byTs.set(row.ts, row);
+      const sourceKey = normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id);
+      const heightKey = Number(row.height_mm);
+      const key = `${sourceKey || "na"}:${row.ts}:${Number.isFinite(heightKey) ? heightKey.toFixed(3) : "na"}`;
+      byTs.set(key, row);
     });
 
     return Array.from(byTs.values()).sort((a, b) => a.ts - b.ts);
@@ -2021,7 +2188,8 @@ function LookupCard({
         <div className="rounded-2xl border border-border/40 bg-paper/70 px-4 py-3 text-sm text-dark shadow-inner">
           {record ? (
             <p>
-              Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar}
+              Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar || "-"}
+              {record.lineageCount > 1 ? ` - Lineage jars: ${record.lineageCount}` : ""}
             </p>
           ) : status ? (
             <p className="text-amber-700 dark:text-amber-300">{status}</p>
@@ -2366,6 +2534,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     const chartImage = chartRef.current?.toBase64Image?.();
     const statsRows = [
       ["Jar ID", record?.id || "-"],
+      ["Lineage jars", record?.lineageCount ? String(record.lineageCount) : "1"],
       ["Planting date", record?.planting_date || "-"],
       ["Location", record?.location || "-"],
       ["Cultivar", record?.cultivar || "-"],
@@ -3817,9 +3986,13 @@ function HistoryList({ history }) {
             const prev = rows[idx + 1];
             const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
             return (
-              <div key={row.ts} className="grid grid-cols-3 gap-3 py-3 text-sm text-dark">
+              <div
+                key={`${normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id || "na")}:${row.ts}`}
+                className="grid grid-cols-4 gap-3 py-3 text-sm text-dark"
+              >
                 <span className="font-medium">{formatDate(row.ts)}</span>
                 <span>{Number(row.height_mm).toFixed(1)} mm</span>
+                <span className="text-subtle">{row.sourceJarId || row.jarId || row.jar_id || row.id || "-"}</span>
                 <span className="text-subtle">
                   {delta === null ? "-" : delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} mm vs prior`}
                 </span>
@@ -3841,6 +4014,7 @@ function SummaryCard({ record, history }) {
   const delta = latest && first ? latest.height_mm - first.height_mm : null;
 
   const stats = [
+    { label: "Lineage jars", value: record?.lineageCount ? String(record.lineageCount) : "1" },
     { label: "Planting date", value: record?.planting_date || "-" },
     { label: "Location", value: record?.location || "-" },
     { label: "Nutrition status", value: record?.nutritionStatus || record?.nutrition || "-" },
