@@ -13,10 +13,8 @@ import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel
 import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
 import NotificationCenter from '../components/monitor/NotificationCenter.jsx';
 import GreenhouseLayout from '../components/monitor/GreenhouseLayout.jsx';
-import DeviceDiagnosticsPanel from '../components/monitor/DeviceDiagnosticsPanel.jsx';
 import EnergyUsagePanel from '../components/monitor/EnergyUsagePanel.jsx';
 import WeatherPanel from '../components/monitor/WeatherPanel.jsx';
-import MaintenancePanel from '../components/monitor/MaintenancePanel.jsx';
 import AuthRolePanel from '../components/monitor/AuthRolePanel.jsx';
 
 import {
@@ -54,30 +52,6 @@ const formatDateTime = (ts) => {
     minute: '2-digit',
   });
 };
-
-const downloadBlob = (content, name, mimeType) => {
-  const blob = new Blob([content], { type: mimeType });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = name;
-  document.body.appendChild(anchor);
-  anchor.click();
-  document.body.removeChild(anchor);
-  URL.revokeObjectURL(url);
-};
-
-const buildExportRows = (rows) => rows.map((row) => ({
-  timestamp: row.ts,
-  zone: row.zoneId,
-  node: row.nodeId,
-  temperature: row.temperature,
-  humidity: row.humidity,
-  light: row.light,
-  co2: row.co2,
-  ph: row.ph,
-  soilMoisture: row.soilMoisture,
-}));
 
 const average = (rows, key) => {
   const values = rows.map((row) => toNumber(row?.[key])).filter((value) => value !== null);
@@ -119,7 +93,6 @@ const EnvMonitor = () => {
     applyAutomaticRules,
     markNotificationRead,
     clearNotifications,
-    markMaintenanceDone,
     autoControlRecommendation,
   } = useMonitorData();
 
@@ -167,110 +140,281 @@ const EnvMonitor = () => {
     [filteredHistory, previousWindow]
   );
 
-  const exportRows = useMemo(() => buildExportRows(filteredHistory), [filteredHistory]);
-
-  const handleExportCSV = () => {
-    if (!capabilities.canExport) {
-      setActionMessage('Your role cannot export reports.');
-      return;
-    }
-
-    const headers = Object.keys(exportRows[0] ?? {
-      timestamp: '', zone: '', node: '', temperature: '', humidity: '', light: '', co2: '', ph: '', soilMoisture: '',
-    });
-
-    const lines = [headers.join(',')];
-    exportRows.forEach((row) => {
-      const values = headers.map((key) => {
-        const value = row[key];
-        if (key === 'timestamp') return value ? new Date(value).toISOString() : '';
-        if (value === null || value === undefined) return '';
-        return `${value}`;
-      });
-      lines.push(values.join(','));
-    });
-
-    downloadBlob(lines.join('\n'), `orchid-history-${Date.now()}.csv`, 'text/csv;charset=utf-8');
-    setActionMessage('CSV export generated.');
-  };
-
-  const handleExportExcel = () => {
-    if (!capabilities.canExport) {
-      setActionMessage('Your role cannot export reports.');
-      return;
-    }
-
-    const headers = Object.keys(exportRows[0] ?? {
-      timestamp: '', zone: '', node: '', temperature: '', humidity: '', light: '', co2: '', ph: '', soilMoisture: '',
-    });
-
-    const rows = [headers.join('\t')];
-    exportRows.forEach((row) => {
-      const values = headers.map((key) => {
-        const value = row[key];
-        if (key === 'timestamp') return value ? new Date(value).toISOString() : '';
-        return value ?? '';
-      });
-      rows.push(values.join('\t'));
-    });
-
-    downloadBlob(rows.join('\n'), `orchid-history-${Date.now()}.xls`, 'application/vnd.ms-excel');
-    setActionMessage('Excel export generated.');
-  };
-
-  const handleExportPdf = () => {
-    if (!capabilities.canExport) {
-      setActionMessage('Your role cannot export reports.');
-      return;
-    }
-
+  const handleGenerateReport = () => {
     const doc = new jsPDF();
     const now = new Date().toLocaleString();
-    doc.setFontSize(18);
-    doc.text('Orchid Environment Report', 14, 18);
-    doc.setFontSize(10);
-    doc.text(`Generated: ${now}`, 14, 25);
-    doc.text(`Window: ${selectedFilter.label}`, 14, 31);
-    doc.text(`Health Score: ${healthScore === null ? '--' : healthScore.toFixed(1)}`, 14, 37);
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginX = 14;
+    const bottomY = pageHeight - 14;
+    const lineHeight = 5;
+    const contentWidth = 182;
+    let y = 18;
 
-    let y = 46;
-    doc.setFontSize(12);
-    doc.text('Daily Summary', 14, y);
-    y += 7;
-
-    const summaryLines = [
-      `Average Temperature: ${formatMetric(dailyReport?.averages?.temperature, 'temperature')}`,
-      `Average Humidity: ${formatMetric(dailyReport?.averages?.humidity, 'humidity')}`,
-      `Average Light: ${formatMetric(dailyReport?.averages?.light, 'light')}`,
-      `Samples Today: ${dailyReport?.sampleCount ?? 0}`,
-      `Active Alerts: ${alerts.length}`,
-    ];
-
-    summaryLines.forEach((line) => {
-      doc.setFontSize(10);
-      doc.text(line, 14, y);
-      y += 6;
-    });
-
-    y += 2;
-    doc.setFontSize(12);
-    doc.text('Comparison Snapshot', 14, y);
-    y += 7;
-
-    comparisonSummary.forEach((item) => {
-      doc.setFontSize(10);
-      const metric = METRIC_DEFINITIONS[item.key];
-      const delta = item.delta === null ? '--' : `${item.delta >= 0 ? '+' : ''}${item.delta.toFixed(metric.decimals)} ${metric.unit}`;
-      doc.text(`${metric.label}: now ${formatMetric(item.current, item.key)} | prev ${formatMetric(item.previous, item.key)} | delta ${delta}`, 14, y);
-      y += 6;
-      if (y > 270) {
+    const ensureSpace = (lineCount = 1) => {
+      const needed = (Math.max(1, lineCount) * lineHeight) + 2;
+      if ((y + needed) > bottomY) {
         doc.addPage();
-        y = 20;
+        y = 18;
       }
+    };
+
+    const writeHeader = (text) => {
+      ensureSpace(2);
+      doc.setFontSize(13);
+      doc.setTextColor(15, 23, 42);
+      doc.text(text, marginX, y);
+      y += 7;
+      doc.setFontSize(10);
+      doc.setTextColor(31, 41, 55);
+    };
+
+    const writeLine = (text) => {
+      const value = String(text ?? '--');
+      const wrapped = doc.splitTextToSize(value, contentWidth);
+      ensureSpace(wrapped.length);
+      doc.text(wrapped, marginX, y);
+      y += wrapped.length * lineHeight;
+    };
+
+    const writeKV = (label, value) => {
+      writeLine(`${label}: ${value ?? '--'}`);
+    };
+
+    const writeSpacer = (size = 2) => {
+      y += size;
+      if (y > bottomY) {
+        doc.addPage();
+        y = 18;
+      }
+    };
+
+    const formatPrediction = (prediction) => {
+      if (!prediction) return '--';
+      const def = METRIC_DEFINITIONS[prediction.key];
+      const unit = def?.unit ?? '';
+      const decimals = def?.decimals ?? 1;
+      const current = prediction.current?.toFixed?.(decimals) ?? '--';
+      const projected = prediction.predicted?.toFixed?.(decimals) ?? '--';
+      const slope = prediction.slopePerHour?.toFixed?.(decimals) ?? '--';
+      const confidence = prediction.confidence !== undefined && prediction.confidence !== null
+        ? `${Math.round(prediction.confidence * 100)}%`
+        : '--';
+      return `Current ${current} ${unit} | Predicted ${forecastHorizon}h ${projected} ${unit} | Slope ${slope} ${unit}/h | Confidence ${confidence}`;
+    };
+
+    doc.setFontSize(18);
+    doc.setTextColor(15, 23, 42);
+    doc.text('Orchid Environment Full Report', marginX, y);
+    y += 8;
+    doc.setFontSize(10);
+    doc.setTextColor(31, 41, 55);
+
+    writeHeader('Report Metadata');
+    writeKV('Generated', now);
+    writeKV('Generated By', user?.email || user?.uid || 'Unknown');
+    writeKV('Role', role || 'viewer');
+    writeKV('Connection Status', String(connectionStatus || 'unknown').toUpperCase());
+    writeKV('Last Update', formatDateTime(lastUpdate));
+    writeKV('History Window', selectedFilter.label);
+    writeKV('Samples in Window', filteredHistory.length);
+    writeKV('Total History Samples', history.length);
+    writeKV('Health Score', healthScore === null ? '--' : healthScore.toFixed(1));
+    writeKV('Forecast Horizon', `${forecastHorizon}h`);
+    writeSpacer();
+
+    writeHeader('Live Sensor Snapshot');
+    writeKV('Timestamp', formatDateTime(latest?.ts ?? latest?.timestamp));
+    writeKV('Zone', latest?.zoneId || '--');
+    writeKV('Node', latest?.nodeId || '--');
+    Object.keys(METRIC_DEFINITIONS).forEach((key) => {
+      const metric = METRIC_DEFINITIONS[key];
+      writeKV(metric.label, formatMetric(latest?.[key], key));
     });
+    if (latest?.height_mm !== undefined && latest?.height_mm !== null) {
+      writeKV('Plant Height', `${latest.height_mm} mm`);
+    }
+    writeSpacer();
+
+    writeHeader('Threshold Configuration');
+    writeKV('Telemetry Stale Threshold', `${thresholds?.staleSeconds ?? '--'}s`);
+    writeKV('Node Offline Threshold', `${thresholds?.offlineSeconds ?? '--'}s`);
+    writeKV('Predictive Horizon', `${thresholds?.predictiveHorizonHours ?? '--'}h`);
+    writeKV('Email Alerts Enabled', thresholds?.notifications?.emailEnabled ? 'Yes' : 'No');
+    writeKV('Email Recipients', thresholds?.notifications?.emailRecipients || '--');
+    Object.entries(METRIC_DEFINITIONS).forEach(([key, metric]) => {
+      const bounds = thresholds?.metrics?.[key];
+      const min = bounds?.min ?? '--';
+      const max = bounds?.max ?? '--';
+      writeKV(`${metric.label} Range`, `${min} to ${max} ${metric.unit}`);
+    });
+    writeSpacer();
+
+    writeHeader('Automation and Device Control');
+    writeKV('Control Mode', controlState?.mode || '--');
+    writeKV('Auto Rules Enabled', controlState?.autoRulesEnabled ? 'Yes' : 'No');
+    writeKV(
+      'Recommendation Confidence',
+      autoControlRecommendation?.confidence !== undefined && autoControlRecommendation?.confidence !== null
+        ? `${Math.round(autoControlRecommendation.confidence * 100)}%`
+        : '--'
+    );
+    Object.entries(controlState?.devices || {}).forEach(([deviceKey, isOn]) => {
+      writeKV(`Device ${deviceKey}`, isOn ? 'ON' : 'OFF');
+    });
+    Object.entries(autoControlRecommendation?.suggested || {}).forEach(([deviceKey, shouldOn]) => {
+      writeKV(`Recommended ${deviceKey}`, shouldOn ? 'ON' : 'OFF');
+    });
+    writeSpacer();
+
+    writeHeader('Forecasts');
+    writeKV('Temperature Forecast', formatPrediction(predictions?.temperature));
+    writeKV('Humidity Forecast', formatPrediction(predictions?.humidity));
+    writeKV('Light Forecast', formatPrediction(predictions?.light));
+    writeKV('CO2 Forecast', formatPrediction(predictions?.co2));
+    writeKV('pH Forecast', formatPrediction(predictions?.ph));
+    writeSpacer();
+
+    writeHeader('Daily Summary');
+    writeKV('Summary Date', dailyReport?.date || '--');
+    writeKV('Summary Generated At', formatDateTime(dailyReport?.generatedAt));
+    writeKV('Samples Today', dailyReport?.sampleCount ?? 0);
+    writeKV('Average Temperature', formatMetric(dailyReport?.averages?.temperature, 'temperature'));
+    writeKV('Average Humidity', formatMetric(dailyReport?.averages?.humidity, 'humidity'));
+    writeKV('Average Light', formatMetric(dailyReport?.averages?.light, 'light'));
+    writeKV(
+      'Daily Health Score',
+      dailyReport?.healthScore === null || dailyReport?.healthScore === undefined
+        ? '--'
+        : Number(dailyReport.healthScore).toFixed(1)
+    );
+    (dailyReport?.zoneSummary || []).forEach((zone) => {
+      writeKV(
+        `Zone ${zone.zoneId}`,
+        `Temp ${formatMetric(zone.avgTemperature, 'temperature')} | Humidity ${formatMetric(zone.avgHumidity, 'humidity')} | Light ${formatMetric(zone.avgLight, 'light')} | Samples ${zone.samples}`
+      );
+    });
+    writeSpacer();
+
+    writeHeader('Window Comparison Summary');
+    comparisonSummary.forEach((item) => {
+      const metric = METRIC_DEFINITIONS[item.key];
+      const delta = item.delta === null
+        ? '--'
+        : `${item.delta >= 0 ? '+' : ''}${item.delta.toFixed(metric.decimals)} ${metric.unit}`;
+      writeKV(
+        metric.label,
+        `Current ${formatMetric(item.current, item.key)} | Previous ${formatMetric(item.previous, item.key)} | Delta ${delta}`
+      );
+    });
+    writeSpacer();
+
+    writeHeader('Zone Comparison');
+    if (!zoneComparison.length) {
+      writeLine('No zone comparison records available.');
+    } else {
+      zoneComparison.forEach((zone) => {
+        writeKV(
+          zone.zoneId,
+          `Temp ${formatMetric(zone.temperature, 'temperature')} | Humidity ${formatMetric(zone.humidity, 'humidity')} | Light ${formatMetric(zone.light, 'light')} | CO2 ${formatMetric(zone.co2, 'co2')} | pH ${formatMetric(zone.ph, 'ph')} | Samples ${zone.samples}`
+        );
+      });
+    }
+    writeSpacer();
+
+    writeHeader('Node Status');
+    if (!nodeStatuses.length) {
+      writeLine('No node status data available.');
+    } else {
+      nodeStatuses.forEach((node) => {
+        writeKV(
+          node.id,
+          `Status ${String(node.status || 'unknown').toUpperCase()} | Zone ${node.zoneId || '--'} | Last Seen ${formatDateTime(node.lastSeen)}`
+        );
+      });
+    }
+    writeSpacer();
+
+    writeHeader('Alerts');
+    if (!alerts.length) {
+      writeLine('No active alerts.');
+    } else {
+      alerts.forEach((alert) => {
+        writeKV(
+          alert.title,
+          `[${String(alert.type || 'info').toUpperCase()}] ${alert.message} | Source: ${alert.source || '--'} | At: ${formatDateTime(alert.at)}`
+        );
+      });
+    }
+    writeSpacer();
+
+    writeHeader('Notifications');
+    if (!notifications.length) {
+      writeLine('No notifications.');
+    } else {
+      notifications.forEach((entry) => {
+        writeKV(
+          entry.title,
+          `[${entry.read ? 'READ' : 'UNREAD'}] ${entry.message} | Severity: ${entry.severity || '--'} | Source: ${entry.source || '--'} | At: ${formatDateTime(entry.at)}`
+        );
+      });
+    }
+    writeSpacer();
+
+    writeHeader('AI Insights');
+    writeKV('Top Insight', aiTip || '--');
+    if (!aiInsights.length) {
+      writeLine('No AI insights available.');
+    } else {
+      aiInsights.forEach((insight, idx) => {
+        writeKV(`Insight ${idx + 1}`, insight);
+      });
+    }
+    writeSpacer();
+
+    writeHeader('Energy Usage');
+    writeKV('Today Total', `${formatNumber(energyUsage?.todayTotal, 2)} kWh`);
+    writeKV('7-day Total', `${formatNumber(energyUsage?.weekTotal, 2)} kWh`);
+    (energyUsage?.daily || []).forEach((row) => {
+      writeKV(`Daily ${row.label}`, `${formatNumber(row.kwh, 2)} kWh`);
+    });
+    (energyUsage?.weekly || []).forEach((row) => {
+      writeKV(`Weekly ${row.label}`, `${formatNumber(row.kwh, 2)} kWh`);
+    });
+    (energyUsage?.perDevice || []).forEach((row) => {
+      writeKV(
+        `Device ${row.label || row.key}`,
+        `${formatNumber(row.kwh, 2)} kWh | State: ${row.isOn ? 'ON' : 'OFF'}`
+      );
+    });
+    writeSpacer();
+
+    writeHeader('Maintenance');
+    if (!maintenanceTasks.length) {
+      writeLine('No maintenance tasks available.');
+    } else {
+      maintenanceTasks.forEach((task) => {
+        writeKV(
+          task.label,
+          `Status ${String(task.status || 'ok').toUpperCase()} | Interval ${task.intervalDays}d | Last Done ${formatDateTime(task.lastDoneAt)} | Due ${formatDateTime(task.dueAt)} | Days Remaining ${task.daysRemaining}`
+        );
+      });
+    }
+    writeSpacer();
+
+    writeHeader('Diagnostics');
+    if (!diagnostics.length) {
+      writeLine('No diagnostics issues detected.');
+    } else {
+      diagnostics.forEach((item) => {
+        writeKV(
+          item.title,
+          `[${String(item.severity || 'info').toUpperCase()}] ${item.detail}`
+        );
+      });
+    }
 
     doc.save(`orchid-report-${Date.now()}.pdf`);
-    setActionMessage('PDF report generated.');
+    setActionMessage('Report exported successfully.');
   };
 
   const saveThresholds = async (payload) => {
@@ -391,14 +535,8 @@ const EnvMonitor = () => {
           <span className="rounded-full border border-border/60 bg-paper/80 px-3 py-1 text-xs font-semibold text-subtle">
             Last update: {formatDateTime(lastUpdate)}
           </span>
-          <button type="button" className="btn-soft rounded-xl px-3 py-2 text-sm" onClick={handleExportCSV}>
-            CSV
-          </button>
-          <button type="button" className="btn-soft rounded-xl px-3 py-2 text-sm" onClick={handleExportExcel}>
-            Excel
-          </button>
-          <button type="button" className="btn-soft rounded-xl px-3 py-2 text-sm" onClick={handleExportPdf}>
-            PDF
+          <button type="button" className="btn-soft rounded-xl px-3 py-2 text-sm" onClick={handleGenerateReport}>
+            Export Report
           </button>
         </div>
       </div>
@@ -495,10 +633,6 @@ const EnvMonitor = () => {
           <EnergyUsagePanel energyUsage={energyUsage} />
 
           <GreenhouseLayout zones={zones} nodeStatuses={nodeStatuses} />
-
-          <MaintenancePanel tasks={maintenanceTasks} onMarkDone={markMaintenanceDone} />
-
-          <DeviceDiagnosticsPanel diagnostics={diagnostics} nodeStatuses={nodeStatuses} />
         </div>
 
         <aside className="space-y-6 xl:sticky xl:top-4">
