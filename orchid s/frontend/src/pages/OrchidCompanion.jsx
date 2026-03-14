@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 import { useMonitorData } from "../hooks/useMonitorData";
 import { orchidQuizQuestions } from "../data/orchidQuizQuestions";
+import MonitorCharts from "../components/monitor/MonitorCharts.jsx";
 import "./OrchidCompanion.css";
 
 const STORAGE = {
@@ -113,7 +114,7 @@ const countdownText = (target, now) => {
 };
 
 export default function OrchidCompanion() {
-  const { latest } = useMonitorData();
+  const { latest, history } = useMonitorData();
   const [nowMs, setNowMs] = useState(Date.now());
 
   const [input, setInput] = useState("");
@@ -479,6 +480,14 @@ export default function OrchidCompanion() {
             {favoriteTips.length ? <ul className="oc-favorite-list">{favoriteTips.slice(0, 5).map((tip) => <li key={tip}>{tip}</li>)}</ul> : <span className="oc-muted-text">No favorites yet.</span>}
           </div>
         </article>
+      </section>
+
+      <section className="oc-card">
+        <div className="oc-card-head">
+          <h2>Environment Trends</h2>
+          <p>Live charts for temperature, humidity, light, and MQ135 air quality.</p>
+        </div>
+        <MonitorCharts history={history} />
       </section>
 
       <section className="oc-card">
