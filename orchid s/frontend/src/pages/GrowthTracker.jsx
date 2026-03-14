@@ -150,11 +150,9 @@ const canonicalJarKey = (value) => {
 };
 
 const canonicalPlantId = (value) => {
-  const norm = normalizeId(value);
-  if (!norm) return "";
-  const match = norm.match(/^jar(\d+)$/);
-  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
-  return String(value || "").trim().toLowerCase();
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw;
 };
 
 const splitJarInputs = (value) =>
@@ -350,7 +348,10 @@ const resolveCurrentHeight = (plant) => {
 const normalizeJarIdInput = (value) => {
   const next = (value || "").trimStart();
   if (!next) return value || "";
-  return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
+  if (/^j(ar)?\d+/i.test(next)) {
+    return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
+  }
+  return value;
 };
 
 const deriveIdAliases = (value) => {
@@ -406,6 +407,8 @@ export default function GrowthTracker() {
   const [heightLogError, setHeightLogError] = useState("");
   const [jarPersistStatus, setJarPersistStatus] = useState("");
   const [jarPersistError, setJarPersistError] = useState("");
+  const [analysisSaveStatus, setAnalysisSaveStatus] = useState("");
+  const [analysisSaveError, setAnalysisSaveError] = useState("");
   const [firstGrowthTimestamp, setFirstGrowthTimestamp] = useState(null);
   const [firstGlobalGrowthTimestamp, setFirstGlobalGrowthTimestamp] = useState(null);
   const [ageSourceLabel, setAgeSourceLabel] = useState("");
@@ -533,11 +536,10 @@ export default function GrowthTracker() {
       .map((raw) => {
         const normalized = normalizeId(raw);
         const canonicalId = canonicalPlantId(raw);
-        const jarMatch = normalized.match(/^jar(\d+)$/);
-        return { raw, normalized, canonicalId, isJar: Boolean(jarMatch) };
+        return { raw, normalized, canonicalId };
       })
-      .filter(({ normalized, canonicalId, isJar }) => {
-        if (!normalized || !canonicalId || !isJar) return false;
+      .filter(({ normalized, canonicalId }) => {
+        if (!normalized || !canonicalId) return false;
         if (knownIds.has(normalized)) return false;
         if (createdJarIdsRef.current.has(normalized)) return false;
         return true;
@@ -644,12 +646,13 @@ export default function GrowthTracker() {
     setSensorHistory([]);
     const unsubs = [];
     const aliasSet = new Set(activeIdAliases);
-    let byJarRows = [];
+    const byJarRowsBySource = new Map();
     let globalRows = [];
     let orchidRows = [];
 
     const mergeAndSet = () => {
       const byTs = new Map();
+      const byJarRows = Array.from(byJarRowsBySource.values()).flat();
       [...orchidRows, ...globalRows, ...byJarRows].forEach((row) => {
         const ts = Number(row?.timestamp);
         if (!Number.isFinite(ts)) return;
@@ -661,19 +664,38 @@ export default function GrowthTracker() {
     };
 
     if (activeCanonicalId) {
-      const byJarRef = query(
-        ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(activeCanonicalId)}`),
-        limitToLast(150)
+      const byJarPathIds = Array.from(
+        new Set(
+          [activeCanonicalId, activeJarId, canonicalJarKey(activeJarId)]
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        )
       );
-      const offByJar = onValue(
-        byJarRef,
-        (snap) => {
-          byJarRows = Object.values(snap.val() || {}).map(normalizeSensor);
-          mergeAndSet();
-        },
-        (err) => setSensorError(err.message || `Failed to read ${activeCanonicalId} history`)
-      );
-      unsubs.push(offByJar);
+      byJarPathIds.forEach((pathId) => {
+        const byJarRef = query(
+          ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(pathId)}`),
+          limitToLast(150)
+        );
+        const offByJar = onValue(
+          byJarRef,
+          (snap) => {
+            const rows = Object.values(snap.val() || {}).map((row) =>
+              normalizeSensor({
+                ...(row || {}),
+                jarId: row?.jarId || row?.jar_id || pathId,
+              })
+            );
+            byJarRowsBySource.set(pathId, rows);
+            mergeAndSet();
+          },
+          (err) => {
+            byJarRowsBySource.set(pathId, []);
+            mergeAndSet();
+            setSensorError(err.message || `Failed to read ${pathId} history`);
+          }
+        );
+        unsubs.push(offByJar);
+      });
     }
 
     if (aliasSet.size) {
@@ -911,6 +933,14 @@ export default function GrowthTracker() {
     if (!timestamps.length) return null;
     return Math.min(...timestamps);
   }, [sensorHistory]);
+  const latestSensorHistoryHeight = useMemo(() => {
+    const row = (sensorHistory || []).find((entry) => {
+      const height = sanitizeHeightMm(entry?.height_mm ?? entry?.height);
+      return height !== null && height !== undefined;
+    });
+    if (!row) return null;
+    return sanitizeHeightMm(row.height_mm ?? row.height);
+  }, [sensorHistory]);
 
   const resolvedPlantingInfo = useMemo(() => {
     if (!activeJarId) return { date: "", source: "" };
@@ -988,6 +1018,13 @@ export default function GrowthTracker() {
     setResult(null);
     setAnalyzedJarId("");
     setAnalyzedHeight(null);
+    setAnalysisSaveStatus("");
+    setAnalysisSaveError("");
+
+    if (!activeCanonicalId) {
+      setError("Enter a Jar/Plant ID before analysis so the result can be saved to the plant database.");
+      return;
+    }
 
     const normalizedPlanting = toIsoDate(plantingDate) || resolvedPlantingInfo.date;
     if (!normalizedPlanting) {
@@ -996,7 +1033,7 @@ export default function GrowthTracker() {
     }
 
     if (!currentHeight) {
-      setError("Current height must be auto-filled from the record; choose a Jar/Plant ID that has a height entry.");
+      setError("Current height must come from plant record/live stream/growth history. Choose a Jar/Plant ID that has height logs.");
       return;
     }
 
@@ -1011,7 +1048,44 @@ export default function GrowthTracker() {
       const resp = await api.post("/growth/analyze", payload);
       setResult(resp.data);
       setAnalyzedHeight(Number(currentHeight));
-      setAnalyzedJarId(activeJarId || jarId);
+      setAnalyzedJarId(activeCanonicalId);
+
+      const heightMm = sanitizeHeightMm(currentHeight);
+      const plantPayload = {
+        id: activeCanonicalId,
+        planting_date: normalizedPlanting,
+        height_mm: heightMm,
+        cultivar: plantRecord?.cultivar || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const mergeSavedRecord = (saved) => {
+        const normalizedSaved = normalizePlantRecord(saved);
+        if (!normalizedSaved) return;
+        setPlantRecords((prev) => {
+          const idx = prev.findIndex((row) => normalizeId(row?.id) === normalizeId(normalizedSaved.id));
+          if (idx === -1) return [...prev, normalizedSaved];
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...normalizedSaved };
+          return next;
+        });
+      };
+
+      try {
+        const saveResp = await api.put(`/env/plants/${encodeURIComponent(activeCanonicalId)}`, plantPayload);
+        mergeSavedRecord(saveResp?.data || plantPayload);
+        setAnalysisSaveStatus(`Saved to plant database as ${activeCanonicalId}.`);
+      } catch (apiErr) {
+        try {
+          await update(ref(db, `plants/${activeCanonicalId}`), plantPayload);
+          mergeSavedRecord(plantPayload);
+          setAnalysisSaveStatus(`Saved to plant database as ${activeCanonicalId} (Firebase fallback).`);
+        } catch (firebaseErr) {
+          const apiMessage = apiErr?.response?.data?.detail || apiErr?.message || "API save failed";
+          const firebaseMessage = firebaseErr?.message || "Firebase save failed";
+          setAnalysisSaveError(`${apiMessage}; ${firebaseMessage}`);
+        }
+      }
     } catch (err) {
       const message = err.response?.data?.detail || err.response?.data || err.message || "Request failed";
       setError(typeof message === "string" ? message : JSON.stringify(message));
@@ -1096,6 +1170,14 @@ export default function GrowthTracker() {
     }
   }, [liveHeight]);
 
+  // If live node is unavailable, fall back to the latest value from growth history for the entered Jar/Plant ID.
+  useEffect(() => {
+    if (!activeJarId) return;
+    if (liveHeight !== null && liveHeight !== undefined) return;
+    if (latestSensorHistoryHeight === null || latestSensorHistoryHeight === undefined) return;
+    setCurrentHeight(String(latestSensorHistoryHeight));
+  }, [activeJarId, liveHeight, latestSensorHistoryHeight]);
+
   return (
     <div className="space-y-8">
       <Hero />
@@ -1125,6 +1207,8 @@ export default function GrowthTracker() {
             heightLogError={heightLogError}
             jarPersistStatus={jarPersistStatus}
             jarPersistError={jarPersistError}
+            analysisSaveStatus={analysisSaveStatus}
+            analysisSaveError={analysisSaveError}
             liveHeight={liveHeight}
             liveTimestamp={liveTimestamp}
           />
@@ -1210,6 +1294,8 @@ function FormCard({
   plantFetchError,
   jarPersistStatus,
   jarPersistError,
+  analysisSaveStatus,
+  analysisSaveError,
   liveHeight,
   liveTimestamp,
   cultureError,
@@ -1258,7 +1344,11 @@ function FormCard({
               value={currentHeight}
               readOnly
               disabled
-              placeholder={liveHeight !== null && liveHeight !== undefined ? `Live: ${liveHeight} mm` : "Auto-filled from plant record"}
+              placeholder={
+                liveHeight !== null && liveHeight !== undefined
+                  ? `Live: ${liveHeight} mm`
+                  : "Auto-filled from plant record or growth history"
+              }
               className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
             />
             <p className="text-xs text-emerald-700">
@@ -1335,6 +1425,16 @@ function FormCard({
       {jarPersistStatus && (
         <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
           {jarPersistStatus}
+        </p>
+      )}
+      {analysisSaveError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Analysis result save failed: {analysisSaveError}
+        </p>
+      )}
+      {analysisSaveStatus && (
+        <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+          {analysisSaveStatus}
         </p>
       )}
       <p className="text-xs text-slate-600">Today: {today}</p>

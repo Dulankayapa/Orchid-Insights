@@ -144,6 +144,26 @@ const normalizeHistoryRows = (payload) => {
   return rows;
 };
 
+const mergeLiveIntoHistory = (rows, liveRow, limit = 3000) => {
+  const normalizedRows = normalizeHistoryRows(rows);
+  const normalizedLive = normalizeSensor(liveRow);
+  if (!normalizedLive) return normalizedRows;
+
+  // Deduplicate by timestamp + node + zone while always keeping the newest reading.
+  const byKey = new Map();
+  normalizedRows.forEach((row) => {
+    const key = `${row.ts}|${String(row.nodeId || '')}|${String(row.zoneId || '')}`;
+    byKey.set(key, row);
+  });
+
+  const liveKey = `${normalizedLive.ts}|${String(normalizedLive.nodeId || '')}|${String(normalizedLive.zoneId || '')}`;
+  byKey.set(liveKey, normalizedLive);
+
+  return Array.from(byKey.values())
+    .sort((a, b) => (a.ts ?? 0) - (b.ts ?? 0))
+    .slice(-Math.max(1, limit));
+};
+
 const computeLinearForecast = (history, key, horizonHours) => {
   const samples = history
     .map((row) => ({
@@ -903,10 +923,12 @@ export const useMonitorData = (settingsOverride = {}) => {
     const latestRef = ref(db, 'orchidData/latest');
     const unLatest = onValue(latestRef, (snapshot) => {
       const value = snapshot.val();
-      const normalized = normalizeSensor(value);
+      const candidate = getPreferredLatest(value);
+      const normalized = normalizeSensor(candidate ?? value);
       if (!normalized) return;
       setLatest(normalized);
       setLastUpdate(Date.now());
+      setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
     });
 
     const historyRef = query(ref(db, HISTORY_PATH), orderByKey(), limitToLast(3000));
@@ -994,6 +1016,7 @@ export const useMonitorData = (settingsOverride = {}) => {
             return normalized.ts >= prevTs ? normalized : prev;
           });
           setLastUpdate(Date.now());
+          setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
           break;
         }
       } catch {
