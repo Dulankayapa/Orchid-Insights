@@ -581,6 +581,120 @@ const buildRackStats = (rackPlants) => {
   });
 };
 
+const deriveCategoryLabel = (value) => {
+  const text = firstText(value);
+  if (!text) return "Uncategorized";
+  const cleaned = text
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Uncategorized";
+  const genus = cleaned.match(/^[A-Za-z][A-Za-z-]*/);
+  return genus ? genus[0] : cleaned;
+};
+
+const resolvePlantCategory = (plant) =>
+  deriveCategoryLabel(firstText(plant?.category, plant?.cultivar, plant?.orchidType));
+
+const toPlantSeriesPoints = (plant, cutoffMs = null) =>
+  (plant?.heights || [])
+    .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+    .filter((point) => point !== null && (cutoffMs === null || point.x >= cutoffMs))
+    .sort((a, b) => a.x - b.x);
+
+const classifyCategoryGrowth = ({ avgRate, avgDelta, measuredPlants }) => {
+  if (!measuredPlants || avgRate === null) {
+    return {
+      growthLabel: "insufficient data",
+      suggestion: "Log at least two measurements per jar before deciding interventions for this category.",
+    };
+  }
+  if (avgRate < 0.2 || avgDelta < 8) {
+    return {
+      growthLabel: "slow",
+      suggestion: "Try improving nutrition, refresh medium/pH, adjust light/temperature, and check contamination this week.",
+    };
+  }
+  if (avgRate < 0.55) {
+    return {
+      growthLabel: "moderate",
+      suggestion: "Consider a small nutrition boost, tune humidity/light, and review growth again after the next 7-14 days.",
+    };
+  }
+  return {
+    growthLabel: "fast",
+    suggestion: "Keep current nutrition and conditions, but monitor spacing/ventilation to avoid stress from rapid growth.",
+  };
+};
+
+const buildRackCategoryStats = (rackPlants) => {
+  if (!rackPlants?.length) return [];
+  const grouped = new Map();
+
+  rackPlants.forEach((plant) => {
+    const category = resolvePlantCategory(plant);
+    if (!grouped.has(category)) {
+      grouped.set(category, {
+        category,
+        ids: [],
+        measuredPlants: 0,
+        rates: [],
+        deltas: [],
+        avgHeights: [],
+        latestHeights: [],
+        totalPoints: 0,
+      });
+    }
+
+    const bucket = grouped.get(category);
+    bucket.ids.push(plant.id);
+
+    const stats = computeSeriesStats(toPlantSeriesPoints(plant));
+    if (!stats) return;
+
+    bucket.measuredPlants += 1;
+    bucket.totalPoints += stats.count || 0;
+    if (Number.isFinite(stats.rate)) bucket.rates.push(stats.rate);
+    if (Number.isFinite(stats.delta)) bucket.deltas.push(stats.delta);
+    if (Number.isFinite(stats.avg)) bucket.avgHeights.push(stats.avg);
+    if (Number.isFinite(stats.last)) bucket.latestHeights.push(stats.last);
+  });
+
+  const avgOrNull = (values) =>
+    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+
+  return Array.from(grouped.values())
+    .map((item) => {
+      const avgRate = avgOrNull(item.rates);
+      const avgDelta = avgOrNull(item.deltas);
+      const avgHeight = avgOrNull(item.avgHeights);
+      const latestAvg = avgOrNull(item.latestHeights);
+      const { growthLabel, suggestion } = classifyCategoryGrowth({
+        avgRate,
+        avgDelta,
+        measuredPlants: item.measuredPlants,
+      });
+
+      return {
+        category: item.category,
+        plantCount: item.ids.length,
+        measuredPlants: item.measuredPlants,
+        avgRate,
+        avgDelta,
+        avgHeight,
+        latestAvg,
+        totalPoints: item.totalPoints,
+        growthLabel,
+        suggestion,
+      };
+    })
+    .sort((a, b) => {
+      const left = Number.isFinite(a.avgRate) ? a.avgRate : Number.NEGATIVE_INFINITY;
+      const right = Number.isFinite(b.avgRate) ? b.avgRate : Number.NEGATIVE_INFINITY;
+      return right - left;
+    });
+};
+
 // START CLUSTER_UI_STEP: jar-id-based K-Means helpers (safe to remove as one block)
 const CLUSTER_FEATURE_KEYS = ["height_cm", "days_since_planting", "growth_rate"];
 const NO_GROWTH_RATE_CM_PER_DAY = 0.001;
@@ -912,7 +1026,7 @@ const buildCompareBrief = ({ metrics, compareWindow }) => {
   return `Fastest growth: ${best.id} at ${best.rate.toFixed(2)} mm/day (${windowLabel}).`;
 };
 
-const buildRackInsight = ({ rackStats, rackQuery }) => {
+const buildRackInsight = ({ rackStats, rackQuery, categoryStats = [] }) => {
   if (!rackQuery) return "Enter a rack label to generate a rack summary.";
   if (!rackStats.length) return "No jars found for this rack.";
   const valid = rackStats.filter((item) => item.avg !== null);
@@ -920,18 +1034,39 @@ const buildRackInsight = ({ rackStats, rackQuery }) => {
   const best = valid.find((item) => item.rank === "Best") || valid[0];
   const worst = valid.find((item) => item.rank === "Worst") || valid[valid.length - 1];
   const avgAcross = valid.reduce((sum, item) => sum + item.avg, 0) / valid.length;
-  return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Best average height is ${
-    best.id
-  } at ${best.avg.toFixed(1)} mm; lowest is ${worst.id} at ${worst.avg.toFixed(1)} mm.`;
+  const validCategories = categoryStats.filter((item) => Number.isFinite(item.avgRate));
+  if (!validCategories.length) {
+    return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Best average height is ${
+      best.id
+    } at ${best.avg.toFixed(1)} mm; lowest is ${worst.id} at ${worst.avg.toFixed(1)} mm.`;
+  }
+
+  const topCategory = validCategories[0];
+  const lowCategory = validCategories[validCategories.length - 1];
+  return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Category growth-change comparison shows ${
+    topCategory.category
+  } is strongest (${topCategory.avgRate.toFixed(2)} mm/day, ${topCategory.avgDelta.toFixed(
+    1
+  )} mm avg change), while ${lowCategory.category} is slowest (${lowCategory.avgRate.toFixed(
+    2
+  )} mm/day). Suggested action for ${lowCategory.category}: ${lowCategory.suggestion}`;
 };
 
-const buildRackBrief = ({ rackStats, rackQuery }) => {
+const buildRackBrief = ({ rackStats, rackQuery, categoryStats = [] }) => {
   if (!rackQuery) return "Enter a rack label to summarize.";
   if (!rackStats.length) return "No jars found on this rack.";
   const valid = rackStats.filter((item) => item.avg !== null);
   if (!valid.length) return "Not enough data to summarize rack averages.";
-  const best = valid.find((item) => item.rank === "Best") || valid[0];
-  return `Rack ${rackQuery}: best average height is ${best.id} at ${best.avg.toFixed(1)} mm.`;
+  const validCategories = categoryStats.filter((item) => Number.isFinite(item.avgRate));
+  if (!validCategories.length) {
+    const best = valid.find((item) => item.rank === "Best") || valid[0];
+    return `Rack ${rackQuery}: best average height is ${best.id} at ${best.avg.toFixed(1)} mm.`;
+  }
+  const topCategory = validCategories[0];
+  const lowCategory = validCategories[validCategories.length - 1];
+  return `Rack ${rackQuery} category focus: ${topCategory.category} grows fastest (${topCategory.avgRate.toFixed(
+    2
+  )} mm/day). Improve ${lowCategory.category} by checking nutrition and conditions: ${lowCategory.suggestion}`;
 };
 
 const answerGrowthQuestion = ({ question, stats, history, record, insight }) => {
@@ -993,11 +1128,26 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
   return insight;
 };
 
-const answerRackQuestion = ({ question, rackStats, rackQuery, insight }) => {
+const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = [], insight }) => {
   if (!question?.trim()) return insight;
   if (!rackStats.length) return "No rack data yet.";
   const q = question.toLowerCase();
   const valid = rackStats.filter((item) => item.avg !== null);
+  const validCategories = (categoryStats || []).filter((item) => Number.isFinite(item.avgRate));
+  if ((q.includes("category") || q.includes("type") || q.includes("cultivar")) && validCategories.length) {
+    const rows = validCategories
+      .map(
+        (item) =>
+          `${item.category}: ${item.avgRate.toFixed(2)} mm/day, change ${item.avgDelta?.toFixed(1) || "n/a"} mm (${item.growthLabel})`
+      )
+      .join(", ");
+    return `Category growth change on ${rackQuery}: ${rows}.`;
+  }
+  if (q.includes("suggest") || q.includes("recommend") || q.includes("improve")) {
+    if (!validCategories.length) return "Need category-level growth data before suggesting interventions.";
+    const focus = validCategories[validCategories.length - 1];
+    return `Recommended focus for ${focus.category}: ${focus.suggestion}`;
+  }
   if (q.includes("best")) {
     const best = valid.find((item) => item.rank === "Best");
     return best ? `Best average height on ${rackQuery}: ${best.id} at ${best.avg.toFixed(1)} mm.` : insight;
@@ -1149,7 +1299,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-97",
     planting_date: "2026-01-01",
     location: "Rack T2",
-    cultivar: "Miltonia (test G)",
+    cultivar: "Dendrobium (test G)",
     nutrition: "VW + coconut water",
     heights: [
       { date: "2026-02-01", height_mm: 17 },
@@ -1168,7 +1318,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-98",
     planting_date: "2026-01-06",
     location: "Rack T3",
-    cultivar: "Brassia (test H)",
+    cultivar: "Oncidium (test H)",
     nutrition: "MS + casein hydrolysate",
     heights: [
       { date: "2026-02-06", height_mm: 14 },
@@ -1187,7 +1337,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-99",
     planting_date: "2026-01-08",
     location: "Rack T3",
-    cultivar: "Cymbidium (test I)",
+    cultivar: "Cattleya (test I)",
     nutrition: "Half-strength VW",
     heights: [
       { date: "2026-02-08", height_mm: 13 },
@@ -1225,7 +1375,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-101",
     planting_date: "2026-01-12",
     location: "Rack T4",
-    cultivar: "Ascocenda (test K)",
+    cultivar: "Vanda (test K)",
     nutrition: "VW + amino acids",
     heights: [
       { date: "2026-02-12", height_mm: 19 },
@@ -1244,7 +1394,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-102",
     planting_date: "2026-01-14",
     location: "Rack T4",
-    cultivar: "Rhynchostylis (test L)",
+    cultivar: "Paphiopedilum (test L)",
     nutrition: "MS + coconut water",
     heights: [
       { date: "2026-02-14", height_mm: 21 },
@@ -1263,7 +1413,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-103",
     planting_date: "2026-01-16",
     location: "Rack T1",
-    cultivar: "Spathoglottis (test M)",
+    cultivar: "Dendrobium (test M)",
     nutrition: "MS + myo-inositol",
     heights: [
       { date: "2026-02-16", height_mm: 24 },
@@ -1282,7 +1432,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-104",
     planting_date: "2026-01-18",
     location: "Rack T4",
-    cultivar: "Phaius (test N)",
+    cultivar: "Cattleya (test N)",
     nutrition: "MS baseline",
     heights: [
       { date: "2026-02-18", height_mm: 28 },
@@ -1398,7 +1548,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-97",
     cultureDate: "2026-01-01",
     rackNo: "T2",
-    orchidType: "Miltonia (test G)",
+    orchidType: "Dendrobium (test G)",
     nutrition: "VW + coconut water",
     addHormone: false,
     hormoneDetail: "",
@@ -1413,7 +1563,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-98",
     cultureDate: "2026-01-06",
     rackNo: "T3",
-    orchidType: "Brassia (test H)",
+    orchidType: "Oncidium (test H)",
     nutrition: "MS + casein hydrolysate",
     addHormone: true,
     hormoneDetail: "Kinetin 0.4 mg/L",
@@ -1427,7 +1577,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-99",
     cultureDate: "2026-01-08",
     rackNo: "T3",
-    orchidType: "Cymbidium (test I)",
+    orchidType: "Cattleya (test I)",
     nutrition: "Half-strength VW",
     addHormone: false,
     hormoneDetail: "",
@@ -1458,7 +1608,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-101",
     cultureDate: "2026-01-12",
     rackNo: "T4",
-    orchidType: "Ascocenda (test K)",
+    orchidType: "Vanda (test K)",
     nutrition: "VW + amino acids",
     addHormone: true,
     hormoneDetail: "BA 1.1 mg/L",
@@ -1473,7 +1623,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-102",
     cultureDate: "2026-01-14",
     rackNo: "T4",
-    orchidType: "Rhynchostylis (test L)",
+    orchidType: "Paphiopedilum (test L)",
     nutrition: "MS + coconut water",
     addHormone: true,
     hormoneDetail: "NAA 0.15 mg/L",
@@ -1488,7 +1638,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-103",
     cultureDate: "2026-01-16",
     rackNo: "T1",
-    orchidType: "Spathoglottis (test M)",
+    orchidType: "Dendrobium (test M)",
     nutrition: "MS + myo-inositol",
     addHormone: false,
     hormoneDetail: "",
@@ -1503,7 +1653,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-104",
     cultureDate: "2026-01-18",
     rackNo: "T4",
-    orchidType: "Phaius (test N)",
+    orchidType: "Cattleya (test N)",
     nutrition: "MS baseline",
     addHormone: false,
     hormoneDetail: "",
@@ -1748,7 +1898,8 @@ export default function GrowthHistory() {
       const nutrition = firstText(culture?.nutrition, plant.nutrition, plant.nutritionStatus);
       const nutritionStatus = firstText(culture?.nutritionStatus, nutrition);
       const recultures = culture?.recultures || [];
-      return { ...plant, location, planting_date, cultivar, nutrition, nutritionStatus, recultures };
+      const category = resolvePlantCategory({ category: plant.category, cultivar });
+      return { ...plant, location, planting_date, cultivar, nutrition, nutritionStatus, recultures, category };
     });
   }, [cultureMap, plants]);
 
@@ -1902,13 +2053,14 @@ export default function GrowthHistory() {
   const [includeCompareInsight, setIncludeCompareInsight] = useState(true);
   const [compareReportInsight, setCompareReportInsight] = useState("");
   const rackStats = useMemo(() => buildRackStats(rackPlants), [rackPlants]);
+  const rackCategoryStats = useMemo(() => buildRackCategoryStats(rackPlants), [rackPlants]);
   const rackInsight = useMemo(
-    () => buildRackInsight({ rackStats, rackQuery }),
-    [rackStats, rackQuery]
+    () => buildRackInsight({ rackStats, rackQuery, categoryStats: rackCategoryStats }),
+    [rackStats, rackQuery, rackCategoryStats]
   );
   const rackBrief = useMemo(
-    () => buildRackBrief({ rackStats, rackQuery }),
-    [rackStats, rackQuery]
+    () => buildRackBrief({ rackStats, rackQuery, categoryStats: rackCategoryStats }),
+    [rackStats, rackQuery, rackCategoryStats]
   );
   const [includeRackInsight, setIncludeRackInsight] = useState(true);
   const [rackReportInsight, setRackReportInsight] = useState("");
@@ -2032,6 +2184,7 @@ export default function GrowthHistory() {
           rackPlants={rackPlants}
           rackHintString={rackHintString}
           rackStats={rackStats}
+          rackCategoryStats={rackCategoryStats}
           reportInsightText={rackReportInsight || rackBrief}
           includeInsight={includeRackInsight}
         />
@@ -2042,13 +2195,14 @@ export default function GrowthHistory() {
           summaryText={rackInsight}
           includeInsight={includeRackInsight}
           setIncludeInsight={setIncludeRackInsight}
-          placeholder="Ask about best, worst, or averages..."
+          placeholder="Ask about category growth, best/worst, or suggestions..."
           onReportTextChange={setRackReportInsight}
           onAsk={(question) =>
             answerRackQuestion({
               question,
               rackStats,
               rackQuery,
+              categoryStats: rackCategoryStats,
               insight: rackInsight,
             })
           }
@@ -3424,7 +3578,16 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
   );
 }
 
-function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, reportInsightText, includeInsight }) {
+function RackChart({
+  rackPlants,
+  rackQuery,
+  rackHintString,
+  isLight,
+  rackStats,
+  rackCategoryStats,
+  reportInsightText,
+  includeInsight,
+}) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
 
@@ -3444,6 +3607,19 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
         content: renderDataTable(["Jar ID", "Avg height", "Points", "Rank"], rows),
       },
     ];
+    if (rackCategoryStats?.length) {
+      const categoryRows = rackCategoryStats.map((item) => [
+        item.category,
+        `${item.plantCount}`,
+        item.avgDelta !== null ? `${item.avgDelta.toFixed(1)} mm` : "n/a",
+        item.avgRate !== null ? `${item.avgRate.toFixed(2)} mm/day` : "n/a",
+        item.suggestion,
+      ]);
+      sections.push({
+        heading: "Category growth-change comparison",
+        content: renderDataTable(["Category", "Jars", "Avg change", "Avg rate", "Suggestion"], categoryRows),
+      });
+    }
     if (includeInsight && reportInsightText) {
       sections.unshift({
         heading: "Assistant conclusion",
@@ -3654,7 +3830,9 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
         <div>
           <p className="kicker">Rack summary</p>
           <h3 className="text-xl font-semibold text-dark">Growth by rack</h3>
-          <p className="text-sm text-subtle">Solid lines show jar heights. Dashed lines show differences vs the first jar.</p>
+          <p className="text-sm text-subtle">
+            Solid lines show jar heights. Dashed lines show differences vs the first jar. Category cards summarize growth change and actions.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">
@@ -3669,6 +3847,41 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
           </button>
         </div>
       </div>
+      {rackQuery && rackCategoryStats?.length ? (
+        <div className="panel-muted px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-subtle">Growth change by plant category</p>
+            <span className="text-[11px] text-subtle">{rackCategoryStats.length} categories</span>
+          </div>
+          <div className="grid sm:grid-cols-2 gap-2 max-h-56 overflow-auto pr-1">
+            {(rackCategoryStats || []).map((item) => (
+              <div key={item.category} className="rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-xs text-dark">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold">{item.category}</span>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] ${
+                      item.growthLabel === "fast"
+                        ? "border-emerald-300/70 bg-emerald-500/10 text-emerald-700"
+                        : item.growthLabel === "slow"
+                          ? "border-rose-300/70 bg-rose-500/10 text-rose-700"
+                          : item.growthLabel === "moderate"
+                            ? "border-amber-300/70 bg-amber-500/10 text-amber-700"
+                            : "border-slate-300/70 bg-slate-500/10 text-slate-700"
+                    }`}
+                  >
+                    {item.growthLabel}
+                  </span>
+                </div>
+                <p className="text-[11px] text-subtle mt-1">
+                  {item.plantCount} jar(s) - Change: {item.avgDelta !== null ? `${item.avgDelta.toFixed(1)} mm` : "n/a"} - Rate:{" "}
+                  {item.avgRate !== null ? `${item.avgRate.toFixed(2)} mm/day` : "n/a"}
+                </p>
+                <p className="text-[11px] text-subtle mt-1">{item.suggestion}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
       {rackQuery && rackStats?.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
