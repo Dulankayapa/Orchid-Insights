@@ -1,10 +1,28 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { onValue, ref, remove, set, update } from "firebase/database";
+import { onValue, push, ref, remove, set, update } from "firebase/database";
 import { db } from "../lib/firebase";
+import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 // Components
 const emptyRecultureRow = { date: "", note: "" };
 const newRecultureRow = () => ({ ...emptyRecultureRow });
+const newSplitJarRow = () => ({
+  newJarId: "",
+  recultureDate: "",
+  nutritionType: "",
+  rackLocation: "",
+  plantCount: "",
+  notes: "",
+});
+const newSameJarReculture = () => ({
+  recultureDate: "",
+  nutritionType: "",
+  plantCount: "",
+  notes: "",
+});
+const NEW_CULTURE = "NEW_CULTURE";
+const RECULTURE_WITHOUT_SUB = "WITHOUT_SUBCULTURE";
+const RECULTURE_WITH_SUB = "WITH_SUBCULTURE";
 const OPTIONS_PATH = "recultureOptions";
 // Utility functions for normalizing and managing options
 const normalizeOption = (value) => (value || "").trim();
@@ -34,6 +52,26 @@ const normalizeJarIdInput = (value) => {
   if (!next) return value || "";
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
+const normalizeLinkedJarId = (value) => normalizeJarIdInput(value || "").trim();
+const readDirectParentJarId = (entry) =>
+  normalizeLinkedJarId(
+    entry?.directParentJarId ||
+      entry?.direct_parent_jar_id ||
+      entry?.sourceJarId ||
+      entry?.source_jar_id ||
+      entry?.parentJarId ||
+      entry?.parentJarID ||
+      entry?.parentJar ||
+      entry?.parent_id ||
+      entry?.parent_jar_id ||
+      ""
+  );
+const normalizeRecultureMode = (value, parentJarId = "") => {
+  const raw = String(value || "").trim().toLowerCase();
+  if (["subculture", "sub_culture", "split", "with_subculture", "with-subculture"].includes(raw)) return "subculture";
+  if (["samejar", "same_jar", "same", "reculture", "without_subculture", "without-subculture", "new_culture"].includes(raw)) return "sameJar";
+  return parentJarId ? "subculture" : "sameJar";
+};
 // Builds options list from existing entries to seed Firebase options if they are missing
 const buildOptionsFromEntries = (entries) => {
   const racks = new Map();
@@ -55,10 +93,17 @@ const buildOptionsFromEntries = (entries) => {
 export default function CultureDetails() {
   const [form, setForm] = useState({
     jarId: "",
+    recultureMode: "sameJar",
+    parentJarId: "",
     cultureDate: "",
     rackNo: "",
     orchidType: "",
     nutrition: "",
+    plantCount: "",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: false,
+    specialNutritionDetail: "",
     recultures: [newRecultureRow()],
   });
   const [entries, setEntries] = useState([]);// Firebase entries loaded from the database
@@ -72,6 +117,12 @@ export default function CultureDetails() {
   const [selectedId, setSelectedId] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
+  const [reculturePanelOpen, setReculturePanelOpen] = useState(false);
+  const [recultureSearch, setRecultureSearch] = useState("");
+  const [selectedRecultureJarId, setSelectedRecultureJarId] = useState("");
+  const [recultureType, setRecultureType] = useState("");
+  const [sameJarReculture, setSameJarReculture] = useState(newSameJarReculture());
+  const [splitRows, setSplitRows] = useState([newSplitJarRow()]);
   const isEditing = Boolean(selectedId);
 
   useEffect(() => {
@@ -105,12 +156,25 @@ export default function CultureDetails() {
         const next = Object.entries(data)
           .map(([key, value]) => {
             const entry = value && typeof value === "object" ? value : {};
+            const directParentJarId = readDirectParentJarId(entry);
+            const parentJarId = directParentJarId;
             return {
               jarId: entry.jarId || key,
-              cultureDate: entry.cultureDate,
-              rackNo: entry.rackNo,
-              orchidType: entry.orchidType,
-              nutrition: entry.nutrition,
+              recultureMode: normalizeRecultureMode(
+                entry.recultureMode || entry.reCultureMode || entry.reculture_type,
+                parentJarId
+              ),
+              parentJarId,
+              directParentJarId,
+              cultureDate: entry.cultureDate || entry.culture_date || entry.plant_date || "",
+              rackNo: entry.rackNo || entry.rack_location || "",
+              orchidType: entry.orchidType || entry.plant_type || "",
+              nutrition: entry.nutrition || entry.nutrition_type || "",
+              plantCount: entry.plantCount ?? entry.plant_count ?? entry.seedCount ?? entry.seed_count ?? "",
+              addHormone: Boolean(entry.addHormone),
+              hormoneDetail: entry.hormoneDetail || "",
+              addSpecialNutrition: Boolean(entry.addSpecialNutrition),
+              specialNutritionDetail: entry.specialNutritionDetail || "",
               recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
               updatedAt: entry.updatedAt,
             };
@@ -165,13 +229,94 @@ export default function CultureDetails() {
     if (!selectedId) return null;
     return entries.find((e) => e.jarId.toLowerCase() === selectedId.toLowerCase()) || null;
   }, [entries, selectedId]);
+  const selectedRecultureEntry = useMemo(() => {
+    if (!selectedRecultureJarId) return null;
+    return entries.find((e) => e.jarId.toLowerCase() === selectedRecultureJarId.toLowerCase()) || null;
+  }, [entries, selectedRecultureJarId]);
 
   const rackOptions = optionStore.racks;
   const orchidOptions = optionStore.orchids;
+  const recultureSearchRows = useMemo(() => {
+    const term = recultureSearch.trim().toLowerCase();
+    if (!term) return entries.slice(0, 8);
+    return entries.filter((entry) => {
+      const haystack = [
+        entry.jarId,
+        entry.orchidType,
+        entry.rackNo,
+      ]
+        .map((v) => String(v || "").toLowerCase())
+        .join(" ");
+      return haystack.includes(term);
+    }).slice(0, 12);
+  }, [entries, recultureSearch]);
 
   const handleField = (key) => (e) => {
-    const nextValue = key === "jarId" ? normalizeJarIdInput(e.target.value) : e.target.value;
+    const nextValue = ["jarId", "parentJarId"].includes(key) ? normalizeJarIdInput(e.target.value) : e.target.value;
     setForm((prev) => ({ ...prev, [key]: nextValue }));
+  };
+  const openReculturePanel = () => {
+    setReculturePanelOpen(true);
+    setRecultureType("");
+    setSameJarReculture(newSameJarReculture());
+    setSplitRows([newSplitJarRow()]);
+    setRecultureSearch("");
+    setSelectedRecultureJarId(selectedId || "");
+    setStatus("Search and select an existing jar to start re-culturing.");
+    setError("");
+  };
+  const closeReculturePanel = () => {
+    setReculturePanelOpen(false);
+    setRecultureType("");
+    setSameJarReculture(newSameJarReculture());
+    setSplitRows([newSplitJarRow()]);
+    setRecultureSearch("");
+    setSelectedRecultureJarId("");
+    setStatus("");
+    setError("");
+  };
+  const selectRecultureSource = (entry) => {
+    if (!entry?.jarId) return;
+    const sourceId = entry.jarId;
+    setSelectedRecultureJarId(sourceId);
+    setSelectedId(sourceId);
+    setRecultureSearch(sourceId);
+    setRecultureType("");
+    setSameJarReculture({
+      ...newSameJarReculture(),
+      plantCount: String(entry.plantCount || "").trim(),
+    });
+    setSplitRows([newSplitJarRow()]);
+    setStatus(`Selected ${sourceId}. Choose re-culture option.`);
+    setError("");
+  };
+  const updateSameJarRecultureField = (key, value) => {
+    setSameJarReculture((prev) => ({ ...prev, [key]: value }));
+  };
+  const updateSplitRow = (idx, key, value) => {
+    setSplitRows((prev) => prev.map((row, i) => (i === idx ? { ...row, [key]: value } : row)));
+  };
+  const addSplitRow = () => {
+    setSplitRows((prev) => [...prev, newSplitJarRow()]);
+  };
+  const removeSplitRow = (idx) => {
+    setSplitRows((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      return next.length ? next : [newSplitJarRow()];
+    });
+  };
+
+  const handleToggle = (key) => (e) => {
+    const checked = Boolean(e.target.checked);
+    setForm((prev) => {
+      if (key === "addHormone" && !checked) {
+        return { ...prev, addHormone: false, hormoneDetail: "" };
+      }
+      if (key === "addSpecialNutrition" && !checked) {
+        return { ...prev, addSpecialNutrition: false, specialNutritionDetail: "" };
+      }
+      return { ...prev, [key]: checked };
+    });
   };
 
   const applyOption = (key, value) => {
@@ -256,32 +401,22 @@ export default function CultureDetails() {
     });
   };
 
-  const handleRecultureChange = (idx, key, value) => {
-    setForm((prev) => {
-      const next = prev.recultures.map((row, i) => (i === idx ? { ...row, [key]: value } : row));
-      return { ...prev, recultures: next };
-    });
-  };
-
-  const addRecultureRow = () => {
-    setForm((prev) => ({ ...prev, recultures: [...prev.recultures, newRecultureRow()] }));
-  };
-
-  const removeRecultureRow = (idx) => {
-    setForm((prev) => {
-      const next = prev.recultures.filter((_, i) => i !== idx);
-      return { ...prev, recultures: next };
-    });
-  };
-
   // Loads a selected entry into the form for viewing/editing
   const loadEntry = (entry) => {
+    const normalizedParent = readDirectParentJarId(entry);
     setForm({
       jarId: entry.jarId,
+      recultureMode: normalizeRecultureMode(entry.recultureMode || entry.reculture_type, normalizedParent),
+      parentJarId: normalizedParent,
       cultureDate: entry.cultureDate,
       rackNo: entry.rackNo,
       orchidType: entry.orchidType,
       nutrition: entry.nutrition || "",
+      plantCount: entry.plantCount ?? "",
+      addHormone: Boolean(entry.addHormone),
+      hormoneDetail: entry.hormoneDetail || "",
+      addSpecialNutrition: Boolean(entry.addSpecialNutrition),
+      specialNutritionDetail: entry.specialNutritionDetail || "",
       recultures: entry.recultures && entry.recultures.length ? entry.recultures : [],
     });
     setSelectedId(entry.jarId);
@@ -291,18 +426,330 @@ export default function CultureDetails() {
 
   // Clears the form to allow creating a new entry, and resets status and error messages
   const clearForm = () => {
-    setForm({ jarId: "", cultureDate: "", rackNo: "", orchidType: "", nutrition: "", recultures: [newRecultureRow()] });
+    setForm({
+      jarId: "",
+      recultureMode: "sameJar",
+      parentJarId: "",
+      cultureDate: "",
+      rackNo: "",
+      orchidType: "",
+      nutrition: "",
+      plantCount: "",
+      addHormone: false,
+      hormoneDetail: "",
+      addSpecialNutrition: false,
+      specialNutritionDetail: "",
+      recultures: [newRecultureRow()],
+    });
     setSelectedId("");
+    setReculturePanelOpen(false);
+    setRecultureSearch("");
+    setSelectedRecultureJarId("");
+    setRecultureType("");
+    setSameJarReculture(newSameJarReculture());
+    setSplitRows([newSplitJarRow()]);
     setStatus("");
     setError("");
+  };
+
+  const deleteJarEntry = async (jarId) => {
+    const targetJarId = normalizeLinkedJarId(jarId);
+    if (!targetJarId) return;
+
+    const childJars = entries
+      .filter((entry) => normalizeOptionKey(entry.directParentJarId || entry.parentJarId) === normalizeOptionKey(targetJarId))
+      .map((entry) => entry.jarId);
+    if (childJars.length) {
+      setStatus("");
+      setError(`Cannot delete ${targetJarId}. Delete child jars first: ${childJars.join(", ")}.`);
+      return;
+    }
+
+    const shouldDelete =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Delete saved jar ${targetJarId}? This action cannot be undone.`);
+    if (!shouldDelete) return;
+
+    setSaving(true);
+    setStatus("");
+    setError("");
+    try {
+      await remove(ref(db, `recultureEntries/${encodeFirebaseKeySegment(targetJarId)}`));
+      if (normalizeOptionKey(selectedId) === normalizeOptionKey(targetJarId)) {
+        clearForm();
+      }
+      if (normalizeOptionKey(selectedRecultureJarId) === normalizeOptionKey(targetJarId)) {
+        setSelectedRecultureJarId("");
+      }
+      setStatus(`Deleted ${targetJarId}.`);
+    } catch (err) {
+      setError(err?.message || `Failed to delete ${targetJarId}.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const appendCultureRecord = async (record) => {
+    const recRef = push(ref(db, "cultureRecords"));
+    const recordId = recRef.key || String(Date.now());
+    await set(recRef, { ...record, id: recordId });
+    return recordId;
+  };
+
+  const handleRecultureSubmit = async () => {
+    const source = selectedRecultureEntry;
+    if (!source?.jarId) {
+      setError("Select a source jar from the search table before re-culturing.");
+      return;
+    }
+    if (![RECULTURE_WITHOUT_SUB, RECULTURE_WITH_SUB].includes(recultureType)) {
+      setError("Select reculture option: WITH_SUBCULTURE or WITHOUT_SUBCULTURE.");
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const sourceJarId = source.jarId;
+    const sourceEntryKey = encodeFirebaseKeySegment(sourceJarId);
+
+    if (recultureType === RECULTURE_WITHOUT_SUB) {
+      const recultureDate = (sameJarReculture.recultureDate || "").trim();
+      const nutritionType = (sameJarReculture.nutritionType || "").trim();
+      const plantCount = String(sameJarReculture.plantCount || "").trim();
+      const notes = (sameJarReculture.notes || "").trim();
+
+      if (!recultureDate) {
+        setError("Reculture date is required for reculture without subculture.");
+        return;
+      }
+      if (!nutritionType) {
+        setError("Nutrition type is required for reculture without subculture.");
+        return;
+      }
+      if (!plantCount) {
+        setError("Plant count is required for reculture without subculture.");
+        return;
+      }
+
+      const updatedRecultures = [
+        ...(Array.isArray(source.recultures) ? source.recultures : []),
+        {
+          date: recultureDate,
+          note: notes || "Reculture without subculture",
+          nutritionType,
+          recultureType: RECULTURE_WITHOUT_SUB,
+          createdAt: nowIso,
+        },
+      ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      const updatedEntry = {
+        ...source,
+        id: sourceJarId,
+        jarId: sourceJarId,
+        recultureMode: "sameJar",
+        parentJarId: source.parentJarId || "",
+        nutrition: nutritionType,
+        nutrition_type: nutritionType,
+        plantCount,
+        plant_count: plantCount,
+        seedCount: plantCount,
+        seed_count: plantCount,
+        recultures: updatedRecultures,
+        updatedAt: nowIso,
+      };
+
+      setSaving(true);
+      try {
+        await set(ref(db, `recultureEntries/${sourceEntryKey}`), updatedEntry);
+        await appendCultureRecord({
+          jar_id: sourceJarId,
+          parent_jar_id: source.parentJarId || "",
+          plant_date: source.cultureDate || "",
+          plant_type: source.orchidType || "",
+          nutrition_type: nutritionType,
+          rack_location: source.rackNo || "",
+          plant_count: plantCount,
+          seed_count: plantCount,
+          reculture_type: RECULTURE_WITHOUT_SUB,
+          reculture_date: recultureDate,
+          created_at: nowIso,
+        });
+        setStatus(`Saved reculture update under same jar ${sourceJarId}.`);
+        setSameJarReculture(newSameJarReculture());
+      } catch (err) {
+        setError(err?.message || "Failed to save reculture update.");
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    const preparedRows = splitRows
+      .map((row) => ({
+        newJarId: normalizeJarIdInput(row.newJarId).trim(),
+        recultureDate: (row.recultureDate || "").trim(),
+        nutritionType: (row.nutritionType || "").trim(),
+        rackLocation: (row.rackLocation || "").trim(),
+        plantCount: String(row.plantCount || "").trim(),
+        notes: (row.notes || "").trim(),
+      }))
+      .filter((row) => row.newJarId || row.recultureDate || row.nutritionType || row.rackLocation || row.plantCount || row.notes);
+
+    if (!preparedRows.length) {
+      setError("Add at least one new child jar row for sub-culture split.");
+      return;
+    }
+
+    const seenJarIds = new Set();
+    for (const row of preparedRows) {
+      if (!row.newJarId) {
+        setError("New jar ID is required for every sub-culture row.");
+        return;
+      }
+      if (!row.recultureDate) {
+        setError(`Reculture date is required for ${row.newJarId}.`);
+        return;
+      }
+      if (!row.nutritionType) {
+        setError(`Nutrition type is required for ${row.newJarId}.`);
+        return;
+      }
+      if (!row.rackLocation) {
+        setError(`Rack location is required for ${row.newJarId}.`);
+        return;
+      }
+      if (!row.plantCount) {
+        setError(`Plant count is required for ${row.newJarId}.`);
+        return;
+      }
+      const normalized = normalizeOptionKey(row.newJarId);
+      if (seenJarIds.has(normalized)) {
+        setError(`Duplicate child jar ID detected: ${row.newJarId}.`);
+        return;
+      }
+      seenJarIds.add(normalized);
+      const alreadyExists = entries.some((entry) => normalizeOptionKey(entry.jarId) === normalized);
+      if (alreadyExists) {
+        setError(`Child jar ID already exists: ${row.newJarId}. Use another ID.`);
+        return;
+      }
+      const dotIndex = row.newJarId.lastIndexOf(".");
+      if (dotIndex > 0) {
+        const directParentFromId = row.newJarId.slice(0, dotIndex).trim();
+        if (normalizeOptionKey(directParentFromId) !== normalizeOptionKey(sourceJarId)) {
+          setError(
+            `Child jar ${row.newJarId} must be added under ${directParentFromId}. Select that jar as source to continue.`
+          );
+          return;
+        }
+      }
+    }
+
+    const firstDate = preparedRows
+      .map((row) => row.recultureDate)
+      .sort()[0];
+    const newJarIds = preparedRows.map((row) => row.newJarId);
+    const parentRecultureNote = `Sub-cultured to: ${newJarIds.join(", ")}`;
+    const updatedParentRecultures = [
+      ...(Array.isArray(source.recultures) ? source.recultures : []),
+      {
+        date: firstDate,
+        note: parentRecultureNote,
+        recultureType: RECULTURE_WITH_SUB,
+        createdAt: nowIso,
+      },
+    ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    setSaving(true);
+    try {
+      const writeTasks = [];
+      writeTasks.push(
+        set(ref(db, `recultureEntries/${sourceEntryKey}`), {
+          ...source,
+          jarId: sourceJarId,
+          recultures: updatedParentRecultures,
+          updatedAt: nowIso,
+        })
+      );
+
+      preparedRows.forEach((row) => {
+        const childEntry = {
+          id: row.newJarId,
+          jarId: row.newJarId,
+          parentJarId: sourceJarId,
+          parent_jar_id: sourceJarId,
+          directParentJarId: sourceJarId,
+          direct_parent_jar_id: sourceJarId,
+          sourceJarId: sourceJarId,
+          source_jar_id: sourceJarId,
+          cultureDate: row.recultureDate,
+          culture_date: row.recultureDate,
+          rackNo: row.rackLocation,
+          rack_location: row.rackLocation,
+          orchidType: source.orchidType || "",
+          plant_type: source.orchidType || "",
+          nutrition: row.nutritionType,
+          nutrition_type: row.nutritionType,
+          plantCount: row.plantCount,
+          plant_count: row.plantCount,
+          seedCount: row.plantCount,
+          seed_count: row.plantCount,
+          recultureMode: "subculture",
+          recultureType: RECULTURE_WITH_SUB,
+          reculture_type: RECULTURE_WITH_SUB,
+          recultureDate: row.recultureDate,
+          reculture_date: row.recultureDate,
+          recultures: [],
+          createdAt: nowIso,
+          created_at: nowIso,
+          updatedAt: nowIso,
+        };
+        const childEntryKey = encodeFirebaseKeySegment(row.newJarId);
+        writeTasks.push(set(ref(db, `recultureEntries/${childEntryKey}`), childEntry));
+        writeTasks.push(
+          appendCultureRecord({
+            jar_id: row.newJarId,
+            parent_jar_id: sourceJarId,
+            source_jar_id: sourceJarId,
+            plant_date: row.recultureDate,
+            plant_type: source.orchidType || "",
+            nutrition_type: row.nutritionType,
+            rack_location: row.rackLocation,
+            plant_count: row.plantCount,
+            seed_count: row.plantCount,
+            reculture_type: RECULTURE_WITH_SUB,
+            reculture_date: row.recultureDate,
+            created_at: nowIso,
+          })
+        );
+      });
+
+      await Promise.all(writeTasks);
+      setStatus(`Saved sub-culture split from ${sourceJarId} into ${newJarIds.join(", ")}.`);
+      setSplitRows([newSplitJarRow()]);
+    } catch (err) {
+      setError(err?.message || "Failed to save sub-culture split.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setStatus("");
+    if (reculturePanelOpen) {
+      await handleRecultureSubmit();
+      return;
+    }
+    if (isEditing) {
+      setError('Selected jar is preview-only. Use "Add new jar" to create, or "Add re-culture details" to update.');
+      return;
+    }
 
     const jarId = normalizeJarIdInput(form.jarId).trim();
+    const recultureMode = normalizeRecultureMode(form.recultureMode, form.parentJarId);
+    const parentJarId = normalizeLinkedJarId(recultureMode === "subculture" ? form.parentJarId : "");
     if (!jarId) {
       setError("Jar ID is required.");
       return;
@@ -323,28 +770,96 @@ export default function CultureDetails() {
       setError("Nutrition / medium is required.");
       return;
     }
+    if (!String(form.plantCount || "").trim()) {
+      setError("Plant count is required.");
+      return;
+    }
+    if (form.addHormone && !form.hormoneDetail.trim()) {
+      setError("Enter hormone details or untick Add hormone.");
+      return;
+    }
+    if (form.addSpecialNutrition && !form.specialNutritionDetail.trim()) {
+      setError("Enter special nutrition details or untick Add special nutrition.");
+      return;
+    }
+    if (parentJarId && parentJarId.toLowerCase() === jarId.toLowerCase()) {
+      setError("Parent Jar ID cannot be the same as Jar ID.");
+      return;
+    }
 
     const cleanedRecultures = form.recultures
       .map((row) => ({ date: row.date, note: row.note?.trim() || "" }))
       .filter((row) => row.date);
+    if (recultureMode === "subculture" && !cleanedRecultures.length) {
+      setError("Re-culture date is required for sub-culture split.");
+      return;
+    }
+    if (recultureMode === "subculture" && !parentJarId) {
+      setError("Parent Jar ID is required for sub-culture split.");
+      return;
+    }
+    const effectiveRecultureType =
+      cleanedRecultures.length > 0
+        ? recultureMode === "subculture"
+          ? RECULTURE_WITH_SUB
+          : RECULTURE_WITHOUT_SUB
+        : NEW_CULTURE;
 
     const payload = {
+      id: jarId,
       jarId,
+      recultureMode,
+      parentJarId,
+      jar_id: jarId,
+      parent_jar_id: parentJarId,
       cultureDate: form.cultureDate,
+      plant_date: form.cultureDate,
       rackNo: form.rackNo,
+      rack_location: form.rackNo,
       orchidType: form.orchidType,
+      plant_type: form.orchidType,
       nutrition: form.nutrition,
+      nutrition_type: form.nutrition,
+      plantCount: form.plantCount || "",
+      plant_count: form.plantCount || "",
+      seedCount: form.plantCount || "",
+      seed_count: form.plantCount || "",
+      addHormone: Boolean(form.addHormone),
+      hormoneDetail: form.addHormone ? form.hormoneDetail.trim() : "",
+      addSpecialNutrition: Boolean(form.addSpecialNutrition),
+      specialNutritionDetail: form.addSpecialNutrition ? form.specialNutritionDetail.trim() : "",
       recultures: cleanedRecultures.sort((a, b) => new Date(a.date) - new Date(b.date)),
+      reculture_type: effectiveRecultureType,
+      reculture_date: cleanedRecultures.length ? cleanedRecultures[cleanedRecultures.length - 1].date : "",
+      created_at: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
 
     setSaving(true);
     try {
-      await set(ref(db, `recultureEntries/${jarId}`), payload);
+      const entryKey = encodeFirebaseKeySegment(jarId);
+      await set(ref(db, `recultureEntries/${entryKey}`), payload);
+      await appendCultureRecord({
+        jar_id: jarId,
+        parent_jar_id: parentJarId,
+        plant_date: form.cultureDate,
+        plant_type: form.orchidType,
+        nutrition_type: form.nutrition,
+        rack_location: form.rackNo,
+        plant_count: form.plantCount || "",
+        seed_count: form.plantCount || "",
+        reculture_type: payload.reculture_type,
+        reculture_date: payload.reculture_date,
+        created_at: payload.created_at,
+      });
       setSelectedId(jarId);
       addRackOption(form.rackNo);
       addOrchidOption(form.orchidType);
-      setStatus(`Saved ${jarId} with ${payload.recultures.length} re-culture dates.`);
+      setStatus(
+        `Saved ${jarId} with ${payload.recultures.length} re-culture dates${
+          recultureMode === "subculture" && parentJarId ? ` (sub-culture from ${parentJarId})` : ""
+        }.`
+      );
     } catch (err) {
       setError(err?.message || "Failed to save to Firebase.");
     } finally {
@@ -377,12 +892,28 @@ export default function CultureDetails() {
           <FormCard
             form={form}
             onFieldChange={handleField}
+            onToggleField={handleToggle}
             rackOptions={rackOptions}
             orchidOptions={orchidOptions}
+            reculturePanelOpen={reculturePanelOpen}
+            openReculturePanel={openReculturePanel}
+            closeReculturePanel={closeReculturePanel}
+            recultureSearch={recultureSearch}
+            setRecultureSearch={setRecultureSearch}
+            recultureSearchRows={recultureSearchRows}
+            selectedRecultureEntry={selectedRecultureEntry}
+            selectRecultureSource={selectRecultureSource}
+            recultureType={recultureType}
+            setRecultureType={setRecultureType}
+            sameJarReculture={sameJarReculture}
+            updateSameJarRecultureField={updateSameJarRecultureField}
+            splitRows={splitRows}
+            updateSplitRow={updateSplitRow}
+            addSplitRow={addSplitRow}
+            removeSplitRow={removeSplitRow}
             isEditing={isEditing}
-            onRecultureChange={handleRecultureChange}
-            addRecultureRow={addRecultureRow}
-            removeRecultureRow={removeRecultureRow}
+            selectedEntry={selectedEntry}
+            entries={entries}
             onSubmit={handleSubmit}
             clearForm={clearForm}
             status={status}
@@ -392,10 +923,16 @@ export default function CultureDetails() {
             saving={saving}
           />
         </div>
-        <JarList entries={entries} selectedId={selectedId} onSelect={loadEntry} />
+        <JarList
+          entries={entries}
+          selectedId={selectedId}
+          onSelect={loadEntry}
+          onDelete={deleteJarEntry}
+          saving={saving}
+        />
       </div>
 
-      {selectedEntry && <Timeline entry={selectedEntry} />}
+      {selectedEntry && <Timeline entry={selectedEntry} entries={entries} />}
     </div>
   );
 }
@@ -420,12 +957,28 @@ function Hero() {
 function FormCard({
   form,
   onFieldChange,
+  onToggleField,
   rackOptions,
   orchidOptions,
+  reculturePanelOpen,
+  openReculturePanel,
+  closeReculturePanel,
+  recultureSearch,
+  setRecultureSearch,
+  recultureSearchRows,
+  selectedRecultureEntry,
+  selectRecultureSource,
+  recultureType,
+  setRecultureType,
+  sameJarReculture,
+  updateSameJarRecultureField,
+  splitRows,
+  updateSplitRow,
+  addSplitRow,
+  removeSplitRow,
   isEditing,
-  onRecultureChange,
-  addRecultureRow,
-  removeRecultureRow,
+  selectedEntry,
+  entries,
   onSubmit,
   clearForm,
   status,
@@ -434,6 +987,12 @@ function FormCard({
   loadingEntries,
   saving,
 }) {
+  const previewMode = isEditing && !reculturePanelOpen;
+  const selectedParentEntry = useMemo(() => {
+    const parentId = selectedEntry?.parentJarId;
+    if (!parentId) return null;
+    return (entries || []).find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(parentId)) || null;
+  }, [entries, selectedEntry]);
   return (
     <motion.form
       onSubmit={onSubmit}
@@ -455,131 +1014,176 @@ function FormCard({
           >
             Add new jar
           </button>
-          <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
-        </div>
-      </div>
-
-      <div className="grid sm:grid-cols-2 gap-4">
-        <Field label="Jar ID *">
-          <input
-            value={form.jarId}
-            onChange={onFieldChange("jarId")}
-            placeholder="e.g. Jar-42"
-            disabled={isEditing}
-            className={`input-shell ${isEditing ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
-          />
-        </Field>
-        <Field label="Culture date *">
-          <input
-            type="date"
-            value={form.cultureDate}
-            onChange={onFieldChange("cultureDate")}
-            disabled={isEditing}
-            className={`input-shell ${isEditing ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
-          />
-          <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
-        </Field>
-        <Field label="Rack number *">
-          <input
-            value={form.rackNo}
-            onChange={onFieldChange("rackNo")}
-            placeholder="Rack or shelf location"
-            list="rack-options"
-            className="input-shell"
-          />
-          <datalist id="rack-options">
-            {rackOptions.map((rack) => (
-              <option key={rack} value={rack} />
-            ))}
-          </datalist>
-        </Field>
-        <Field label="Orchid type *">
-          <input
-            value={form.orchidType}
-            onChange={onFieldChange("orchidType")}
-            placeholder="e.g. Phalaenopsis"
-            list="orchid-options"
-            className="input-shell"
-          />
-          <datalist id="orchid-options">
-            {orchidOptions.map((orchid) => (
-              <option key={orchid} value={orchid} />
-            ))}
-          </datalist>
-        </Field>
-        <Field label="Nutrition / medium *">
-          <textarea
-            rows={3}
-            value={form.nutrition}
-            onChange={onFieldChange("nutrition")}
-            placeholder="e.g. MS + 3% sucrose + BA. Add additives, hormones, notes."
-            className="input-shell min-h-[96px] resize-y"
-          />
-        </Field>
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-semibold text-dark">Re-culture dates (optional)</p>
           <button
             type="button"
-            onClick={addRecultureRow}
+            onClick={openReculturePanel}
             className="btn-soft text-xs px-3 py-1.5"
           >
             Add re-culture details
           </button>
-        </div>
-
-        <div className="space-y-3">
-          {form.recultures.length === 0 && (
-            <div className="panel-muted border-dashed px-4 py-3 text-xs text-subtle">
-              No re-culture dates yet. You can save the jar now and add dates later.
-            </div>
-          )}
-          {form.recultures.map((row, idx) => (
-            <div
-              key={idx}
-              className="grid sm:grid-cols-[1fr_1fr_auto] gap-3 items-center rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm"
-            >
-              <div className="space-y-1">
-                <label className="text-xs text-subtle">Re-culture date {idx + 1}</label>
-                <input
-                  type="date"
-                  value={row.date}
-                  onChange={(e) => onRecultureChange(idx, "date", e.target.value)}
-                  className="input-shell py-2"
-                />
-              </div>
-              <div className="space-y-1">
-                <label className="text-xs text-subtle">Notes (optional)</label>
-                <input
-                  value={row.note || ""}
-                  onChange={(e) => onRecultureChange(idx, "note", e.target.value)}
-                  placeholder="Media change, split count, etc."
-                  className="input-shell py-2"
-                />
-              </div>
-              <div className="flex justify-end sm:justify-center items-center h-full">
-                <button
-                  type="button"
-                  onClick={() => removeRecultureRow(idx)}
-                  className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-300 transition"
-                >
-                  Remove
-                </button>
-              </div>
-            </div>
-          ))}
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
         </div>
       </div>
+
+      {!reculturePanelOpen && (
+        <>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label="Jar ID *">
+              <input
+                value={form.jarId}
+                onChange={onFieldChange("jarId")}
+                placeholder="e.g. Jar-42"
+                disabled={previewMode}
+                className={`input-shell ${previewMode ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
+              />
+            </Field>
+            <Field label="Culture date *">
+              <input
+                type="date"
+                value={form.cultureDate}
+                onChange={onFieldChange("cultureDate")}
+                disabled={previewMode}
+                className={`input-shell ${previewMode ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
+              />
+              <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
+            </Field>
+            <Field label="Rack number *">
+              <input
+                value={form.rackNo}
+                onChange={onFieldChange("rackNo")}
+                placeholder="Rack or shelf location"
+                list="rack-options"
+                disabled={previewMode}
+                className="input-shell"
+              />
+              <datalist id="rack-options">
+                {rackOptions.map((rack) => (
+                  <option key={rack} value={rack} />
+                ))}
+              </datalist>
+            </Field>
+            <Field label="Orchid type *">
+              <input
+                value={form.orchidType}
+                onChange={onFieldChange("orchidType")}
+                placeholder="e.g. Phalaenopsis"
+                list="orchid-options"
+                disabled={previewMode}
+                className="input-shell"
+              />
+              <datalist id="orchid-options">
+                {orchidOptions.map((orchid) => (
+                  <option key={orchid} value={orchid} />
+                ))}
+              </datalist>
+            </Field>
+            <Field label="Nutrition / medium *">
+              <textarea
+                rows={3}
+                value={form.nutrition}
+                onChange={onFieldChange("nutrition")}
+                placeholder="e.g. MS + 3% sucrose + BA. Add additives, hormones, notes."
+                disabled={previewMode}
+                className="input-shell min-h-[96px] resize-y"
+              />
+            </Field>
+            <Field label="Plant count *">
+              <input
+                type="number"
+                min="0"
+                step="1"
+                value={form.plantCount || ""}
+                onChange={onFieldChange("plantCount")}
+                placeholder="e.g. 12"
+                disabled={previewMode}
+                className="input-shell"
+              />
+            </Field>
+          </div>
+
+          <div className="rounded-2xl border border-border/45 bg-paper/70 px-4 py-4 space-y-3">
+            <p className="text-sm font-semibold text-dark">Additives (optional)</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 text-sm text-dark">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.addHormone)}
+                  onChange={onToggleField("addHormone")}
+                  disabled={previewMode}
+                  className="accent-primary"
+                />
+                Add hormone
+              </label>
+              <label className="flex items-center gap-2 text-sm text-dark">
+                <input
+                  type="checkbox"
+                  checked={Boolean(form.addSpecialNutrition)}
+                  onChange={onToggleField("addSpecialNutrition")}
+                  disabled={previewMode}
+                  className="accent-primary"
+                />
+                Add special nutrition
+              </label>
+            </div>
+
+            {form.addHormone && (
+              <Field label="Hormone details *">
+                <input
+                  value={form.hormoneDetail || ""}
+                  onChange={onFieldChange("hormoneDetail")}
+                  placeholder="e.g. BA 1.0 mg/L + NAA 0.1 mg/L"
+                  disabled={previewMode}
+                  className="input-shell py-2"
+                />
+              </Field>
+            )}
+
+            {form.addSpecialNutrition && (
+              <Field label="Special nutrition details *">
+                <input
+                  value={form.specialNutritionDetail || ""}
+                  onChange={onFieldChange("specialNutritionDetail")}
+                  placeholder="e.g. coconut water 10% + activated charcoal"
+                  disabled={previewMode}
+                  className="input-shell py-2"
+                />
+              </Field>
+            )}
+          </div>
+        </>
+      )}
+
+      {reculturePanelOpen ? (
+        <RecultureWorkspace
+          recultureSearch={recultureSearch}
+          setRecultureSearch={setRecultureSearch}
+          recultureSearchRows={recultureSearchRows}
+          entries={entries}
+          selectedRecultureEntry={selectedRecultureEntry}
+          selectRecultureSource={selectRecultureSource}
+          recultureType={recultureType}
+          setRecultureType={setRecultureType}
+          sameJarReculture={sameJarReculture}
+          updateSameJarRecultureField={updateSameJarRecultureField}
+          splitRows={splitRows}
+          updateSplitRow={updateSplitRow}
+          addSplitRow={addSplitRow}
+          removeSplitRow={removeSplitRow}
+          closeReculturePanel={closeReculturePanel}
+        />
+      ) : (
+        <div className="panel-muted border-dashed px-4 py-3 text-xs text-subtle">
+          Use <span className="font-semibold text-dark">Add re-culture details</span> to update existing jars.
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-3">
         <button
           type="submit"
-          disabled={saving}
+          disabled={saving || previewMode}
           className="btn-primary px-4 py-3 disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          {saving ? "Saving..." : "Save jar"}
+          {saving ? "Saving..." : reculturePanelOpen ? "Save reculture" : "Save jar"}
         </button>
         <button
           type="button"
@@ -590,10 +1194,26 @@ function FormCard({
         </button>
       </div>
 
-      {isEditing && (
+      {previewMode && (
         <p className="text-xs text-subtle">
-          Jar ID and culture date are locked while editing. Use "Add new jar" to create a new record.
+          Preview mode: selected jar data is read-only. Use "Add re-culture details" for updates or "Add new jar" for new records.
         </p>
+      )}
+      {previewMode && selectedEntry && (
+        <div className="panel-muted px-4 py-3 text-xs text-subtle space-y-1">
+          <p>
+            Selected jar: <span className="font-semibold text-dark">{selectedEntry.jarId}</span>
+          </p>
+          <p>
+            Parent jar: <span className="font-semibold text-dark">{selectedEntry.parentJarId || "Root jar"}</span>
+          </p>
+          {selectedParentEntry && (
+            <p>
+              Parent preview: Culture {selectedParentEntry.cultureDate || "-"} | Rack {selectedParentEntry.rackNo || "-"} | Nutrition{" "}
+              {selectedParentEntry.nutrition || "-"}
+            </p>
+          )}
+        </div>
       )}
 
       {loadingEntries && !entriesError && (
@@ -633,7 +1253,7 @@ function FormCard({
   );
 }
 
-function JarList({ entries, selectedId, onSelect }) {
+function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
   const [query, setQuery] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
 
@@ -643,6 +1263,15 @@ function JarList({ entries, selectedId, onSelect }) {
     if (!normalizedQuery) return entries;
     return entries.filter((entry) => entry.jarId.toLowerCase().includes(normalizedQuery));
   }, [entries, normalizedQuery]);
+  const childCountByParent = useMemo(() => {
+    const map = new Map();
+    entries.forEach((entry) => {
+      const parentKey = normalizeOptionKey(entry.directParentJarId || entry.parentJarId);
+      if (!parentKey) return;
+      map.set(parentKey, (map.get(parentKey) || 0) + 1);
+    });
+    return map;
+  }, [entries]);
 
   useEffect(() => {
     if (!query.trim()) setSearchMessage("");
@@ -711,11 +1340,21 @@ function JarList({ entries, selectedId, onSelect }) {
             {filteredEntries.map((entry) => {
               const nextReculture = entry.recultures.find((r) => new Date(r.date) >= new Date());
               const isSelected = selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase();
+              const childCount = childCountByParent.get(normalizeOptionKey(entry.jarId)) || 0;
               return (
-                <button
+                <div
                   key={entry.jarId}
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onSelect(entry)}
-                  className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm ${
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onSelect(entry);
+                    }
+                  }}
+                  className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm cursor-pointer ${
                     isSelected
                       ? "border-primary/35 bg-primary/10 text-primary shadow-md"
                       : "border-border/45 bg-paper/70 text-dark hover:border-primary/35 hover:bg-primary/5"
@@ -726,6 +1365,9 @@ function JarList({ entries, selectedId, onSelect }) {
                       <p className="text-sm font-semibold">{entry.jarId}</p>
                       <p className="text-xs text-subtle">
                         Culture: {entry.cultureDate} - Rack: {entry.rackNo || "---"} - {entry.orchidType || "Type N/A"}
+                      </p>
+                      <p className="text-[11px] text-subtle">
+                        Parent: {entry.parentJarId || "Root jar"} - Children: {childCount}
                       </p>
                       <p className="text-[11px] text-subtle">Nutrition: {entry.nutrition || "Not noted"}</p>
                     </div>
@@ -739,7 +1381,20 @@ function JarList({ entries, selectedId, onSelect }) {
                       {nextReculture.note ? ` - ${nextReculture.note}` : ""}
                     </p>
                   )}
-                </button>
+                  <div className="mt-2 flex justify-end border-t border-border/35 pt-2">
+                    <button
+                      type="button"
+                      disabled={saving}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onDelete(entry.jarId);
+                      }}
+                      className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
               );
             })}
           </div>
@@ -753,7 +1408,316 @@ function JarList({ entries, selectedId, onSelect }) {
   );
 }
 
-function Timeline({ entry }) {
+function RecultureWorkspace({
+  recultureSearch,
+  setRecultureSearch,
+  recultureSearchRows,
+  entries,
+  selectedRecultureEntry,
+  selectRecultureSource,
+  recultureType,
+  setRecultureType,
+  sameJarReculture,
+  updateSameJarRecultureField,
+  splitRows,
+  updateSplitRow,
+  addSplitRow,
+  removeSplitRow,
+  closeReculturePanel,
+}) {
+  const selectedSourceParentEntry = useMemo(() => {
+    const parentId = selectedRecultureEntry?.parentJarId;
+    if (!parentId) return null;
+    return (entries || []).find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(parentId)) || null;
+  }, [entries, selectedRecultureEntry]);
+
+  return (
+    <div className="space-y-4 rounded-2xl border border-primary/25 bg-primary/5 px-4 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="kicker">Reculture Workflow</p>
+          <p className="text-sm text-subtle">Step 1: search and select an existing source jar.</p>
+        </div>
+        <button type="button" onClick={closeReculturePanel} className="btn-soft text-xs px-3 py-1.5">
+          Close re-culture
+        </button>
+      </div>
+
+      <div className="space-y-2">
+        <input
+          value={recultureSearch}
+          onChange={(e) => setRecultureSearch(normalizeJarIdInput(e.target.value))}
+          placeholder="Search Jar ID, type, or rack..."
+          className="input-shell"
+        />
+        <div className="max-h-48 overflow-auto rounded-xl border border-border/45 bg-paper/80">
+          {recultureSearchRows.length ? (
+            recultureSearchRows.map((entry) => {
+              const isSelected =
+                selectedRecultureEntry && selectedRecultureEntry.jarId.toLowerCase() === entry.jarId.toLowerCase();
+              return (
+                <button
+                  key={entry.jarId}
+                  type="button"
+                  onClick={() => selectRecultureSource(entry)}
+                  className={`w-full border-b border-border/35 px-3 py-2 text-left text-sm transition last:border-b-0 ${
+                    isSelected ? "bg-primary/15 text-primary" : "hover:bg-primary/5 text-dark"
+                  }`}
+                >
+                  <p className="font-semibold">{entry.jarId}</p>
+                  <p className="text-xs text-subtle">
+                    Culture {entry.cultureDate || "-"} | Rack {entry.rackNo || "-"} | {entry.orchidType || "Type N/A"}
+                  </p>
+                </button>
+              );
+            })
+          ) : (
+            <div className="px-3 py-3 text-xs text-subtle">No jars match the search.</div>
+          )}
+        </div>
+      </div>
+
+      {selectedRecultureEntry ? (
+        <div className="space-y-3">
+          <div className="panel-muted px-4 py-3 text-sm text-dark">
+            <p className="font-semibold">Step 2: selected source jar</p>
+            <p className="text-xs text-subtle mt-1">
+              Jar: {selectedRecultureEntry.jarId} | Plant type: {selectedRecultureEntry.orchidType || "-"} | Rack:{" "}
+              {selectedRecultureEntry.rackNo || "-"}
+            </p>
+            <p className="text-xs text-subtle mt-1">
+              Parent jar: {selectedRecultureEntry.parentJarId || "Root jar"}
+            </p>
+            {selectedSourceParentEntry && (
+              <p className="text-xs text-subtle mt-1">
+                Parent preview: Culture {selectedSourceParentEntry.cultureDate || "-"} | Rack {selectedSourceParentEntry.rackNo || "-"} |
+                {" "}Nutrition {selectedSourceParentEntry.nutrition || "-"}
+              </p>
+            )}
+          </div>
+
+          <div className="panel-muted px-4 py-3 space-y-3">
+            <p className="font-semibold text-sm text-dark">Step 3: choose re-culture option</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <button
+                type="button"
+                onClick={() => setRecultureType(RECULTURE_WITHOUT_SUB)}
+                className={`rounded-xl border px-3 py-2 text-sm text-left transition ${
+                  recultureType === RECULTURE_WITHOUT_SUB
+                    ? "border-primary/45 bg-primary/10 text-primary"
+                    : "border-border/45 bg-paper/70 text-dark hover:border-primary/25"
+                }`}
+              >
+                Reculture WITHOUT Subculture
+              </button>
+              <button
+                type="button"
+                onClick={() => setRecultureType(RECULTURE_WITH_SUB)}
+                className={`rounded-xl border px-3 py-2 text-sm text-left transition ${
+                  recultureType === RECULTURE_WITH_SUB
+                    ? "border-primary/45 bg-primary/10 text-primary"
+                    : "border-border/45 bg-paper/70 text-dark hover:border-primary/25"
+                }`}
+              >
+                Reculture WITH Subculture
+              </button>
+            </div>
+          </div>
+
+          {recultureType === RECULTURE_WITHOUT_SUB && (
+            <div className="space-y-3 rounded-xl border border-border/45 bg-paper/70 px-4 py-3">
+              <p className="text-sm font-semibold text-dark">Without subculture (same jar ID)</p>
+              <div className="grid sm:grid-cols-2 gap-3">
+                <Field label="Jar ID">
+                  <input value={selectedRecultureEntry.jarId} readOnly className="input-shell bg-paper/60 text-subtle" />
+                </Field>
+                <Field label="Re-culture date *">
+                  <input
+                    type="date"
+                    value={sameJarReculture.recultureDate}
+                    onChange={(e) => updateSameJarRecultureField("recultureDate", e.target.value)}
+                    className="input-shell"
+                  />
+                </Field>
+                <Field label="Nutrition type *">
+                  <input
+                    value={sameJarReculture.nutritionType}
+                    onChange={(e) => updateSameJarRecultureField("nutritionType", e.target.value)}
+                    placeholder="e.g. fresh MS + additives"
+                    className="input-shell"
+                  />
+                </Field>
+                <Field label="Plant count *">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={sameJarReculture.plantCount}
+                    onChange={(e) => updateSameJarRecultureField("plantCount", e.target.value)}
+                    placeholder="e.g. 20"
+                    className="input-shell"
+                  />
+                </Field>
+                <Field label="Notes">
+                  <input
+                    value={sameJarReculture.notes}
+                    onChange={(e) => updateSameJarRecultureField("notes", e.target.value)}
+                    placeholder="Media replaced, contamination check..."
+                    className="input-shell"
+                  />
+                </Field>
+              </div>
+            </div>
+          )}
+
+          {recultureType === RECULTURE_WITH_SUB && (
+            <div className="space-y-3 rounded-xl border border-border/45 bg-paper/70 px-4 py-3">
+              <div className="flex items-center justify-between">
+                <p className="text-sm font-semibold text-dark">With subculture (split into new jars)</p>
+                <button type="button" onClick={addSplitRow} className="btn-soft text-xs px-3 py-1.5">
+                  Add child jar
+                </button>
+              </div>
+              {splitRows.map((row, idx) => (
+                <div key={idx} className="rounded-xl border border-border/40 bg-paper/80 px-3 py-3">
+                  <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                    <Field label={`New jar ID ${idx + 1} *`}>
+                      <input
+                        value={row.newJarId}
+                        onChange={(e) => updateSplitRow(idx, "newJarId", normalizeJarIdInput(e.target.value))}
+                        placeholder={`e.g. ${selectedRecultureEntry.jarId}.${idx + 1}`}
+                        className="input-shell"
+                      />
+                    </Field>
+                    <Field label="Parent jar ID">
+                      <input
+                        value={selectedRecultureEntry.jarId}
+                        readOnly
+                        className="input-shell bg-paper/60 text-subtle"
+                      />
+                    </Field>
+                    <Field label="Re-culture date *">
+                      <input
+                        type="date"
+                        value={row.recultureDate}
+                        onChange={(e) => updateSplitRow(idx, "recultureDate", e.target.value)}
+                        className="input-shell"
+                      />
+                    </Field>
+                    <Field label="Nutrition type *">
+                      <input
+                        value={row.nutritionType}
+                        onChange={(e) => updateSplitRow(idx, "nutritionType", e.target.value)}
+                        placeholder="e.g. MS + BA"
+                        className="input-shell"
+                      />
+                    </Field>
+                    <Field label="Rack location *">
+                      <input
+                        value={row.rackLocation}
+                        onChange={(e) => updateSplitRow(idx, "rackLocation", e.target.value)}
+                        placeholder="e.g. R-3B"
+                        className="input-shell"
+                      />
+                    </Field>
+                    <Field label="Plant count *">
+                      <input
+                        type="number"
+                        min="1"
+                        step="1"
+                        value={row.plantCount}
+                        onChange={(e) => updateSplitRow(idx, "plantCount", e.target.value)}
+                        placeholder="e.g. 20"
+                        className="input-shell"
+                      />
+                    </Field>
+                    <Field label="Notes">
+                      <input
+                        value={row.notes}
+                        onChange={(e) => updateSplitRow(idx, "notes", e.target.value)}
+                        placeholder="Optional"
+                        className="input-shell"
+                      />
+                    </Field>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => removeSplitRow(idx)}
+                      className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-300 transition"
+                    >
+                      Remove child
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="panel-muted border-dashed px-4 py-3 text-xs text-subtle">
+          Select a source jar to continue.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Timeline({ entry, entries }) {
+  const entryById = useMemo(() => {
+    const map = new Map();
+    (entries || []).forEach((item) => {
+      const key = normalizeOptionKey(item?.jarId);
+      if (!key) return;
+      map.set(key, item);
+    });
+    return map;
+  }, [entries]);
+
+  const childJars = entries
+    .filter((candidate) => normalizeOptionKey(candidate.directParentJarId || candidate.parentJarId) === normalizeOptionKey(entry.jarId))
+    .map((candidate) => candidate.jarId)
+    .sort((a, b) => a.localeCompare(b));
+  const parentChain = useMemo(() => {
+    const chain = [];
+    const seen = new Set([normalizeOptionKey(entry.jarId)]);
+    let cursor = entry.parentJarId || "";
+    let level = 1;
+
+    while (cursor) {
+      const key = normalizeOptionKey(cursor);
+      if (!key || seen.has(key)) break;
+      seen.add(key);
+      chain.push({ level, jarId: cursor });
+      const parentEntry = entryById.get(key);
+      cursor = parentEntry?.directParentJarId || parentEntry?.parentJarId || "";
+      level += 1;
+    }
+    return chain;
+  }, [entry.jarId, entry.parentJarId, entryById]);
+
+  const relationRows = useMemo(() => {
+    const rows = [{ relation: "Selected jar", jarId: entry.jarId }];
+    if (parentChain.length) {
+      parentChain.forEach((row) => {
+        rows.push({
+          relation: row.level === 1 ? "Parent jar" : `Ancestor ${row.level}`,
+          jarId: row.jarId,
+        });
+      });
+    } else {
+      rows.push({ relation: "Parent jar", jarId: "Root jar" });
+    }
+    if (childJars.length) {
+      childJars.forEach((jarId, idx) => {
+        rows.push({ relation: `Child ${idx + 1}`, jarId });
+      });
+    } else {
+      rows.push({ relation: "Child jars", jarId: "None" });
+    }
+    return rows;
+  }, [entry.jarId, parentChain, childJars]);
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 8 }}
@@ -793,6 +1757,30 @@ function Timeline({ entry }) {
 
       <div className="panel-muted px-4 py-3 text-sm text-subtle">
         Culture date: {entry.cultureDate} - Rack: {entry.rackNo || "---"} - Orchid: {entry.orchidType || "Not specified"} - Nutrition: {entry.nutrition || "Not noted"}
+      </div>
+      <div className="panel-muted px-4 py-3 text-sm text-subtle">
+        Parent jar: {entry.parentJarId || "Root jar"} - Child jars: {childJars.length ? childJars.join(", ") : "None"}
+      </div>
+      <div className="rounded-xl border border-border/45 bg-paper/70 overflow-hidden">
+        <p className="px-4 py-3 text-sm font-semibold text-dark border-b border-border/45">Jar relationship table</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-paper/80">
+              <tr>
+                <th className="px-4 py-2 text-left font-medium text-subtle">Relation</th>
+                <th className="px-4 py-2 text-left font-medium text-subtle">Jar ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {relationRows.map((row, idx) => (
+                <tr key={`${row.relation}-${row.jarId}-${idx}`} className="border-t border-border/35">
+                  <td className="px-4 py-2 text-subtle">{row.relation}</td>
+                  <td className="px-4 py-2 text-dark font-medium">{row.jarId}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </motion.div>
   );

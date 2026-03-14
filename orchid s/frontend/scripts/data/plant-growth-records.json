@@ -1,0 +1,36 @@
+[
+  { "plant_id": "P91-A", "jar_id": "Jar-91", "rack_id": "T1", "height_cm": 1.8, "record_date": "2026-01-03" },
+  { "plant_id": "P91-A", "jar_id": "Jar-91", "rack_id": "T1", "height_cm": 2.5, "record_date": "2026-01-17" },
+  { "plant_id": "P91-B", "jar_id": "Jar-91", "rack_id": "T1", "height_cm": 2.1, "record_date": "2026-01-10" },
+  { "plant_id": "P91-B", "jar_id": "Jar-91", "rack_id": "T1", "height_cm": 2.9, "record_date": "2026-01-24" },
+
+  { "plant_id": "P92-A", "jar_id": "Jar-92", "rack_id": "T2", "height_cm": 2.0, "record_date": "2026-01-05" },
+  { "plant_id": "P92-A", "jar_id": "Jar-92", "rack_id": "T2", "height_cm": 2.1, "record_date": "2026-01-19" },
+  { "plant_id": "P92-B", "jar_id": "Jar-92", "rack_id": "T2", "height_cm": 2.2, "record_date": "2026-01-12" },
+  { "plant_id": "P92-B", "jar_id": "Jar-92", "rack_id": "T2", "height_cm": 2.2, "record_date": "2026-01-26" },
+
+  { "plant_id": "P93-A", "jar_id": "Jar-93", "rack_id": "T1", "height_cm": 0.8, "record_date": "2026-01-03" },
+  { "plant_id": "P93-A", "jar_id": "Jar-93", "rack_id": "T1", "height_cm": 5.1, "record_date": "2026-01-17" },
+  { "plant_id": "P93-B", "jar_id": "Jar-93", "rack_id": "T1", "height_cm": 1.0, "record_date": "2026-01-10" },
+  { "plant_id": "P93-B", "jar_id": "Jar-93", "rack_id": "T1", "height_cm": 4.9, "record_date": "2026-01-24" },
+
+  { "plant_id": "P94-A", "jar_id": "Jar-94", "rack_id": "T3", "height_cm": 2.4, "record_date": "2026-01-04" },
+  { "plant_id": "P94-A", "jar_id": "Jar-94", "rack_id": "T3", "height_cm": 3.1, "record_date": "2026-01-18" },
+  { "plant_id": "P94-B", "jar_id": "Jar-94", "rack_id": "T3", "height_cm": 2.8, "record_date": "2026-01-11" },
+  { "plant_id": "P94-B", "jar_id": "Jar-94", "rack_id": "T3", "height_cm": 3.6, "record_date": "2026-01-25" },
+
+  { "plant_id": "P95-A", "jar_id": "Jar-95", "rack_id": "T3", "height_cm": 3.2, "record_date": "2026-01-06" },
+  { "plant_id": "P95-A", "jar_id": "Jar-95", "rack_id": "T3", "height_cm": 3.9, "record_date": "2026-01-20" },
+  { "plant_id": "P95-B", "jar_id": "Jar-95", "rack_id": "T3", "height_cm": 3.5, "record_date": "2026-01-13" },
+  { "plant_id": "P95-B", "jar_id": "Jar-95", "rack_id": "T3", "height_cm": 4.2, "record_date": "2026-01-27" },
+
+  { "plant_id": "P96-A", "jar_id": "Jar-96", "rack_id": "T1", "height_cm": 1.7, "record_date": "2026-01-06" },
+  { "plant_id": "P96-A", "jar_id": "Jar-96", "rack_id": "T1", "height_cm": 2.8, "record_date": "2026-01-20" },
+  { "plant_id": "P96-B", "jar_id": "Jar-96", "rack_id": "T1", "height_cm": 2.0, "record_date": "2026-01-13" },
+  { "plant_id": "P96-B", "jar_id": "Jar-96", "rack_id": "T1", "height_cm": 3.1, "record_date": "2026-01-27" },
+
+  { "plant_id": "P97-A", "jar_id": "Jar-97", "rack_id": "T1", "height_cm": 1.9, "record_date": "2026-01-05" },
+  { "plant_id": "P97-A", "jar_id": "Jar-97", "rack_id": "T1", "height_cm": 2.2, "record_date": "2026-01-19" },
+  { "plant_id": "P97-B", "jar_id": "Jar-97", "rack_id": "T1", "height_cm": 2.1, "record_date": "2026-01-12" },
+  { "plant_id": "P97-B", "jar_id": "Jar-97", "rack_id": "T1", "height_cm": 2.5, "record_date": "2026-01-26" }
+]

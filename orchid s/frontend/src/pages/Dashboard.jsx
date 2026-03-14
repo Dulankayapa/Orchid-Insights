@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
@@ -80,6 +80,63 @@ const toNumber = (value) => {
   const num = Number(value);
   return Number.isFinite(num) ? num : null;
 };
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DASHBOARD_WARNING_MIN_DAYS = 90;
+const DASHBOARD_SLOW_RATE_CM_PER_DAY = 0.03;
+const DASHBOARD_NO_GROWTH_RATE_CM_PER_DAY = 0.001;
+const DASHBOARD_GROWTH_WARNING_MOCK = [
+  {
+    jarId: "Jar-104",
+    plantingDate: "2026-01-18",
+    heights: [
+      { date: "2026-02-18", height_mm: 28 },
+      { date: "2026-03-04", height_mm: 28 },
+      { date: "2026-03-18", height_mm: 28 },
+      { date: "2026-04-01", height_mm: 28 },
+      { date: "2026-04-15", height_mm: 28 },
+      { date: "2026-04-29", height_mm: 28 },
+      { date: "2026-05-13", height_mm: 28 },
+      { date: "2026-05-27", height_mm: 28 },
+      { date: "2026-06-10", height_mm: 28 },
+      { date: "2026-06-24", height_mm: 28 },
+    ],
+  },
+];
+
+const buildDashboardGrowthWarnings = (records) =>
+  (records || [])
+    .map((record) => {
+      const points = (record?.heights || [])
+        .map((row) => {
+          const ts = Date.parse(`${row?.date || ""}T12:00:00Z`);
+          const mm = Number(row?.height_mm);
+          if (!Number.isFinite(ts) || !Number.isFinite(mm)) return null;
+          return { ts, mm };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.ts - b.ts);
+
+      if (points.length < 2) return null;
+      const first = points[0];
+      const last = points[points.length - 1];
+      const elapsedDays = (last.ts - first.ts) / DAY_MS;
+      if (!Number.isFinite(elapsedDays) || elapsedDays <= 0) return null;
+
+      const plantingTs = Date.parse(`${record?.plantingDate || ""}T12:00:00Z`);
+      const daysSincePlanting = Number.isFinite(plantingTs) ? (last.ts - plantingTs) / DAY_MS : elapsedDays;
+      if (!Number.isFinite(daysSincePlanting) || daysSincePlanting < DASHBOARD_WARNING_MIN_DAYS) return null;
+
+      const growthRateCmPerDay = ((last.mm - first.mm) / 10) / elapsedDays;
+      if (!Number.isFinite(growthRateCmPerDay)) return null;
+      if (growthRateCmPerDay > DASHBOARD_SLOW_RATE_CM_PER_DAY) return null;
+
+      return {
+        jarId: String(record?.jarId || "").trim(),
+        severity: growthRateCmPerDay <= DASHBOARD_NO_GROWTH_RATE_CM_PER_DAY ? "no growth" : "slow growth",
+      };
+    })
+    .filter((row) => row?.jarId)
+    .sort((a, b) => String(a.jarId).localeCompare(String(b.jarId), undefined, { numeric: true, sensitivity: "base" }));
 
 export default function Dashboard() {
   const { latest: liveMonitorLatest, connectionStatus: monitorConnectionStatus } = useMonitorData();
@@ -92,6 +149,7 @@ export default function Dashboard() {
   const [editingId, setEditingId] = useState(null);
   const [clipFrameIndex, setClipFrameIndex] = useState(0);
   const [failedClipFrames, setFailedClipFrames] = useState([]);
+  const growthWarnings = useMemo(() => buildDashboardGrowthWarnings(DASHBOARD_GROWTH_WARNING_MOCK), []);
 
   useEffect(() => {
     api
@@ -214,6 +272,9 @@ export default function Dashboard() {
       : monitorConnectionStatus === "stale"
       ? "text-amber-600 dark:text-amber-400"
       : "text-rose-600 dark:text-rose-400";
+  const growthWarningCount = growthWarnings.length;
+  const growthWarningSummary = growthWarnings.map((item) => `${item.jarId} (${item.severity})`).join(", ");
+  const totalAlerts = growthWarningCount + (error ? 1 : 0);
   const statItems = [
     {
       label: "Plants Monitored",
@@ -243,11 +304,18 @@ export default function Dashboard() {
     },
     {
       label: "Growth Alerts",
-      value: error ? "1" : "0",
+      value: String(totalAlerts),
       icon: "\u{1F514}",
-      detail: error ? "Health warning needs review" : "No blocking alerts",
-      trend: error ? "Check now" : "All clear",
-      trendTone: error ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400",
+      detail: growthWarningCount
+        ? `Growth warning: ${growthWarningSummary}`
+        : error
+        ? "Health warning needs review"
+        : "No blocking alerts",
+      trend: growthWarningCount ? `Review ${growthWarningCount} jar` : error ? "Check now" : "All clear",
+      trendTone:
+        growthWarningCount || error
+          ? "text-rose-600 dark:text-rose-400"
+          : "text-emerald-600 dark:text-emerald-400",
     },
   ];
   const handleExportDashboardReport = () => {
@@ -435,24 +503,38 @@ export default function Dashboard() {
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {cards.map((card) => (
-          <Link
-            key={card.to}
-            to={card.to}
-            className="dashboard-card dashboard-card-hover group relative overflow-hidden p-5"
-          >
-            <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${card.tone} opacity-[0.08] transition-opacity duration-200 group-hover:opacity-[0.16]`} />
-            <div className="relative space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">{card.meta}</p>
-                <span className="module-glyph">{card.icon}</span>
+        {cards.map((card) => {
+          const isGrowthHistoryCard = card.to === "/history";
+          const hasGrowthWarning = isGrowthHistoryCard && growthWarningCount > 0;
+          return (
+            <Link
+              key={card.to}
+              to={card.to}
+              className="dashboard-card dashboard-card-hover group relative overflow-hidden p-5"
+            >
+              <div className={`pointer-events-none absolute inset-0 bg-gradient-to-br ${card.tone} opacity-[0.08] transition-opacity duration-200 group-hover:opacity-[0.16]`} />
+              <div className="relative space-y-2">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-subtle">{card.meta}</p>
+                    {hasGrowthWarning ? (
+                      <span className="inline-flex items-center rounded-full border border-rose-300/50 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-rose-700 dark:text-rose-300">
+                        Alert
+                      </span>
+                    ) : null}
+                  </div>
+                  <span className="module-glyph">{card.icon}</span>
+                </div>
+                <h3 className="module-title">{card.title}</h3>
+                <p className="page-description">{card.desc}</p>
+                {hasGrowthWarning ? (
+                  <p className="text-xs font-medium text-rose-700 dark:text-rose-300">Warning jars: {growthWarningSummary}</p>
+                ) : null}
+                <p className="pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-primary">Open module</p>
               </div>
-              <h3 className="module-title">{card.title}</h3>
-              <p className="page-description">{card.desc}</p>
-              <p className="pt-1 text-xs font-semibold uppercase tracking-[0.18em] text-primary">Open module</p>
-            </div>
-          </Link>
-        ))}
+            </Link>
+          );
+        })}
       </section>
 
       <section className="feedback-panel space-y-5">
