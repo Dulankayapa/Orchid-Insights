@@ -59,6 +59,10 @@ export default function CultureDetails() {
     rackNo: "",
     orchidType: "",
     nutrition: "",
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: false,
+    specialNutritionDetail: "",
     recultures: [newRecultureRow()],
   });
   const [entries, setEntries] = useState([]);// Firebase entries loaded from the database
@@ -111,6 +115,10 @@ export default function CultureDetails() {
               rackNo: entry.rackNo,
               orchidType: entry.orchidType,
               nutrition: entry.nutrition,
+              addHormone: Boolean(entry.addHormone),
+              hormoneDetail: entry.hormoneDetail || "",
+              addSpecialNutrition: Boolean(entry.addSpecialNutrition),
+              specialNutritionDetail: entry.specialNutritionDetail || "",
               recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
               updatedAt: entry.updatedAt,
             };
@@ -172,6 +180,19 @@ export default function CultureDetails() {
   const handleField = (key) => (e) => {
     const nextValue = key === "jarId" ? normalizeJarIdInput(e.target.value) : e.target.value;
     setForm((prev) => ({ ...prev, [key]: nextValue }));
+  };
+
+  const handleToggle = (key) => (e) => {
+    const checked = Boolean(e.target.checked);
+    setForm((prev) => {
+      if (key === "addHormone" && !checked) {
+        return { ...prev, addHormone: false, hormoneDetail: "" };
+      }
+      if (key === "addSpecialNutrition" && !checked) {
+        return { ...prev, addSpecialNutrition: false, specialNutritionDetail: "" };
+      }
+      return { ...prev, [key]: checked };
+    });
   };
 
   const applyOption = (key, value) => {
@@ -282,6 +303,10 @@ export default function CultureDetails() {
       rackNo: entry.rackNo,
       orchidType: entry.orchidType,
       nutrition: entry.nutrition || "",
+      addHormone: Boolean(entry.addHormone),
+      hormoneDetail: entry.hormoneDetail || "",
+      addSpecialNutrition: Boolean(entry.addSpecialNutrition),
+      specialNutritionDetail: entry.specialNutritionDetail || "",
       recultures: entry.recultures && entry.recultures.length ? entry.recultures : [],
     });
     setSelectedId(entry.jarId);
@@ -291,7 +316,18 @@ export default function CultureDetails() {
 
   // Clears the form to allow creating a new entry, and resets status and error messages
   const clearForm = () => {
-    setForm({ jarId: "", cultureDate: "", rackNo: "", orchidType: "", nutrition: "", recultures: [newRecultureRow()] });
+    setForm({
+      jarId: "",
+      cultureDate: "",
+      rackNo: "",
+      orchidType: "",
+      nutrition: "",
+      addHormone: false,
+      hormoneDetail: "",
+      addSpecialNutrition: false,
+      specialNutritionDetail: "",
+      recultures: [newRecultureRow()],
+    });
     setSelectedId("");
     setStatus("");
     setError("");
@@ -323,6 +359,14 @@ export default function CultureDetails() {
       setError("Nutrition / medium is required.");
       return;
     }
+    if (form.addHormone && !form.hormoneDetail.trim()) {
+      setError("Enter hormone details or untick Add hormone.");
+      return;
+    }
+    if (form.addSpecialNutrition && !form.specialNutritionDetail.trim()) {
+      setError("Enter special nutrition details or untick Add special nutrition.");
+      return;
+    }
 
     const cleanedRecultures = form.recultures
       .map((row) => ({ date: row.date, note: row.note?.trim() || "" }))
@@ -334,6 +378,10 @@ export default function CultureDetails() {
       rackNo: form.rackNo,
       orchidType: form.orchidType,
       nutrition: form.nutrition,
+      addHormone: Boolean(form.addHormone),
+      hormoneDetail: form.addHormone ? form.hormoneDetail.trim() : "",
+      addSpecialNutrition: Boolean(form.addSpecialNutrition),
+      specialNutritionDetail: form.addSpecialNutrition ? form.specialNutritionDetail.trim() : "",
       recultures: cleanedRecultures.sort((a, b) => new Date(a.date) - new Date(b.date)),
       updatedAt: new Date().toISOString(),
     };
@@ -377,6 +425,7 @@ export default function CultureDetails() {
           <FormCard
             form={form}
             onFieldChange={handleField}
+            onToggleField={handleToggle}
             rackOptions={rackOptions}
             orchidOptions={orchidOptions}
             isEditing={isEditing}
@@ -420,6 +469,7 @@ function Hero() {
 function FormCard({
   form,
   onFieldChange,
+  onToggleField,
   rackOptions,
   orchidOptions,
   isEditing,
@@ -447,7 +497,16 @@ function FormCard({
           <p className="kicker">Jar details</p>
           <h2 className="text-lg font-semibold text-dark">Create or update a jar</h2>
         </div>
-        <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={clearForm}
+            className="btn-soft text-xs px-3 py-1.5"
+          >
+            Add new jar
+          </button>
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-2.5 py-1 text-xs text-primary">Firebase</span>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-2 gap-4">
@@ -507,6 +566,52 @@ function FormCard({
             className="input-shell min-h-[96px] resize-y"
           />
         </Field>
+      </div>
+
+      <div className="rounded-2xl border border-border/45 bg-paper/70 px-4 py-4 space-y-3">
+        <p className="text-sm font-semibold text-dark">Additives (optional)</p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          <label className="flex items-center gap-2 text-sm text-dark">
+            <input
+              type="checkbox"
+              checked={Boolean(form.addHormone)}
+              onChange={onToggleField("addHormone")}
+              className="accent-primary"
+            />
+            Add hormone
+          </label>
+          <label className="flex items-center gap-2 text-sm text-dark">
+            <input
+              type="checkbox"
+              checked={Boolean(form.addSpecialNutrition)}
+              onChange={onToggleField("addSpecialNutrition")}
+              className="accent-primary"
+            />
+            Add special nutrition
+          </label>
+        </div>
+
+        {form.addHormone && (
+          <Field label="Hormone details *">
+            <input
+              value={form.hormoneDetail || ""}
+              onChange={onFieldChange("hormoneDetail")}
+              placeholder="e.g. BA 1.0 mg/L + NAA 0.1 mg/L"
+              className="input-shell py-2"
+            />
+          </Field>
+        )}
+
+        {form.addSpecialNutrition && (
+          <Field label="Special nutrition details *">
+            <input
+              value={form.specialNutritionDetail || ""}
+              onChange={onFieldChange("specialNutritionDetail")}
+              placeholder="e.g. coconut water 10% + activated charcoal"
+              className="input-shell py-2"
+            />
+          </Field>
+        )}
       </div>
 
       <div className="space-y-3">
@@ -577,13 +682,13 @@ function FormCard({
           onClick={clearForm}
           className="btn-soft px-4 py-3"
         >
-          Clear
+          Reset form
         </button>
       </div>
 
       {isEditing && (
         <p className="text-xs text-subtle">
-          Jar ID and culture date are locked while editing. Use “Clear” to create a new jar.
+          Jar ID and culture date are locked while editing. Use "Add new jar" to create a new record.
         </p>
       )}
 
@@ -1072,3 +1177,4 @@ function EmptyState({ message }) {
     </div>
   );
 }
+

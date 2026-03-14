@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../lib/api";
 
+const MAX_VALID_HEIGHT_MM = 190;
+
 export default function FirebaseTable() {
   const [rows, setRows] = useState([]);
   const [query, setQuery] = useState("");
@@ -20,7 +22,11 @@ export default function FirebaseTable() {
     setError("");
     try {
       const resp = await api.get("/env/plants");
-      setRows(resp.data || []);
+      const nextRows = (resp.data || []).filter((row) => {
+        const n = toNumberOrNull(row.height_mm);
+        return n === null || n <= MAX_VALID_HEIGHT_MM;
+      });
+      setRows(nextRows);
     } catch (err) {
       setError(err.response?.data?.detail || err.message || "Failed to fetch Firebase data");
     } finally {
@@ -38,12 +44,17 @@ export default function FirebaseTable() {
       setError("Provide an ID for the new record.");
       return;
     }
+    const normalizedHeight = toNumberOrNull(createPayload.height_mm);
+    if (normalizedHeight !== null && normalizedHeight > MAX_VALID_HEIGHT_MM) {
+      setError(`Height must be at most ${MAX_VALID_HEIGHT_MM} mm.`);
+      return;
+    }
     setSaving(true);
     setError("");
     try {
       await api.put(`/env/plants/${createPayload.id}`, {
         planting_date: createPayload.planting_date || null,
-        height_mm: createPayload.height_mm ? Number(createPayload.height_mm) : null,
+        height_mm: normalizedHeight,
         cultivar: createPayload.cultivar || null,
       });
       setCreatePayload({ id: "", planting_date: "", height_mm: "", cultivar: "" });
@@ -177,4 +188,10 @@ export default function FirebaseTable() {
       </div>
     </div>
   );
+}
+
+function toNumberOrNull(value) {
+  if (value === undefined || value === null || value === "") return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
 }
