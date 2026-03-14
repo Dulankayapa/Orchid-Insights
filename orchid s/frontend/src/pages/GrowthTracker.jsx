@@ -15,6 +15,7 @@ import {
 import "chartjs-adapter-date-fns";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
+import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 import { ref, onValue, query, limitToLast, limitToFirst, orderByChild, push, update } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
 
@@ -660,7 +661,10 @@ export default function GrowthTracker() {
     };
 
     if (activeCanonicalId) {
-      const byJarRef = query(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(150));
+      const byJarRef = query(
+        ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(activeCanonicalId)}`),
+        limitToLast(150)
+      );
       const offByJar = onValue(
         byJarRef,
         (snap) => {
@@ -723,7 +727,11 @@ export default function GrowthTracker() {
       setFirstGrowthTimestamp(null);
       return undefined;
     }
-    const firstRef = query(ref(db, `growthLogsByJar/${activeCanonicalId}`), orderByChild("timestamp"), limitToFirst(1));
+    const firstRef = query(
+      ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(activeCanonicalId)}`),
+      orderByChild("timestamp"),
+      limitToFirst(1)
+    );
     const off = onValue(
       firstRef,
       (snap) => {
@@ -877,7 +885,7 @@ export default function GrowthTracker() {
 
     Promise.all([
       push(ref(db, "growthLogs"), payload),
-      push(ref(db, `growthLogsByJar/${canonicalId}`), payload),
+      push(ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(canonicalId)}`), payload),
       update(ref(db, `plants/${canonicalId}`), plantUpdatePayload),
     ])
       .then(() => {
