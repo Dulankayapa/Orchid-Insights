@@ -22,6 +22,7 @@ import {
 
 const LIVE_PATHS = ['orchidData/latest', 'Jar1', 'Jar2', 'Jar3'];
 const HISTORY_PATH = 'orchidData/logs';
+const EMPTY_SETTINGS_OVERRIDE = Object.freeze({});
 
 const PHYSICAL_LIMITS = {
   temperature: { min: -10, max: 60 },
@@ -373,7 +374,7 @@ const getAverage = (rows, key) => {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
-export const useMonitorData = (settingsOverride = {}) => {
+export const useMonitorData = (settingsOverride = null) => {
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);
   const [growthLogs, setGrowthLogs] = useState([]);
@@ -391,15 +392,20 @@ export const useMonitorData = (settingsOverride = {}) => {
   const publishedAlertIdsRef = useRef(new Set());
   const persistedReportRef = useRef('');
 
+  const normalizedSettingsOverride = useMemo(
+    () => (isObject(settingsOverride) ? settingsOverride : EMPTY_SETTINGS_OVERRIDE),
+    [settingsOverride],
+  );
+
   const thresholds = useMemo(() => (
     deepMerge(
       DEFAULT_THRESHOLDS,
       legacyThresholdPayload,
       settingsPayload?.thresholds,
       settingsPayload?.threshold,
-      settingsOverride,
+      normalizedSettingsOverride,
     )
-  ), [legacyThresholdPayload, settingsPayload, settingsOverride]);
+  ), [legacyThresholdPayload, settingsPayload, normalizedSettingsOverride]);
 
   const controlState = useMemo(() => {
     const source = isObject(controlPayload) ? controlPayload : {};

@@ -10,12 +10,11 @@ import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
 import HealthGauge from '../components/monitor/HealthGauge.jsx';
 import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
+import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
 import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
 import NotificationCenter from '../components/monitor/NotificationCenter.jsx';
 import GreenhouseLayout from '../components/monitor/GreenhouseLayout.jsx';
-import EnergyUsagePanel from '../components/monitor/EnergyUsagePanel.jsx';
 import WeatherPanel from '../components/monitor/WeatherPanel.jsx';
-import AuthRolePanel from '../components/monitor/AuthRolePanel.jsx';
 
 import {
   COMPARISON_METRIC_KEYS,
@@ -99,13 +98,10 @@ const EnvMonitor = () => {
   const {
     user,
     role,
-    capabilities,
-    authLoading,
-    authError,
-    setAuthError,
-    login,
-    logout,
+    capabilities: _capabilities,
   } = useAuthRole();
+  const canEditSettings = true;
+  const canControlPanel = true;
 
   const { weather, weatherError } = useWeather({});
 
@@ -419,8 +415,8 @@ const EnvMonitor = () => {
 
   const saveThresholds = async (payload) => {
     try {
-      if (!capabilities.canEditThresholds) {
-        setActionMessage('Only Admin can update thresholds.');
+      if (!canEditSettings) {
+        setActionMessage('You do not have permission to update thresholds.');
         return;
       }
       await saveThresholdSettings(payload);
@@ -432,8 +428,8 @@ const EnvMonitor = () => {
 
   const saveEmailSettings = async (payload) => {
     try {
-      if (!capabilities.canEditThresholds) {
-        setActionMessage('Only Admin can update notification settings.');
+      if (!canEditSettings) {
+        setActionMessage('You do not have permission to update notification settings.');
         return;
       }
       await saveNotificationSettings(payload);
@@ -445,8 +441,8 @@ const EnvMonitor = () => {
 
   const updateControlMode = async (mode) => {
     try {
-      if (!capabilities.canControlDevices) {
-        setActionMessage('Your role cannot change control mode.');
+      if (!canControlPanel) {
+        setActionMessage('You do not have permission to change control mode.');
         return;
       }
       await setControlMode(mode);
@@ -458,8 +454,8 @@ const EnvMonitor = () => {
 
   const toggleDevice = async (deviceKey, nextState) => {
     try {
-      if (!capabilities.canControlDevices) {
-        setActionMessage('Your role cannot toggle devices.');
+      if (!canControlPanel) {
+        setActionMessage('You do not have permission to toggle devices.');
         return;
       }
       await setDeviceState(deviceKey, nextState, role);
@@ -471,8 +467,8 @@ const EnvMonitor = () => {
 
   const applyAutoRulesNow = async () => {
     try {
-      if (!capabilities.canControlDevices) {
-        setActionMessage('Your role cannot apply automation rules.');
+      if (!canControlPanel) {
+        setActionMessage('You do not have permission to apply automatic rules.');
         return;
       }
       await applyAutomaticRules(role);
@@ -484,8 +480,8 @@ const EnvMonitor = () => {
 
   const toggleAutoRules = async (enabled) => {
     try {
-      if (!capabilities.canControlDevices) {
-        setActionMessage('Your role cannot update automation rules.');
+      if (!canControlPanel) {
+        setActionMessage('You do not have permission to update automatic rules.');
         return;
       }
       await setAutoRulesEnabled(enabled);
@@ -501,14 +497,6 @@ const EnvMonitor = () => {
       await markNotificationRead(id);
     } catch {
       // ignore mark read failures
-    }
-  };
-
-  const handleLogin = async (credentials) => {
-    try {
-      await login(credentials);
-    } catch (error) {
-      setAuthError(error?.message || 'Authentication failed');
     }
   };
 
@@ -612,39 +600,45 @@ const EnvMonitor = () => {
             />
           </section>
 
-          <ThresholdSettingsPanel
-            thresholds={thresholds}
-            canEdit={capabilities.canEditThresholds}
-            onSave={saveThresholds}
-            emailSettings={thresholds.notifications}
-            onSaveEmail={saveEmailSettings}
-          />
+          <section className="space-y-4">
+            <div className="panel">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="module-title">4-Sensor Limits & Control</h2>
+                <span className="text-xs text-subtle">Temperature, Humidity, Light, Air (CO2)</span>
+              </div>
+            </div>
 
-          <AutomationControlPanel
-            controlState={controlState}
-            recommendation={autoControlRecommendation}
-            canControl={capabilities.canControlDevices}
-            onModeChange={updateControlMode}
-            onToggleDevice={toggleDevice}
-            onApplyAuto={applyAutoRulesNow}
-            onAutoRulesToggle={toggleAutoRules}
-          />
+            <SafeRangesPanel
+              thresholds={thresholds}
+              canEdit={canEditSettings}
+              onSave={saveThresholds}
+            />
 
-          <EnergyUsagePanel energyUsage={energyUsage} />
+            <AutomationControlPanel
+              controlState={controlState}
+              recommendation={autoControlRecommendation}
+              canControl={canControlPanel}
+              onModeChange={updateControlMode}
+              onToggleDevice={toggleDevice}
+              onApplyAuto={applyAutoRulesNow}
+              onAutoRulesToggle={toggleAutoRules}
+            />
+
+            <ThresholdSettingsPanel
+              thresholds={thresholds}
+              canEdit={canEditSettings}
+              onSave={saveThresholds}
+              emailSettings={thresholds.notifications}
+              onSaveEmail={saveEmailSettings}
+              hideMetrics
+              title="Email Notifications"
+            />
+          </section>
 
           <GreenhouseLayout zones={zones} nodeStatuses={nodeStatuses} />
         </div>
 
         <aside className="space-y-6 xl:sticky xl:top-4">
-          <AuthRolePanel
-            user={user}
-            role={role}
-            authLoading={authLoading}
-            authError={authError}
-            onLogin={handleLogin}
-            onLogout={logout}
-          />
-
           <NotificationCenter
             notifications={notifications}
             onRead={handleMarkNotification}

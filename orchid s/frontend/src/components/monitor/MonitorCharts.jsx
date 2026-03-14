@@ -107,12 +107,6 @@ const average = (rows, key) => {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
-const formatValue = (value, decimals = 1) => {
-  const num = toNumber(value);
-  if (num === null) return '--';
-  return decimals > 0 ? num.toFixed(decimals) : String(Math.round(num));
-};
-
 const buildTrendData = (points, key) => {
   const metric = METRIC_CONFIG[key];
   return {
@@ -175,7 +169,6 @@ const MonitorCharts = ({
 }) => {
   const points = useMemo(() => normalizeRows(history).slice(-240), [history]);
   const previousPoints = useMemo(() => normalizeRows(previousWindow).slice(-240), [previousWindow]);
-
   const latestPoint = points[points.length - 1] ?? null;
 
   const trendDatasets = useMemo(() => ({
@@ -282,28 +275,6 @@ const MonitorCharts = ({
 
   return (
     <div className="space-y-5">
-      <div className="rounded-xl border border-border/60 bg-paper/70 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold text-dark">Live Telemetry Snapshot</h3>
-          <span className="text-xs text-subtle">
-            Last sample: {latestPoint ? new Date(latestPoint.ts).toLocaleTimeString() : '--'}
-          </span>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-          {metricSnapshots.map((item) => (
-            <div key={item.key} className="rounded-xl border border-border/60 bg-white/70 px-3 py-2 dark:bg-slate-900/40">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-subtle">{item.config.label}</p>
-              <p className="mt-1 text-sm font-bold text-dark">
-                {formatValue(item.current, item.config.decimals)} {item.config.unit}
-              </p>
-              <p className="text-[11px] text-subtle">
-                Window avg: {formatValue(item.avgCurrent, item.config.decimals)} {item.config.unit}
-              </p>
-            </div>
-          ))}
-        </div>
-      </div>
-
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
         <ChartCard title="Temperature Trend" icon="TMP" hasData={trendDatasets.temperature.datasets[0].data.length > 0}>
           <Line data={trendDatasets.temperature} options={lineOptions} />
