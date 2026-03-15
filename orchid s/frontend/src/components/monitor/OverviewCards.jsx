@@ -1,13 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 
-const LIMITS = {
-    temperature: { min: 18, max: 28 },
-    humidity: { min: 40, max: 70 },
-    lux: { min: 1000, max: 25000 },
-    mq135: { min: 0, max: 150 }
-};
-
 const toNumber = (value) => {
     const num = Number(value);
     return Number.isFinite(num) ? num : null;
@@ -26,12 +19,28 @@ const formatInt = (value) => {
 const getLevel = (value, range) => {
     const num = toNumber(value);
     if (num === null) return 'unknown';
+    if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) return 'unknown';
     if (num < range.min || num > range.max) return 'warning';
     return 'good';
 };
 
-const OverviewCards = ({ data, lastUpdate }) => {
+const resolveRange = (thresholds, key, fallbackMin, fallbackMax) => {
+    const min = toNumber(thresholds?.metrics?.[key]?.min);
+    const max = toNumber(thresholds?.metrics?.[key]?.max);
+    return {
+        min: min ?? fallbackMin,
+        max: max ?? fallbackMax,
+    };
+};
+
+const OverviewCards = ({ data, lastUpdate, thresholds }) => {
     const source = data ?? {};
+    const limits = {
+        temperature: resolveRange(thresholds, 'temperature', 18, 28),
+        humidity: resolveRange(thresholds, 'humidity', 45, 72),
+        lux: resolveRange(thresholds, 'light', 1200, 26000),
+        co2: resolveRange(thresholds, 'co2', 350, 1300),
+    };
 
     const formatTime = (ts) => {
         if (!ts) return '';
@@ -45,7 +54,7 @@ const OverviewCards = ({ data, lastUpdate }) => {
             value: formatFixed(source.temperature, 1),
             unit: 'C',
             icon: 'T',
-            level: getLevel(source.temperature, LIMITS.temperature),
+            level: getLevel(source.temperature, limits.temperature),
             color: 'text-orange-500',
             bg: 'bg-orange-50'
         },
@@ -54,7 +63,7 @@ const OverviewCards = ({ data, lastUpdate }) => {
             value: formatFixed(source.humidity, 1),
             unit: '%',
             icon: 'H',
-            level: getLevel(source.humidity, LIMITS.humidity),
+            level: getLevel(source.humidity, limits.humidity),
             color: 'text-blue-500',
             bg: 'bg-blue-50'
         },
@@ -63,16 +72,16 @@ const OverviewCards = ({ data, lastUpdate }) => {
             value: formatInt(source.lux),
             unit: 'lx',
             icon: 'L',
-            level: getLevel(source.lux, LIMITS.lux),
+            level: getLevel(source.lux, limits.lux),
             color: 'text-amber-500',
             bg: 'bg-amber-50'
         },
         {
             title: 'Air Quality',
-            value: formatInt(source.mq135),
-            unit: 'AQI',
+            value: formatInt(source.co2 ?? source.mq135),
+            unit: 'ppm',
             icon: 'G',
-            level: getLevel(source.mq135, LIMITS.mq135),
+            level: getLevel(source.co2 ?? source.mq135, limits.co2),
             color: 'text-emerald-500',
             bg: 'bg-emerald-50'
         }

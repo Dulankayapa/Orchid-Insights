@@ -36,11 +36,9 @@ const normalizeId = (value) => {
 };
 
 const canonicalPlantId = (value) => {
-  const norm = normalizeId(value);
-  if (!norm) return "";
-  const match = norm.match(/^jar(\d+)$/);
-  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
-  return String(value || "").trim().toLowerCase();
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw;
 };
 
 const coerceTimestamp = (value) => {
