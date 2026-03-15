@@ -290,6 +290,26 @@ const chartTheme = (isLight) => ({
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+const toPlantingTimestamp = (value) => {
+  const text = firstText(value);
+  if (!text) return null;
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(text) ? Date.parse(`${text}T12:00:00Z`) : Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const computeAgeDaysAt = (plantingTs, measurementTs) => {
+  const planted = Number(plantingTs);
+  const measured = Number(measurementTs);
+  if (!Number.isFinite(planted) || !Number.isFinite(measured)) return null;
+  return Math.max(0, (measured - planted) / DAY_MS);
+};
+
+const formatAgeDays = (value) => {
+  const days = Number(value);
+  if (!Number.isFinite(days)) return "-";
+  return `${days >= 10 ? days.toFixed(0) : days.toFixed(1)} days`;
+};
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -546,6 +566,7 @@ const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
       delta: stats.delta,
       avg: stats.avg,
       count: stats.count,
+      ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), sorted[sorted.length - 1]?.x),
     });
   });
 
@@ -560,10 +581,12 @@ const buildRackStats = (rackPlants) => {
       .filter((p) => p !== null)
       .sort((a, b) => a.x - b.x);
     const summary = computeSeriesStats(points);
+    const latestTs = points.length ? points[points.length - 1].x : null;
     return {
       id: plant.id,
       avg: summary?.avg ?? null,
       count: summary?.count ?? 0,
+      ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs),
     };
   });
 
@@ -691,6 +714,204 @@ const buildRackCategoryStats = (rackPlants) => {
       const right = Number.isFinite(b.avgRate) ? b.avgRate : Number.NEGATIVE_INFINITY;
       return right - left;
     });
+};
+
+const LAB_COMMON_MIN_DAYS = 365;
+const LAB_COMMON_MAX_DAYS = 548;
+
+const buildRackCategoryScenarioPlan = (rackPlants, rackCategoryStats) => {
+  const plants = Array.isArray(rackPlants) ? rackPlants : [];
+  const categories = Array.isArray(rackCategoryStats) ? rackCategoryStats : [];
+
+  const nutritionCounts = new Map();
+  plants.forEach((plant) => {
+    const label = firstText(plant?.nutritionStatus, plant?.nutrition);
+    if (!label) return;
+    nutritionCounts.set(label, (nutritionCounts.get(label) || 0) + 1);
+  });
+
+  const baselineNutrition =
+    Array.from(nutritionCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Rack standard medium";
+
+  const byCategory = new Map();
+  plants.forEach((plant) => {
+    const category = resolvePlantCategory(plant);
+    const points = toPlantSeriesPoints(plant);
+    const stats = computeSeriesStats(points);
+    const latestTs = points.length ? points[points.length - 1].x : null;
+    const ageDays = computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs);
+
+    if (!byCategory.has(category)) byCategory.set(category, []);
+    byCategory.get(category).push({
+      id: plant?.id || "-",
+      rate: stats?.rate ?? null,
+      delta: stats?.delta ?? null,
+      ageDays,
+    });
+  });
+
+  const avgOrNull = (values) => {
+    const valid = values.filter((v) => Number.isFinite(v));
+    if (!valid.length) return null;
+    return valid.reduce((sum, v) => sum + v, 0) / valid.length;
+  };
+
+  const map = new Map();
+  categories.forEach((item) => {
+    const rows = byCategory.get(item.category) || [];
+    const avgAgeDays = avgOrNull(rows.map((row) => row.ageDays));
+
+    const specialJarIds = rows
+      .filter((row) => {
+        const slowerThanCategory =
+          Number.isFinite(row.rate) &&
+          Number.isFinite(item.avgRate) &&
+          row.rate < Math.max(0.12, Number(item.avgRate) * 0.65);
+        const lowDelta = Number.isFinite(row.delta) && row.delta < 8;
+        const overLabWindow = Number.isFinite(row.ageDays) && row.ageDays > LAB_COMMON_MAX_DAYS;
+        return slowerThanCategory || lowDelta || overLabWindow;
+      })
+      .map((row) => row.id);
+
+    let defaultProtocol = "";
+    if (item.growthLabel === "fast") {
+      defaultProtocol = `Keep ${baselineNutrition} and same agar mL for all jars in this category.`;
+    } else if (item.growthLabel === "moderate") {
+      defaultProtocol = `Keep ${baselineNutrition} as base protocol; monitor another cycle before increasing nutrients.`;
+    } else if (item.growthLabel === "slow") {
+      if (Number.isFinite(avgAgeDays) && avgAgeDays >= LAB_COMMON_MAX_DAYS) {
+        defaultProtocol = `Category is near/over 1.5 years in lab; plan reculture/exit while keeping rack baseline for stable jars.`;
+      } else if (Number.isFinite(avgAgeDays) && avgAgeDays >= LAB_COMMON_MIN_DAYS) {
+        defaultProtocol = `Category is within 1.0-1.5 year window; keep rack baseline and schedule a controlled nutrition review.`;
+      } else {
+        defaultProtocol = `Below 1 year but slow; run a small controlled nutrition increase trial for this category only.`;
+      }
+    } else {
+      defaultProtocol = "Need more measurements before changing rack-level nutrition protocol.";
+    }
+
+    const specialProtocol = specialJarIds.length
+      ? `Special-case override for ${specialJarIds.join(", ")}: allow research-purpose nutrition adjustment and close follow-up.`
+      : "No special-case override needed now; keep common rack protocol.";
+
+    map.set(item.category, {
+      avgAgeDays,
+      defaultProtocol,
+      specialProtocol,
+      specialJarIds,
+    });
+  });
+
+  return {
+    baselineNutrition,
+    baselineAgarRule: "Use same agar mL for the rack by default.",
+    labRuleWindow: "Common lab window: 1.0-1.5 years.",
+    byCategory: map,
+  };
+};
+
+const inferNutritionMode = (value) => {
+  const text = firstText(value).toLowerCase();
+  if (!text) return "unknown";
+  if (text.includes("special") || text.includes("coconut water")) return "special";
+  if (text.includes("normal") || text.includes("baseline")) return "normal";
+  return "normal";
+};
+
+const averageOrNull = (values) => {
+  const valid = (values || []).filter((v) => Number.isFinite(v));
+  if (!valid.length) return null;
+  return valid.reduce((sum, v) => sum + v, 0) / valid.length;
+};
+
+const buildRackComparisonSummary = (rackCode, rackPlants) => {
+  const plants = Array.isArray(rackPlants) ? rackPlants : [];
+  const typeCounts = new Map();
+  const nutritionCounts = new Map();
+  const rates = [];
+  const deltas = [];
+  const ages = [];
+
+  plants.forEach((plant) => {
+    const type = deriveCategoryLabel(firstText(plant?.cultivar, plant?.category));
+    const nutrition = firstText(plant?.nutritionStatus, plant?.nutrition);
+    typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+    nutritionCounts.set(nutrition, (nutritionCounts.get(nutrition) || 0) + 1);
+
+    const points = toPlantSeriesPoints(plant);
+    const stats = computeSeriesStats(points);
+    if (Number.isFinite(stats?.rate)) rates.push(stats.rate);
+    if (Number.isFinite(stats?.delta)) deltas.push(stats.delta);
+
+    const latestTs = points.length ? points[points.length - 1].x : null;
+    const age = computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs);
+    if (Number.isFinite(age)) ages.push(age);
+  });
+
+  const dominantType = Array.from(typeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
+  const dominantNutrition = Array.from(nutritionCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
+  return {
+    rackCode,
+    jarCount: plants.length,
+    dominantType,
+    dominantNutrition,
+    nutritionMode: inferNutritionMode(dominantNutrition),
+    avgRate: averageOrNull(rates),
+    avgDelta: averageOrNull(deltas),
+    avgAgeDays: averageOrNull(ages),
+  };
+};
+
+const buildRackPairComparison = ({ leftSummary, rightSummary }) => {
+  const left = leftSummary;
+  const right = rightSummary;
+  const sameType = left.dominantType === right.dominantType;
+  const sameNutritionMode = left.nutritionMode === right.nutritionMode;
+
+  if (sameType && !sameNutritionMode) {
+    const special = left.nutritionMode === "special" ? left : right;
+    const normal = left.nutritionMode === "normal" ? left : right;
+    const deltaRate =
+      Number.isFinite(special.avgRate) && Number.isFinite(normal.avgRate) ? special.avgRate - normal.avgRate : null;
+    const effectText =
+      deltaRate === null ? "Not enough data to quantify growth-rate difference." : `${deltaRate >= 0 ? "+" : ""}${deltaRate.toFixed(2)} mm/day`;
+    const verdict =
+      deltaRate === null
+        ? "observe more points"
+        : deltaRate > 0
+          ? "special nutrition is improving growth for this orchid type"
+          : deltaRate < 0
+            ? "special nutrition is underperforming vs normal for this orchid type"
+            : "both protocols are currently equivalent";
+
+    return {
+      mode: "same_type_diff_nutrition",
+      headline: "Same orchid type, normal vs special nutrition",
+      detail: `Type ${left.dominantType}: Rack ${special.rackCode} (special) vs Rack ${normal.rackCode} (normal). Rate gap: ${effectText}.`,
+      recommendation: `Result: ${verdict}. Keep agar mL equal per rack and only run targeted overrides on slow jars.`,
+    };
+  }
+
+  if (!sameType && sameNutritionMode) {
+    const deltaRate =
+      Number.isFinite(right.avgRate) && Number.isFinite(left.avgRate) ? right.avgRate - left.avgRate : null;
+    const effectText =
+      deltaRate === null ? "Not enough data to quantify type effect." : `${deltaRate >= 0 ? "+" : ""}${deltaRate.toFixed(2)} mm/day`;
+    return {
+      mode: "diff_type_same_nutrition",
+      headline: `Different orchid types under same ${left.nutritionMode} nutrition`,
+      detail: `Rack ${left.rackCode} (${left.dominantType}) vs Rack ${right.rackCode} (${right.dominantType}). Rate gap: ${effectText}.`,
+      recommendation: "This isolates orchid-type response under the same nutrition mode; tune protocol per type, not per jar.",
+    };
+  }
+
+  return {
+    mode: "mixed_factors",
+    headline: "Two-factor comparison (type and nutrition both differ)",
+    detail: `Rack ${left.rackCode}: ${left.dominantType} with ${left.nutritionMode} nutrition vs Rack ${right.rackCode}: ${right.dominantType} with ${right.nutritionMode} nutrition.`,
+    recommendation:
+      "For clearer conclusions, compare either same type with different nutrition or different types with the same nutrition mode.",
+  };
 };
 
 // START CLUSTER_UI_STEP: jar-id-based K-Means helpers (safe to remove as one block)
@@ -1038,6 +1259,12 @@ const buildRackInsight = ({ rackStats, rackQuery, categoryStats = [] }) => {
       best.id
     } at ${best.avg.toFixed(1)} mm; lowest is ${worst.id} at ${worst.avg.toFixed(1)} mm.`;
   }
+  if (validCategories.length === 1) {
+    const only = validCategories[0];
+    return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Category ${only.category} shows ${only.avgRate.toFixed(
+      2
+    )} mm/day and ${only.avgDelta.toFixed(1)} mm average change. Suggested action: ${only.suggestion}`;
+  }
 
   const topCategory = validCategories[0];
   const lowCategory = validCategories[validCategories.length - 1];
@@ -1060,11 +1287,31 @@ const buildRackBrief = ({ rackStats, rackQuery, categoryStats = [] }) => {
     const best = valid.find((item) => item.rank === "Best") || valid[0];
     return `Rack ${rackQuery}: best average height is ${best.id} at ${best.avg.toFixed(1)} mm.`;
   }
+  if (validCategories.length === 1) {
+    const only = validCategories[0];
+    return `Rack ${rackQuery}: ${only.category} average growth is ${only.avgRate.toFixed(2)} mm/day.`;
+  }
   const topCategory = validCategories[0];
   const lowCategory = validCategories[validCategories.length - 1];
   return `Rack ${rackQuery} category focus: ${topCategory.category} grows fastest (${topCategory.avgRate.toFixed(
     2
   )} mm/day). Improve ${lowCategory.category} by checking nutrition and conditions: ${lowCategory.suggestion}`;
+};
+
+const buildRackSnapshot = ({ rackCode, plants }) => {
+  const rackStats = buildRackStats(plants || []);
+  const categoryStats = buildRackCategoryStats(plants || []);
+  const rackInsight = buildRackInsight({
+    rackStats,
+    rackQuery: rackCode,
+    categoryStats,
+  });
+  return {
+    rackCode,
+    rackStats,
+    categoryStats,
+    rackInsight,
+  };
 };
 
 const answerGrowthQuestion = ({ question, stats, history, record, insight }) => {
@@ -1126,12 +1373,51 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
   return insight;
 };
 
-const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = [], insight }) => {
+const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = [], insight, rackSnapshots = {} }) => {
   if (!question?.trim()) return insight;
-  if (!rackStats.length) return "No rack data yet.";
   const q = question.toLowerCase();
-  const valid = rackStats.filter((item) => item.avg !== null);
-  const validCategories = (categoryStats || []).filter((item) => Number.isFinite(item.avgRate));
+  const mentionedRack = (question.match(/\bT\d+\b/i)?.[0] || "").toUpperCase();
+  const availableRacks = Object.keys(rackSnapshots || {}).sort();
+
+  let activeRackCode = rackQuery;
+  let activeRackStats = rackStats;
+  let activeCategoryStats = categoryStats;
+  let activeInsight = insight;
+
+  if (mentionedRack) {
+    const target = rackSnapshots?.[mentionedRack];
+    if (!target) {
+      return availableRacks.length
+        ? `Rack ${mentionedRack} is not available. Available racks: ${availableRacks.join(", ")}.`
+        : "No rack data yet.";
+    }
+    activeRackCode = mentionedRack;
+    activeRackStats = target.rackStats || [];
+    activeCategoryStats = target.categoryStats || [];
+    activeInsight = target.rackInsight || activeInsight;
+  }
+
+  if (!activeRackStats.length) return "No rack data yet.";
+
+  const valid = activeRackStats.filter((item) => item.avg !== null);
+  const validCategories = (activeCategoryStats || []).filter((item) => Number.isFinite(item.avgRate));
+  const simpleRackAsk =
+    Boolean(mentionedRack) &&
+    !(
+      q.includes("best") ||
+      q.includes("worst") ||
+      q.includes("lowest") ||
+      q.includes("average") ||
+      q.includes("avg") ||
+      q.includes("category") ||
+      q.includes("type") ||
+      q.includes("cultivar") ||
+      q.includes("suggest") ||
+      q.includes("recommend") ||
+      q.includes("improve")
+    );
+  if (simpleRackAsk) return activeInsight;
+
   if ((q.includes("category") || q.includes("type") || q.includes("cultivar")) && validCategories.length) {
     const rows = validCategories
       .map(
@@ -1139,7 +1425,7 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = []
           `${item.category}: ${item.avgRate.toFixed(2)} mm/day, change ${item.avgDelta?.toFixed(1) || "n/a"} mm (${item.growthLabel})`
       )
       .join(", ");
-    return `Category growth change on ${rackQuery}: ${rows}.`;
+    return `Category growth change on ${activeRackCode}: ${rows}.`;
   }
   if (q.includes("suggest") || q.includes("recommend") || q.includes("improve")) {
     if (!validCategories.length) return "Need category-level growth data before suggesting interventions.";
@@ -1148,17 +1434,17 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = []
   }
   if (q.includes("best")) {
     const best = valid.find((item) => item.rank === "Best");
-    return best ? `Best average height on ${rackQuery}: ${best.id} at ${best.avg.toFixed(1)} mm.` : insight;
+    return best ? `Best average height on ${activeRackCode}: ${best.id} at ${best.avg.toFixed(1)} mm.` : activeInsight;
   }
   if (q.includes("worst") || q.includes("lowest")) {
     const worst = valid.find((item) => item.rank === "Worst");
-    return worst ? `Lowest average height on ${rackQuery}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : insight;
+    return worst ? `Lowest average height on ${activeRackCode}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : activeInsight;
   }
   if (q.includes("average") || q.includes("avg")) {
     const rows = valid.map((item) => `${item.id}: ${item.avg.toFixed(1)} mm`).join(", ");
-    return rows ? `Average height per jar: ${rows}.` : insight;
+    return rows ? `Average height per jar on ${activeRackCode}: ${rows}.` : activeInsight;
   }
-  return insight;
+  return activeInsight;
 };
 
 const ENABLE_HISTORY_TEST_MOCK = true;
@@ -1176,6 +1462,73 @@ const mergeUniqueByNormalizedId = (primary, secondary, pickId) => {
     map.set(key, item);
   });
   return Array.from(map.values());
+};
+
+const MOCK_ORCHID_TYPE_T1_T2 = "Phalaenopsis (protocol A)";
+const MOCK_ORCHID_TYPE_T3_T4 = "Dendrobium (protocol B)";
+const MOCK_NUTRITION_NORMAL = "MS baseline (normal)";
+const MOCK_NUTRITION_SPECIAL = "MS + coconut water 10% (special)";
+const MOCK_SPECIAL_DETAIL = "Coconut water 10%";
+
+const extractRackCode = (value) => {
+  const text = firstText(value).toUpperCase();
+  if (!text) return "";
+  const match = text.match(/\bT\d+\b/);
+  if (match) return match[0];
+  return text.replace(/^RACK\s+/, "").trim();
+};
+
+const MOCK_RACK_PROTOCOLS = {
+  T1: { orchidType: MOCK_ORCHID_TYPE_T1_T2, nutrition: MOCK_NUTRITION_NORMAL, special: false },
+  T2: { orchidType: MOCK_ORCHID_TYPE_T1_T2, nutrition: MOCK_NUTRITION_SPECIAL, special: true },
+  T3: { orchidType: MOCK_ORCHID_TYPE_T3_T4, nutrition: MOCK_NUTRITION_NORMAL, special: false },
+  T4: { orchidType: MOCK_ORCHID_TYPE_T3_T4, nutrition: MOCK_NUTRITION_SPECIAL, special: true },
+};
+
+const applyMockRackProtocolToPlant = (plant) => {
+  if (!plant) return plant;
+  const rackCode = extractRackCode(plant?.location);
+  const protocol = MOCK_RACK_PROTOCOLS[rackCode];
+  if (!protocol) return plant;
+  return {
+    ...plant,
+    cultivar: protocol.orchidType,
+    nutrition: protocol.nutrition,
+  };
+};
+
+const applyMockRackProtocolToCulture = (entry) => {
+  if (!entry) return entry;
+  const rackCode = extractRackCode(entry?.rackNo);
+  const protocol = MOCK_RACK_PROTOCOLS[rackCode];
+  if (!protocol) return entry;
+
+  const nutritionStatus = buildNutritionSnapshot({
+    baseNutrition: protocol.nutrition,
+    hormoneEnabled: false,
+    hormoneDetail: "",
+    specialEnabled: protocol.special,
+    specialDetail: protocol.special ? MOCK_SPECIAL_DETAIL : "",
+  });
+
+  const normalizedRecultures = (entry.recultures || []).map((row) => ({
+    ...row,
+    note: protocol.special
+      ? "Special nutrition protocol maintained for rack trial."
+      : "Normal rack protocol maintained.",
+  }));
+
+  return {
+    ...entry,
+    orchidType: protocol.orchidType,
+    nutrition: protocol.nutrition,
+    nutritionStatus,
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: protocol.special,
+    specialNutritionDetail: protocol.special ? MOCK_SPECIAL_DETAIL : "",
+    recultures: normalizedRecultures,
+  };
 };
 
 const HISTORY_TEST_MOCK_PLANTS = [
@@ -1202,45 +1555,65 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-92",
     planting_date: "2025-12-30",
     location: "Rack T1",
-    cultivar: "Phalaenopsis (test B)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "VW medium",
     heights: [
-      { date: "2026-01-30", height_mm: 20 },
-      { date: "2026-02-13", height_mm: 22 },
-      { date: "2026-02-27", height_mm: 24 },
-      { date: "2026-03-13", height_mm: 27 },
-      { date: "2026-03-27", height_mm: 30 },
-      { date: "2026-04-10", height_mm: 33 },
-      { date: "2026-04-24", height_mm: 36 },
-      { date: "2026-05-08", height_mm: 40 },
-      { date: "2026-05-22", height_mm: 44 },
-      { date: "2026-06-05", height_mm: 49 },
+      { date: "2025-12-22", height_mm: 6 },
+      { date: "2025-12-30", height_mm: 7 },
+      { date: "2026-01-05", height_mm: 9 },
+      { date: "2026-01-11", height_mm: 11 },
+      { date: "2026-01-20", height_mm: 14 },
+      { date: "2026-01-30", height_mm: 18 },
+      { date: "2026-02-06", height_mm: 20 },
+      { date: "2026-02-13", height_mm: 24 },
+      { date: "2026-02-20", height_mm: 26 },
+      { date: "2026-02-27", height_mm: 28 },
+      { date: "2026-03-13", height_mm: 31 },
+      { date: "2026-03-20", height_mm: 33 },
+      { date: "2026-03-27", height_mm: 36 },
+      { date: "2026-04-03", height_mm: 38 },
+      { date: "2026-04-10", height_mm: 41 },
+      { date: "2026-04-24", height_mm: 45 },
+      { date: "2026-05-08", height_mm: 50 },
+      { date: "2026-05-22", height_mm: 55 },
+      { date: "2026-06-05", height_mm: 61 },
     ],
   }),
   normalizePlantRecord({
     id: "Jar-93",
     planting_date: "2025-12-26",
     location: "Rack T1",
-    cultivar: "Dendrobium (test C)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "MS + banana extract",
     heights: [
+      { date: "2025-12-20", height_mm: 5 },
+      { date: "2025-12-26", height_mm: 6 },
+      { date: "2026-01-02", height_mm: 8 },
+      { date: "2026-01-09", height_mm: 10 },
+      { date: "2026-01-20", height_mm: 13 },
       { date: "2026-01-26", height_mm: 16 },
-      { date: "2026-02-09", height_mm: 23 },
-      { date: "2026-02-23", height_mm: 31 },
-      { date: "2026-03-09", height_mm: 40 },
-      { date: "2026-03-23", height_mm: 50 },
-      { date: "2026-04-06", height_mm: 62 },
-      { date: "2026-04-20", height_mm: 75 },
-      { date: "2026-05-04", height_mm: 89 },
-      { date: "2026-05-18", height_mm: 106 },
-      { date: "2026-06-01", height_mm: 128 },
+      { date: "2026-01-31", height_mm: 18 },
+      { date: "2026-02-06", height_mm: 22 },
+      { date: "2026-02-09", height_mm: 24 },
+      { date: "2026-02-16", height_mm: 28 },
+      { date: "2026-02-23", height_mm: 32 },
+      { date: "2026-02-28", height_mm: 35 },
+      { date: "2026-03-05", height_mm: 38 },
+      { date: "2026-03-09", height_mm: 42 },
+      { date: "2026-03-13", height_mm: 45 },
+      { date: "2026-03-23", height_mm: 52 },
+      { date: "2026-04-06", height_mm: 64 },
+      { date: "2026-04-20", height_mm: 78 },
+      { date: "2026-05-04", height_mm: 93 },
+      { date: "2026-05-18", height_mm: 111 },
+      { date: "2026-06-01", height_mm: 131 },
     ],
   }),
   normalizePlantRecord({
     id: "Jar-94",
     planting_date: "2025-12-29",
     location: "Rack T1",
-    cultivar: "Vanda (test D)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "VW + peptone",
     heights: [
       { date: "2026-01-29", height_mm: 22 },
@@ -1411,7 +1784,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-103",
     planting_date: "2026-01-16",
     location: "Rack T1",
-    cultivar: "Dendrobium (test M)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "MS + myo-inositol",
     heights: [
       { date: "2026-02-16", height_mm: 24 },
@@ -1445,7 +1818,9 @@ const HISTORY_TEST_MOCK_PLANTS = [
       { date: "2026-06-24", height_mm: 28 },
     ],
   }),
-].filter(Boolean);
+]
+  .map(applyMockRackProtocolToPlant)
+  .filter(Boolean);
 const HISTORY_TEST_MOCK_ID_SET = new Set(
   HISTORY_TEST_MOCK_PLANTS.map((item) => normalizeId(item?.id)).filter(Boolean)
 );
@@ -1471,7 +1846,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-92",
     cultureDate: "2025-12-30",
     rackNo: "T1",
-    orchidType: "Phalaenopsis (test B)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "VW medium",
     addHormone: true,
     hormoneDetail: "BA 0.5 mg/L",
@@ -1486,7 +1861,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-93",
     cultureDate: "2025-12-26",
     rackNo: "T1",
-    orchidType: "Dendrobium (test C)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "MS + banana extract",
     addHormone: true,
     hormoneDetail: "Kinetin 0.8 mg/L",
@@ -1502,7 +1877,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-94",
     cultureDate: "2025-12-29",
     rackNo: "T1",
-    orchidType: "Vanda (test D)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "VW + peptone",
     addHormone: true,
     hormoneDetail: "BA 1.2 mg/L",
@@ -1636,7 +2011,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-103",
     cultureDate: "2026-01-16",
     rackNo: "T1",
-    orchidType: "Dendrobium (test M)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "MS + myo-inositol",
     addHormone: false,
     hormoneDetail: "",
@@ -1663,7 +2038,9 @@ const HISTORY_TEST_MOCK_CULTURE = [
     ],
     updatedAt: "2026-03-10T00:00:00.000Z",
   }),
-].filter(Boolean);
+]
+  .map(applyMockRackProtocolToCulture)
+  .filter(Boolean);
 
 export default function GrowthHistory() {
   const { theme } = useTheme();
@@ -2060,6 +2437,21 @@ export default function GrowthHistory() {
     () => buildRackBrief({ rackStats, rackQuery, categoryStats: rackCategoryStats }),
     [rackStats, rackQuery, rackCategoryStats]
   );
+  const rackSnapshots = useMemo(() => {
+    const grouped = {};
+    (combinedRecords || []).forEach((plant) => {
+      const rackCode = extractRackCode(plant?.location);
+      if (!rackCode) return;
+      if (!grouped[rackCode]) grouped[rackCode] = [];
+      grouped[rackCode].push(plant);
+    });
+
+    const snapshotMap = {};
+    Object.entries(grouped).forEach(([rackCode, plantsInRack]) => {
+      snapshotMap[rackCode] = buildRackSnapshot({ rackCode, plants: plantsInRack });
+    });
+    return snapshotMap;
+  }, [combinedRecords]);
   const [includeRackInsight, setIncludeRackInsight] = useState(true);
   const [rackReportInsight, setRackReportInsight] = useState("");
   const clusterSelectionIds = useMemo(() => {
@@ -2186,6 +2578,7 @@ export default function GrowthHistory() {
           reportInsightText={rackReportInsight || rackBrief}
           includeInsight={includeRackInsight}
         />
+        <RackPairComparison combinedRecords={combinedRecords} />
         <InsightAssistant
           kicker="Rack assistant"
           title="Rack summary"
@@ -2202,6 +2595,7 @@ export default function GrowthHistory() {
               rackQuery,
               categoryStats: rackCategoryStats,
               insight: rackInsight,
+              rackSnapshots,
             })
           }
         />
@@ -2359,6 +2753,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
   const chartRef = useRef(null);
   const pieCanvasRef = useRef(null);
   const pieChartRef = useRef(null);
+  const plantingTs = useMemo(() => toPlantingTimestamp(record?.planting_date), [record?.planting_date]);
   const cleanedPoints = useMemo(() => {
     const rawPoints = history
       .map((row) => toValidPoint(row.ts, row.height_mm))
@@ -2655,10 +3050,20 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     if (seriesStats.days !== null && seriesStats.days < 0.25) return "-";
     return `${seriesStats.rate.toFixed(2)} mm/day`;
   }, [seriesStats]);
+  const latestAgeText = useMemo(() => {
+    if (!cleanedPoints.length) return "-";
+    const latestPoint = cleanedPoints[cleanedPoints.length - 1];
+    const ageDays = computeAgeDaysAt(plantingTs, latestPoint?.x);
+    return ageDays === null ? "-" : formatAgeDays(ageDays);
+  }, [cleanedPoints, plantingTs]);
 
   const reportDateRows = useMemo(
-    () => cleanedPoints.map((point) => [formatDate(point.x), `${Number(point.y).toFixed(1)} mm`]),
-    [cleanedPoints]
+    () =>
+      cleanedPoints.map((point) => {
+        const ageDays = computeAgeDaysAt(plantingTs, point.x);
+        return [formatDate(point.x), `${Number(point.y).toFixed(1)} mm`, ageDays === null ? "n/a" : formatAgeDays(ageDays)];
+      }),
+    [cleanedPoints, plantingTs]
   );
   const reportNutritionRows = useMemo(
     () =>
@@ -2692,6 +3097,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       ["Cultivar", record?.cultivar || "-"],
       ["Nutrition status", record?.nutritionStatus || record?.nutrition || "-"],
       ["Measurements", cleanedPoints.length ? `${cleanedPoints.length} entries` : "0"],
+      ["Current age", latestAgeText],
       ["Average height", seriesStats?.avg !== null ? `${seriesStats.avg.toFixed(1)} mm` : "-"],
       ["Change", seriesStats?.delta !== null ? `${seriesStats.delta >= 0 ? "+" : ""}${seriesStats.delta.toFixed(1)} mm` : "-"],
       ["Growth rate", growthRateText],
@@ -2699,7 +3105,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
 
     const sections = [
       { heading: "Summary", content: renderKeyValueTable(statsRows) },
-      { heading: "Measurements", content: renderDataTable(["Date", "Height"], reportDateRows) },
+      { heading: "Measurements", content: renderDataTable(["Date", "Height", "Age"], reportDateRows) },
     ];
     if (reportNutritionRows.length) {
       sections.splice(1, 0, {
@@ -2830,7 +3236,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
             },
             grid: { color: theme.grid },
             ticks: { color: theme.ticks, maxTicksLimit: 9, maxRotation: 0 },
-            title: { display: true, text: "Time", color: theme.axis },
+            title: { display: true, text: "Time (age shown in tooltip)", color: theme.axis },
           },
           y: {
             beginAtZero: true,
@@ -2856,11 +3262,13 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
             mode: "nearest",
             callbacks: {
               label: (ctx) => {
+                const ageDays = computeAgeDaysAt(plantingTs, ctx.parsed?.x);
+                const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
                 if (ctx.dataset?.label === "Nutrition/culture changes") {
                   const label = firstText(ctx.raw?.label, "Change");
-                  return `${label}: ${Number(ctx.parsed.y).toFixed(1)} mm`;
+                  return `${label}: ${Number(ctx.parsed.y).toFixed(1)} mm${ageText}`;
                 }
-                return `${ctx.dataset.label}: ${ctx.parsed.y} mm`;
+                return `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)} mm${ageText}`;
               },
               afterLabel: (ctx) => {
                 if (ctx.dataset?.label === "Nutrition/culture changes") {
@@ -2878,7 +3286,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     return () => {
       chartRef.current?.destroy();
     };
-  }, [chartPoints, segmentSeries, nutritionMarkers, record?.id, isLight]);
+  }, [chartPoints, segmentSeries, nutritionMarkers, plantingTs, record?.id, isLight]);
   useEffect(() => {
     if (pieChartRef.current) {
       pieChartRef.current.destroy();
@@ -2952,7 +3360,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         </div>
       </div>
       {seriesStats && (
-        <div className="grid sm:grid-cols-4 gap-2">
+        <div className="grid sm:grid-cols-5 gap-2">
           <div className="panel-muted px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Time span</p>
             <p className="text-sm font-semibold text-dark">
@@ -2975,6 +3383,12 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
             <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Growth rate</p>
             <p className="text-sm font-semibold text-dark">
               {growthRateText}
+            </p>
+          </div>
+          <div className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Current age</p>
+            <p className="text-sm font-semibold text-dark">
+              {latestAgeText}
             </p>
           </div>
         </div>
@@ -3363,6 +3777,147 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
   );
 }
 
+function RackPairComparison({ combinedRecords }) {
+  const rackMap = useMemo(() => {
+    const map = new Map();
+    (combinedRecords || []).forEach((plant) => {
+      const rackCode = extractRackCode(plant?.location);
+      if (!rackCode) return;
+      if (!map.has(rackCode)) map.set(rackCode, []);
+      map.get(rackCode).push(plant);
+    });
+    return map;
+  }, [combinedRecords]);
+
+  const rackOptions = useMemo(() => Array.from(rackMap.keys()).sort(), [rackMap]);
+  const [leftRack, setLeftRack] = useState("");
+  const [rightRack, setRightRack] = useState("");
+
+  useEffect(() => {
+    if (!rackOptions.length) {
+      setLeftRack("");
+      setRightRack("");
+      return;
+    }
+    setLeftRack((prev) => (prev && rackOptions.includes(prev) ? prev : rackOptions[0]));
+    setRightRack((prev) => {
+      if (prev && rackOptions.includes(prev)) return prev;
+      return rackOptions[1] || rackOptions[0];
+    });
+  }, [rackOptions]);
+
+  const leftSummary = useMemo(
+    () => buildRackComparisonSummary(leftRack, rackMap.get(leftRack) || []),
+    [leftRack, rackMap]
+  );
+  const rightSummary = useMemo(
+    () => buildRackComparisonSummary(rightRack, rackMap.get(rightRack) || []),
+    [rightRack, rackMap]
+  );
+
+  const comparison = useMemo(() => {
+    if (!leftRack || !rightRack) return null;
+    if (leftRack === rightRack) {
+      return {
+        mode: "invalid",
+        headline: "Select two different racks",
+        detail: "Choose one source rack and one comparison rack.",
+        recommendation: "Recommended pairs for mock study: T1 vs T2, T1 vs T3, T3 vs T4, T2 vs T4.",
+      };
+    }
+    return buildRackPairComparison({ leftSummary, rightSummary });
+  }, [leftRack, rightRack, leftSummary, rightSummary]);
+
+  const formatRate = (value) => (Number.isFinite(value) ? `${value.toFixed(2)} mm/day` : "n/a");
+  const formatDelta = (value) => (Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(1)} mm` : "n/a");
+  const modeLabel = (mode) => (mode === "special" ? "Special" : mode === "normal" ? "Normal" : "Unknown");
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="panel space-y-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="kicker">Rack comparison</p>
+          <h3 className="text-lg font-semibold text-dark">Compare two racks</h3>
+          <p className="text-sm text-subtle">
+            Analyze normal vs special nutrition for the same orchid type, and type differences under the same nutrition mode.
+          </p>
+        </div>
+        <span className="text-xs text-subtle">{rackOptions.length ? `${rackOptions.length} racks available` : "No rack data"}</span>
+      </div>
+
+      {rackOptions.length ? (
+        <>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="panel-muted px-3 py-2 text-xs text-subtle space-y-1">
+              <span className="uppercase tracking-[0.16em]">Rack A</span>
+              <select
+                value={leftRack}
+                onChange={(e) => setLeftRack(e.target.value)}
+                className="w-full rounded-lg border border-border/45 bg-paper/80 px-2 py-1.5 text-sm text-dark focus:outline-none"
+              >
+                {rackOptions.map((rack) => (
+                  <option key={`left-${rack}`} value={rack}>
+                    {rack}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="panel-muted px-3 py-2 text-xs text-subtle space-y-1">
+              <span className="uppercase tracking-[0.16em]">Rack B</span>
+              <select
+                value={rightRack}
+                onChange={(e) => setRightRack(e.target.value)}
+                className="w-full rounded-lg border border-border/45 bg-paper/80 px-2 py-1.5 text-sm text-dark focus:outline-none"
+              >
+                {rackOptions.map((rack) => (
+                  <option key={`right-${rack}`} value={rack}>
+                    {rack}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="text-[11px] text-subtle">
+            Suggested scenario pairs: T1 vs T2 (same type, normal vs special), T1 vs T3 (different type, same normal),
+            T3 vs T4 (same type, normal vs special), T2 vs T4 (different type, same special).
+          </p>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            {[leftSummary, rightSummary].map((item, idx) => (
+              <div key={`${item.rackCode || "rack"}-${idx}`} className="panel-muted px-3 py-2 text-xs text-dark space-y-1.5">
+                <p className="font-semibold">Rack {item.rackCode || "-"}</p>
+                <p className="text-subtle">Type: {item.dominantType}</p>
+                <p className="text-subtle">Nutrition mode: {modeLabel(item.nutritionMode)}</p>
+                <p className="text-subtle">Nutrition: {item.dominantNutrition}</p>
+                <p className="text-subtle">Jars: {item.jarCount}</p>
+                <p className="text-subtle">Avg rate: {formatRate(item.avgRate)}</p>
+                <p className="text-subtle">Avg change: {formatDelta(item.avgDelta)}</p>
+                <p className="text-subtle">Avg age: {item.avgAgeDays !== null ? formatAgeDays(item.avgAgeDays) : "n/a"}</p>
+              </div>
+            ))}
+          </div>
+
+          {comparison ? (
+            <div className="rounded-xl border border-primary/35 bg-primary/10 px-4 py-3 space-y-1.5">
+              <p className="text-xs uppercase tracking-[0.16em] text-primary/90">Comparison Result</p>
+              <p className="text-sm font-semibold text-dark">{comparison.headline}</p>
+              <p className="text-sm text-dark/90">{comparison.detail}</p>
+              <p className="text-sm text-dark/90">{comparison.recommendation}</p>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <EmptyState message="Rack comparison will appear once rack records are available." />
+      )}
+    </motion.div>
+  );
+}
+
 function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, metrics, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
@@ -3382,6 +3937,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
     compareIds.forEach((id, idx) => {
       const plant = combinedRecords.find((p) => p.id === id);
       if (!plant) return;
+      const plantingTs = toPlantingTimestamp(plant?.planting_date);
       const sorted = (plant.heights || [])
         .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
         .filter((p) => p !== null && (cutoffMs === null || p.x >= cutoffMs))
@@ -3400,6 +3956,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
         pointRadius: 4,
         pointBackgroundColor: color,
         fill: false,
+        sourceJarId: id,
+        sourcePlantingTs: plantingTs,
       });
 
       const trendPoints = buildTrendlinePoints(sorted);
@@ -3413,6 +3971,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
           pointRadius: 0,
           tension: 0,
           fill: false,
+          sourceJarId: id,
+          sourcePlantingTs: plantingTs,
         });
       }
     });
@@ -3430,6 +3990,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
       item.rate !== null ? `${item.rate.toFixed(2)} mm/day` : "n/a",
       Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a",
       Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a",
+      item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a",
       `${item.count} pts`,
     ]);
 
@@ -3437,7 +3998,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
       {
         heading: "Growth metrics",
         content: renderDataTable(
-          ["Jar ID", "Growth rate", "Change", "Avg height", "Points"],
+          ["Jar ID", "Growth rate", "Change", "Avg height", "Age", "Points"],
           metricRows
         ),
       },
@@ -3484,7 +4045,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
             grid: { color: theme.grid },
             ticks: { color: theme.ticks },
-            title: { display: true, text: "Measurement date", color: theme.axis },
+            title: { display: true, text: "Measurement date (age shown in tooltip)", color: theme.axis },
           },
           y: {
             beginAtZero: true,
@@ -3510,7 +4071,12 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
                 const ts = items[0]?.parsed?.x;
                 return ts ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(ts) : "";
               },
-              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
+              label: (ctx) => {
+                const value = Number(ctx.parsed?.y);
+                const ageDays = computeAgeDaysAt(ctx.dataset?.sourcePlantingTs, ctx.parsed?.x);
+                const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
+                return `${ctx.dataset.label}: ${value.toFixed(1)} mm${ageText}`;
+              },
             },
           },
         },
@@ -3561,6 +4127,9 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
               <p className="text-xs text-subtle">
                 Avg height: {Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a"}
               </p>
+              <p className="text-xs text-subtle">
+                Age: {item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a"}
+              </p>
             </div>
           ))}
         </div>
@@ -3588,6 +4157,10 @@ function RackChart({
 }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const categoryScenarioPlan = useMemo(
+    () => buildRackCategoryScenarioPlan(rackPlants, rackCategoryStats),
+    [rackPlants, rackCategoryStats]
+  );
 
   const handleReport = () => {
     if (!rackStats?.length || !rackQuery) return;
@@ -3595,6 +4168,7 @@ function RackChart({
     const rows = (rackStats || []).map((item) => [
       item.id,
       item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a",
+      item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a",
       `${item.count} pts`,
       item.rank || "-",
     ]);
@@ -3602,7 +4176,7 @@ function RackChart({
     const sections = [
       {
         heading: "Rack metrics",
-        content: renderDataTable(["Jar ID", "Avg height", "Points", "Rank"], rows),
+        content: renderDataTable(["Jar ID", "Avg height", "Age", "Points", "Rank"], rows),
       },
     ];
     if (rackCategoryStats?.length) {
@@ -3640,6 +4214,7 @@ function RackChart({
 
     const mainSeries = rackPlants
       .map((plant, idx) => {
+        const plantingTs = toPlantingTimestamp(plant?.planting_date);
         const sorted = (plant.heights || [])
           .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
           .filter((p) => p !== null)
@@ -3665,6 +4240,8 @@ function RackChart({
           fill: false,
           yAxisID: "y",
           order: 2,
+          sourceJarId: plant.id,
+          sourcePlantingTs: plantingTs,
         };
       })
       .filter(Boolean);
@@ -3704,6 +4281,8 @@ function RackChart({
           fill: false,
           yAxisID: "yDelta",
           order: 1,
+          sourceJarId: series.sourceJarId,
+          sourcePlantingTs: series.sourcePlantingTs,
         };
       })
       .filter(Boolean);
@@ -3752,7 +4331,7 @@ function RackChart({
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
             grid: { color: theme.grid },
             ticks: { color: theme.ticks },
-            title: { display: true, text: "Measurement date", color: theme.axis },
+            title: { display: true, text: "Measurement date (age shown in tooltip)", color: theme.axis },
           },
           y: {
             beginAtZero: true,
@@ -3801,10 +4380,12 @@ function RackChart({
               },
               label: (ctx) => {
                 const value = Number(ctx.parsed.y);
+                const ageDays = computeAgeDaysAt(ctx.dataset?.sourcePlantingTs, ctx.parsed?.x);
+                const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
                 if (ctx.dataset.yAxisID === "yDelta") {
-                  return `${ctx.dataset.label}: ${value >= 0 ? "+" : ""}${value.toFixed(2)} mm`;
+                  return `${ctx.dataset.label}: ${value >= 0 ? "+" : ""}${value.toFixed(2)} mm${ageText}`;
                 }
-                return `${ctx.dataset.label}: ${value.toFixed(1)} mm`;
+                return `${ctx.dataset.label}: ${value.toFixed(1)} mm${ageText}`;
               },
             },
           },
@@ -3851,32 +4432,56 @@ function RackChart({
             <p className="text-xs text-subtle">Growth change by plant category</p>
             <span className="text-[11px] text-subtle">{rackCategoryStats.length} categories</span>
           </div>
-          <div className="grid sm:grid-cols-2 gap-2 max-h-56 overflow-auto pr-1">
-            {(rackCategoryStats || []).map((item) => (
-              <div key={item.category} className="rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-xs text-dark">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="font-semibold">{item.category}</span>
-                  <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] ${
-                      item.growthLabel === "fast"
-                        ? "border-emerald-300/70 bg-emerald-500/10 text-emerald-700"
-                        : item.growthLabel === "slow"
-                          ? "border-rose-300/70 bg-rose-500/10 text-rose-700"
-                          : item.growthLabel === "moderate"
-                            ? "border-amber-300/70 bg-amber-500/10 text-amber-700"
-                            : "border-slate-300/70 bg-slate-500/10 text-slate-700"
-                    }`}
-                  >
-                    {item.growthLabel}
-                  </span>
+          <p className="text-[11px] text-subtle">
+            Baseline protocol: {categoryScenarioPlan.baselineNutrition}. {categoryScenarioPlan.baselineAgarRule}{" "}
+            {categoryScenarioPlan.labRuleWindow}
+          </p>
+          <div className="grid sm:grid-cols-2 gap-3 max-h-72 overflow-auto pr-1">
+            {(rackCategoryStats || []).map((item) => {
+              const scenario = categoryScenarioPlan.byCategory.get(item.category);
+              const badgeClass =
+                item.growthLabel === "fast"
+                  ? "border-emerald-300/70 bg-emerald-500/10 text-emerald-700"
+                  : item.growthLabel === "slow"
+                    ? "border-rose-300/70 bg-rose-500/10 text-rose-700"
+                    : item.growthLabel === "moderate"
+                      ? "border-amber-300/70 bg-amber-500/10 text-amber-700"
+                      : "border-slate-300/70 bg-slate-500/10 text-slate-700";
+              const suggestionClass =
+                item.growthLabel === "fast"
+                  ? "border-emerald-300/60 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100"
+                  : item.growthLabel === "slow"
+                    ? "border-rose-300/60 bg-rose-500/12 text-rose-900 dark:text-rose-100"
+                    : item.growthLabel === "moderate"
+                      ? "border-amber-300/60 bg-amber-500/12 text-amber-900 dark:text-amber-100"
+                      : "border-slate-300/60 bg-slate-500/10 text-slate-900 dark:text-slate-100";
+
+              return (
+                <div key={item.category} className="rounded-xl border border-border/45 bg-paper/85 px-3.5 py-3 text-xs text-dark space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{item.category}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] ${badgeClass}`}>
+                      {item.growthLabel}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-dark/80">
+                    {item.plantCount} jar(s) - Change: {item.avgDelta !== null ? `${item.avgDelta.toFixed(1)} mm` : "n/a"} - Rate:{" "}
+                    {item.avgRate !== null ? `${item.avgRate.toFixed(2)} mm/day` : "n/a"}
+                    {scenario?.avgAgeDays !== null && scenario?.avgAgeDays !== undefined
+                      ? ` - Avg age: ${formatAgeDays(scenario.avgAgeDays)}`
+                      : ""}
+                  </p>
+                  <div className={`rounded-lg border px-2.5 py-2 ${suggestionClass}`}>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em]">Default Protocol</p>
+                    <p className="mt-1 text-xs font-medium leading-5">{scenario?.defaultProtocol || item.suggestion}</p>
+                  </div>
+                  <div className="rounded-lg border border-sky-300/55 bg-sky-500/10 px-2.5 py-2 text-sky-900 dark:text-sky-100">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em]">Special-case Override</p>
+                    <p className="mt-1 text-xs font-medium leading-5">{scenario?.specialProtocol || "No override rule available."}</p>
+                  </div>
                 </div>
-                <p className="text-[11px] text-subtle mt-1">
-                  {item.plantCount} jar(s) - Change: {item.avgDelta !== null ? `${item.avgDelta.toFixed(1)} mm` : "n/a"} - Rate:{" "}
-                  {item.avgRate !== null ? `${item.avgRate.toFixed(2)} mm/day` : "n/a"}
-                </p>
-                <p className="text-[11px] text-subtle mt-1">{item.suggestion}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       ) : null}
@@ -3904,7 +4509,8 @@ function RackChart({
                   )}
                 </div>
                 <p className="text-[11px] text-subtle mt-1">
-                  Avg: {item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a"} · {item.count} pts
+                  Avg: {item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a"} | Age:{" "}
+                  {item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a"} | {item.count} pts
                 </p>
               </div>
             ))}
@@ -4175,6 +4781,9 @@ function GrowthClusterPanel({ clusterResult }) {
 
 function HistoryList({ history }) {
   const rows = [...history].reverse(); // newest first
+  const hasRows = rows.length > 0;
+  const [isExpanded, setIsExpanded] = useState(true);
+  const toggleLabel = isExpanded ? "Hide measurements" : "Show measurements";
 
   return (
     <motion.div
@@ -4188,29 +4797,64 @@ function HistoryList({ history }) {
           <p className="kicker">History</p>
           <h3 className="text-lg font-semibold text-dark">Logged measurements</h3>
         </div>
-        <span className="text-xs text-subtle">{rows.length ? "Latest first" : "Waiting for selection"}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-subtle">{hasRows ? "Latest first" : "Waiting for selection"}</span>
+          {hasRows ? (
+            <button
+              type="button"
+              onClick={() => setIsExpanded((prev) => !prev)}
+              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-subtle transition-colors hover:border-border hover:text-dark"
+              aria-label={toggleLabel}
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+                  <path
+                    d="M3 3l18 18M10.58 10.58a2 2 0 0 0 2.84 2.84M9.88 5.09A9.77 9.77 0 0 1 12 4.8c5.5 0 9.57 4.23 10.8 7.2a11.8 11.8 0 0 1-4.21 5.39M6.51 6.51A12.27 12.27 0 0 0 1.2 12c1.23 2.97 5.3 7.2 10.8 7.2a9.8 9.8 0 0 0 5.12-1.42"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+                  <path
+                    d="M1.2 12c1.23-2.97 5.3-7.2 10.8-7.2s9.57 4.23 10.8 7.2c-1.23 2.97-5.3 7.2-10.8 7.2S2.43 14.97 1.2 12Z"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="12" cy="12" r="2.9" />
+                </svg>
+              )}
+              <span>{isExpanded ? "Hide" : "Show"}</span>
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      {rows.length ? (
-        <div className="divide-y divide-border/30">
-          {rows.map((row, idx) => {
-            const prev = rows[idx + 1];
-            const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
-            return (
-              <div
-                key={`${normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id || "na")}:${row.ts}`}
-                className="grid grid-cols-4 gap-3 py-3 text-sm text-dark"
-              >
-                <span className="font-medium">{formatDate(row.ts)}</span>
-                <span>{Number(row.height_mm).toFixed(1)} mm</span>
-                <span className="text-subtle">{row.sourceJarId || row.jarId || row.jar_id || row.id || "-"}</span>
-                <span className="text-subtle">
-                  {delta === null ? "-" : delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} mm vs prior`}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      {hasRows ? (
+        isExpanded ? (
+          <div className="divide-y divide-border/30">
+            {rows.map((row, idx) => {
+              const prev = rows[idx + 1];
+              const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
+              return (
+                <div
+                  key={`${normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id || "na")}:${row.ts}`}
+                  className="grid grid-cols-4 gap-3 py-3 text-sm text-dark"
+                >
+                  <span className="font-medium">{formatDate(row.ts)}</span>
+                  <span>{Number(row.height_mm).toFixed(1)} mm</span>
+                  <span className="text-subtle">{row.sourceJarId || row.jarId || row.jar_id || row.id || "-"}</span>
+                  <span className="text-subtle">
+                    {delta === null ? "-" : delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} mm vs prior`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-border/50 px-3 py-2 text-xs text-subtle">Measurements hidden</div>
+        )
       ) : (
         <EmptyState message="Measurement list will appear once a Jar ID is loaded." />
       )}
