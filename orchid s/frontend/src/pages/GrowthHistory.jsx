@@ -3792,6 +3792,7 @@ function RackPairComparison({ combinedRecords }) {
   const rackOptions = useMemo(() => Array.from(rackMap.keys()).sort(), [rackMap]);
   const [leftRack, setLeftRack] = useState("");
   const [rightRack, setRightRack] = useState("");
+  const [hideComparison, setHideComparison] = useState(false);
 
   useEffect(() => {
     if (!rackOptions.length) {
@@ -3847,10 +3848,19 @@ function RackPairComparison({ combinedRecords }) {
             Analyze normal vs special nutrition for the same orchid type, and type differences under the same nutrition mode.
           </p>
         </div>
-        <span className="text-xs text-subtle">{rackOptions.length ? `${rackOptions.length} racks available` : "No rack data"}</span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-subtle">{rackOptions.length ? `${rackOptions.length} racks available` : "No rack data"}</span>
+          <button
+            type="button"
+            onClick={() => setHideComparison((prev) => !prev)}
+            className="rounded-md border border-border/45 px-2 py-1 text-[11px] text-subtle transition hover:border-primary/50 hover:text-primary"
+          >
+            {hideComparison ? "Show" : "Hide"}
+          </button>
+        </div>
       </div>
 
-      {rackOptions.length ? (
+      {!hideComparison && rackOptions.length ? (
         <>
           <div className="grid sm:grid-cols-2 gap-3">
             <label className="panel-muted px-3 py-2 text-xs text-subtle space-y-1">
@@ -3911,8 +3921,10 @@ function RackPairComparison({ combinedRecords }) {
             </div>
           ) : null}
         </>
-      ) : (
+      ) : !hideComparison ? (
         <EmptyState message="Rack comparison will appear once rack records are available." />
+      ) : (
+        <p className="text-xs text-subtle">Comparison section is hidden.</p>
       )}
     </motion.div>
   );
