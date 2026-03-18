@@ -27,6 +27,26 @@ const OPTIONS_PATH = "recultureOptions";
 // Utility functions for normalizing and managing options
 const normalizeOption = (value) => (value || "").trim();
 const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
+const findRackTypeConflict = ({ entries, rackNo, orchidType, ignoreJarId = "" }) => {
+  const rackKey = normalizeOptionKey(rackNo);
+  const orchidKey = normalizeOptionKey(orchidType);
+  const ignoreKey = normalizeOptionKey(ignoreJarId);
+  if (!rackKey || !orchidKey) return null;
+
+  for (const entry of entries || []) {
+    const entryJarKey = normalizeOptionKey(entry?.jarId);
+    if (ignoreKey && entryJarKey === ignoreKey) continue;
+    if (normalizeOptionKey(entry?.rackNo) !== rackKey) continue;
+    const existingTypeKey = normalizeOptionKey(entry?.orchidType);
+    if (!existingTypeKey || existingTypeKey === orchidKey) continue;
+    return {
+      rackNo: entry?.rackNo || rackNo,
+      orchidType: entry?.orchidType || "",
+      jarId: entry?.jarId || "",
+    };
+  }
+  return null;
+};
 // Ensures options are unique, cleaned, and sorted
 const uniqueSortedOptions = (values) => {
   const map = new Map();
@@ -510,6 +530,7 @@ export default function CultureDetails() {
 
     const nowIso = new Date().toISOString();
     const sourceJarId = source.jarId;
+    const sourceOrchidType = (source.orchidType || "").trim();
     const sourceEntryKey = encodeFirebaseKeySegment(sourceJarId);
 
     if (recultureType === RECULTURE_WITHOUT_SUB) {
@@ -622,6 +643,22 @@ export default function CultureDetails() {
         setError(`Plant count is required for ${row.newJarId}.`);
         return;
       }
+      if (!sourceOrchidType) {
+        setError(`Source jar ${sourceJarId} has no orchid type. Set orchid type before sub-culture split.`);
+        return;
+      }
+      const rackConflict = findRackTypeConflict({
+        entries,
+        rackNo: row.rackLocation,
+        orchidType: sourceOrchidType,
+        ignoreJarId: row.newJarId,
+      });
+      if (rackConflict) {
+        setError(
+          `Rack ${rackConflict.rackNo} already uses orchid type ${rackConflict.orchidType} (jar ${rackConflict.jarId}). One rack can only contain one orchid type.`
+        );
+        return;
+      }
       const normalized = normalizeOptionKey(row.newJarId);
       if (seenJarIds.has(normalized)) {
         setError(`Duplicate child jar ID detected: ${row.newJarId}.`);
@@ -686,8 +723,8 @@ export default function CultureDetails() {
           culture_date: row.recultureDate,
           rackNo: row.rackLocation,
           rack_location: row.rackLocation,
-          orchidType: source.orchidType || "",
-          plant_type: source.orchidType || "",
+          orchidType: sourceOrchidType,
+          plant_type: sourceOrchidType,
           nutrition: row.nutritionType,
           nutrition_type: row.nutritionType,
           plantCount: row.plantCount,
@@ -712,7 +749,7 @@ export default function CultureDetails() {
             parent_jar_id: sourceJarId,
             source_jar_id: sourceJarId,
             plant_date: row.recultureDate,
-            plant_type: source.orchidType || "",
+            plant_type: sourceOrchidType,
             nutrition_type: row.nutritionType,
             rack_location: row.rackLocation,
             plant_count: row.plantCount,
@@ -784,6 +821,18 @@ export default function CultureDetails() {
     }
     if (parentJarId && parentJarId.toLowerCase() === jarId.toLowerCase()) {
       setError("Parent Jar ID cannot be the same as Jar ID.");
+      return;
+    }
+    const rackConflict = findRackTypeConflict({
+      entries,
+      rackNo: form.rackNo,
+      orchidType: form.orchidType,
+      ignoreJarId: jarId,
+    });
+    if (rackConflict) {
+      setError(
+        `Rack ${rackConflict.rackNo} already uses orchid type ${rackConflict.orchidType} (jar ${rackConflict.jarId}). One rack can only contain one orchid type.`
+      );
       return;
     }
 
