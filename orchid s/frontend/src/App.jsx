@@ -64,11 +64,10 @@ export default function App() {
     <ThemeProvider>
       <div className="relative min-h-screen overflow-hidden bg-background text-dark transition-colors duration-300 selection:bg-primary/20">
         <div className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -top-24 left-0 h-80 w-80 rounded-full bg-primary/10 blur-3xl" />
-          <div className="absolute right-0 top-10 h-72 w-72 rounded-full bg-secondary/10 blur-3xl" />
-          <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
-          <div className="absolute left-[24%] top-[34%] h-56 w-56 rounded-full bg-slate-200/45 blur-3xl dark:bg-indigo-400/10" />
-          <div className="absolute right-[20%] bottom-[14%] h-44 w-44 rounded-full bg-teal-200/35 blur-3xl dark:bg-teal-400/10" />
+          <div className="aurora-blob aurora-1" />
+          <div className="aurora-blob aurora-2 secondary" />
+          <div className="aurora-blob aurora-3 accent" />
+          <div className="grid-overlay" />
         </div>
 
         <div className="mx-auto flex min-h-screen max-w-[1600px]">
