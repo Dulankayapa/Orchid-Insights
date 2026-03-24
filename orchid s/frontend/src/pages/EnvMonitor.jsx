@@ -8,7 +8,6 @@ import { useWeather } from '../hooks/useWeather';
 
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
-import HealthGauge from '../components/monitor/HealthGauge.jsx';
 import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
 import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
 import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
@@ -561,9 +560,7 @@ const EnvMonitor = () => {
             <OverviewCards data={latest} lastUpdate={lastUpdate} thresholds={thresholds} />
           </section>
 
-          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <HealthGauge score={healthScore} />
-
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="dashboard-card p-5">
               <h3 className="mb-2 text-sm font-semibold text-dark">Automated Daily Report</h3>
               <p className="text-xs text-subtle">{dailyReport?.date || '--'}</p>
