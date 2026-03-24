@@ -8,10 +8,7 @@ import { useWeather } from '../hooks/useWeather';
 
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
-import HealthGauge from '../components/monitor/HealthGauge.jsx';
-import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
 import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
-import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
 import NotificationCenter from '../components/monitor/NotificationCenter.jsx';
 import GreenhouseLayout from '../components/monitor/GreenhouseLayout.jsx';
 import WeatherPanel from '../components/monitor/WeatherPanel.jsx';
@@ -21,6 +18,8 @@ import {
   HISTORY_FILTERS,
   METRIC_DEFINITIONS,
 } from '../lib/monitorConfig';
+
+const KEY_FACTOR_KEYS = ['temperature', 'humidity', 'light', 'co2'];
 
 const toNumber = (value) => {
   const parsed = Number(value);
@@ -60,7 +59,6 @@ const average = (rows, key) => {
 
 const EnvMonitor = () => {
   const [historyWindow, setHistoryWindow] = useState('24h');
-  const [zoneMetric, setZoneMetric] = useState('temperature');
   const [actionMessage, setActionMessage] = useState('');
 
   const {
@@ -71,29 +69,24 @@ const EnvMonitor = () => {
     thresholds,
     alerts,
     notifications,
-    diagnostics,
-    controlState,
-    zones,
-    zoneComparison,
-    nodeStatuses,
+  diagnostics,
+  controlState,
+  zones,
+  zoneComparison,
+  nodeStatuses,
     predictions,
     forecastHorizon,
     healthScore,
     aiTip,
     aiInsights,
-    energyUsage,
-    maintenanceTasks,
-    dailyReport,
-    saveThresholdSettings,
-    saveNotificationSettings,
-    setControlMode,
-    setAutoRulesEnabled,
-    setDeviceState,
-    applyAutomaticRules,
-    markNotificationRead,
-    clearNotifications,
-    autoControlRecommendation,
-  } = useMonitorData();
+  energyUsage,
+  maintenanceTasks,
+  dailyReport,
+  saveThresholdSettings,
+  autoControlRecommendation,
+  markNotificationRead,
+  clearNotifications,
+} = useMonitorData();
 
   const {
     user,
@@ -101,7 +94,6 @@ const EnvMonitor = () => {
     capabilities: _capabilities,
   } = useAuthRole();
   const canEditSettings = true;
-  const canControlPanel = true;
 
   const { weather, weatherError } = useWeather({});
 
@@ -110,21 +102,35 @@ const EnvMonitor = () => {
     [historyWindow]
   );
 
-  const filteredHistory = useMemo(() => {
-    if (!selectedFilter.ms) return history;
-    const cutoff = Date.now() - selectedFilter.ms;
-    const rows = history.filter((row) => row.ts >= cutoff);
-    if (rows.length >= 6) return rows;
-    return history.slice(-Math.min(120, history.length));
-  }, [history, selectedFilter]);
+  const { filteredHistory, previousWindow } = useMemo(() => {
+    const historySource = history.length ? history : (latest ? [latest] : []);
+    if (!selectedFilter.ms) {
+      return {
+        filteredHistory: historySource,
+        previousWindow: historySource.slice(0, Math.max(0, historySource.length - 12)),
+      };
+    }
 
-  const previousWindow = useMemo(() => {
-    if (!selectedFilter.ms) return [];
     const now = Date.now();
-    const start = now - selectedFilter.ms;
-    const previousStart = start - selectedFilter.ms;
-    return history.filter((row) => row.ts >= previousStart && row.ts < start);
-  }, [history, selectedFilter]);
+    const cutoff = now - selectedFilter.ms;
+    const previousStart = cutoff - selectedFilter.ms;
+
+    const currentRows = historySource.filter((row) => row.ts >= cutoff);
+    let previousRows = historySource.filter((row) => row.ts >= previousStart && row.ts < cutoff);
+
+    const fallbackCount = Math.max(12, currentRows.length);
+    if (previousRows.length < 3 && historySource.length > currentRows.length) {
+      const end = Math.max(0, historySource.length - currentRows.length);
+      const start = Math.max(0, end - fallbackCount);
+      previousRows = historySource.slice(start, end);
+    }
+
+    const safeCurrent = currentRows.length >= 2
+      ? currentRows
+      : historySource.slice(-Math.min(120, historySource.length));
+
+    return { filteredHistory: safeCurrent, previousWindow: previousRows };
+  }, [history, latest, selectedFilter]);
 
   const comparisonSummary = useMemo(
     () => COMPARISON_METRIC_KEYS.map((key) => {
@@ -134,6 +140,11 @@ const EnvMonitor = () => {
       return { key, current, previous, delta };
     }),
     [filteredHistory, previousWindow]
+  );
+
+  const keyFactorSummary = useMemo(
+    () => comparisonSummary.filter((item) => KEY_FACTOR_KEYS.includes(item.key)),
+    [comparisonSummary]
   );
 
   const handleGenerateReport = () => {
@@ -426,71 +437,6 @@ const EnvMonitor = () => {
     }
   };
 
-  const saveEmailSettings = async (payload) => {
-    try {
-      if (!canEditSettings) {
-        setActionMessage('You do not have permission to update notification settings.');
-        return;
-      }
-      await saveNotificationSettings(payload);
-      setActionMessage('Email notification settings updated.');
-    } catch (error) {
-      setActionMessage(error?.message || 'Failed to save email settings.');
-    }
-  };
-
-  const updateControlMode = async (mode) => {
-    try {
-      if (!canControlPanel) {
-        setActionMessage('You do not have permission to change control mode.');
-        return;
-      }
-      await setControlMode(mode);
-      setActionMessage(`Control mode set to ${mode}.`);
-    } catch (error) {
-      setActionMessage(error?.message || 'Failed to update control mode.');
-    }
-  };
-
-  const toggleDevice = async (deviceKey, nextState) => {
-    try {
-      if (!canControlPanel) {
-        setActionMessage('You do not have permission to toggle devices.');
-        return;
-      }
-      await setDeviceState(deviceKey, nextState, role);
-      setActionMessage(`${deviceKey} turned ${nextState ? 'ON' : 'OFF'}.`);
-    } catch (error) {
-      setActionMessage(error?.message || 'Failed to update device state.');
-    }
-  };
-
-  const applyAutoRulesNow = async () => {
-    try {
-      if (!canControlPanel) {
-        setActionMessage('You do not have permission to apply automatic rules.');
-        return;
-      }
-      await applyAutomaticRules(role);
-      setActionMessage('Automatic control rules applied.');
-    } catch (error) {
-      setActionMessage(error?.message || 'Failed to apply auto rules.');
-    }
-  };
-
-  const toggleAutoRules = async (enabled) => {
-    try {
-      if (!canControlPanel) {
-        setActionMessage('You do not have permission to update automatic rules.');
-        return;
-      }
-      await setAutoRulesEnabled(enabled);
-      setActionMessage(`Automatic rules ${enabled ? 'enabled' : 'disabled'}.`);
-    } catch (error) {
-      setActionMessage(error?.message || 'Failed to update automation rule state.');
-    }
-  };
-
   const handleMarkNotification = async (id) => {
     try {
       if (String(id).startsWith('live-')) return;
@@ -508,7 +454,7 @@ const EnvMonitor = () => {
         <div>
           <h1 className="title-lg">Environmental Monitoring Dashboard</h1>
           <p className="page-description">
-            Real-time orchid analytics with threshold alerts, automation controls, zone comparisons, and predictive insights.
+            Real-time orchid analytics with threshold alerts, zone comparisons, and predictive insights.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -556,14 +502,11 @@ const EnvMonitor = () => {
           <section>
             <div className="mb-3 flex items-center justify-between gap-2">
               <h2 className="module-title">Real-Time Sensor Cards</h2>
-              <span className="text-xs text-subtle">Online nodes: {onlineNodes}/{nodeStatuses.length}</span>
             </div>
             <OverviewCards data={latest} lastUpdate={lastUpdate} thresholds={thresholds} />
           </section>
 
-          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <HealthGauge score={healthScore} />
-
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="dashboard-card p-5">
               <h3 className="mb-2 text-sm font-semibold text-dark">Automated Daily Report</h3>
               <p className="text-xs text-subtle">{dailyReport?.date || '--'}</p>
@@ -593,45 +536,68 @@ const EnvMonitor = () => {
             </div>
             <MonitorCharts
               history={filteredHistory}
-              previousWindow={previousWindow}
-              zoneComparison={zoneComparison}
-              zoneMetric={zoneMetric}
-              onZoneMetricChange={setZoneMetric}
             />
           </section>
 
-          <section className="space-y-4">
-            <div className="panel">
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="module-title">4-Sensor Limits & Control</h2>
-                <span className="text-xs text-subtle">Temperature, Humidity, Light, Air (CO2)</span>
-              </div>
+          <section className="panel">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="module-title">Key Factor Comparison</h2>
+              <span className="text-xs text-subtle">Window: {selectedFilter.label}</span>
             </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-border/70 text-left text-xs md:text-sm">
+                <thead className="text-subtle">
+                  <tr>
+                    <th className="py-2 pr-3 font-semibold">Factor</th>
+                    <th className="py-2 pr-3 font-semibold">Current Avg</th>
+                    <th className="py-2 pr-3 font-semibold">Previous Avg</th>
+                    <th className="py-2 pr-3 font-semibold">Change</th>
+                    <th className="py-2 font-semibold">Safe Range</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/50">
+                  {keyFactorSummary.map((item) => {
+                    const metric = METRIC_DEFINITIONS[item.key];
+                    const bounds = thresholds?.metrics?.[item.key];
+                    const deltaText = item.delta === null
+                      ? '--'
+                      : `${item.delta >= 0 ? '+' : ''}${item.delta.toFixed(metric.decimals)} ${metric.unit}`;
+                    const deltaClass = item.delta === null
+                      ? 'text-subtle'
+                      : item.delta >= 0
+                        ? 'text-amber-600 dark:text-amber-300'
+                        : 'text-emerald-600 dark:text-emerald-300';
+                    return (
+                      <tr key={item.key} className="align-middle">
+                        <td className="py-2 pr-3 font-semibold text-dark">{metric.label}</td>
+                        <td className="py-2 pr-3 text-dark">{formatMetric(item.current, item.key)}</td>
+                        <td className="py-2 pr-3 text-subtle">{formatMetric(item.previous, item.key)}</td>
+                        <td className={`py-2 pr-3 font-semibold ${deltaClass}`}>{deltaText}</td>
+                        <td className="py-2 text-subtle">
+                          {bounds
+                            ? `${bounds.min} to ${bounds.max} ${metric.unit}`
+                            : 'Not set'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {!keyFactorSummary.length && (
+                    <tr>
+                      <td className="py-3 text-subtle" colSpan={5}>
+                        Not enough data to compare the four environmental factors yet.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
+          <section className="space-y-4">
             <SafeRangesPanel
               thresholds={thresholds}
               canEdit={canEditSettings}
               onSave={saveThresholds}
-            />
-
-            <AutomationControlPanel
-              controlState={controlState}
-              recommendation={autoControlRecommendation}
-              canControl={canControlPanel}
-              onModeChange={updateControlMode}
-              onToggleDevice={toggleDevice}
-              onApplyAuto={applyAutoRulesNow}
-              onAutoRulesToggle={toggleAutoRules}
-            />
-
-            <ThresholdSettingsPanel
-              thresholds={thresholds}
-              canEdit={canEditSettings}
-              onSave={saveThresholds}
-              emailSettings={thresholds.notifications}
-              onSaveEmail={saveEmailSettings}
-              hideMetrics
-              title="Email Notifications"
             />
           </section>
 

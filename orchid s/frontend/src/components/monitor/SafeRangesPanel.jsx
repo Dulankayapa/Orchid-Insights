@@ -68,7 +68,6 @@ const NumberField = ({ label, unit, value, disabled, onChange }) => (
 const SafeRangesPanel = ({ thresholds, canEdit, onSave }) => {
   const [collapsed, setCollapsed] = useState(false);
   const [draft, setDraft] = useState(() => toDraft(thresholds));
-  const [status, setStatus] = useState('');
 
   useEffect(() => {
     const base = toDraft(thresholds);
@@ -116,14 +115,12 @@ const SafeRangesPanel = ({ thresholds, canEdit, onSave }) => {
 
     await onSave?.(payload);
     writeLocalDraft(draft);
-    setStatus('Saved locally (per browser)');
   };
 
   const handleReset = () => {
     const base = toDraft(thresholds);
     setDraft(base);
     clearLocalDraft();
-    setStatus('Reset to current Firebase values');
   };
 
   return (
@@ -162,7 +159,6 @@ const SafeRangesPanel = ({ thresholds, canEdit, onSave }) => {
               <button type="button" className="btn-soft" disabled={!canEdit} onClick={handleReset}>
                 Reset
               </button>
-              <p className="text-xs text-subtle">{status || 'Saved locally (per browser)'}</p>
             </div>
             <p className="mt-2 text-xs text-subtle">
               Tip: these ranges drive badges, alerts, and the safe band in charts.
