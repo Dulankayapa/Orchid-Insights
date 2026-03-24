@@ -4547,21 +4547,34 @@ function GrowthClusterPanel({ clusterResult }) {
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
-    const safeMaxX = maxX === minX ? maxX + 1 : maxX;
+    const xSpread = maxX - minX;
+    const minXWindowDays = 0.5;
+    const safeMinX = xSpread < minXWindowDays ? (minX + maxX) / 2 - minXWindowDays / 2 : minX;
+    const safeMaxX = xSpread < minXWindowDays ? (minX + maxX) / 2 + minXWindowDays / 2 : maxX;
     const safeMaxY = maxY === minY ? maxY + 1 : maxY;
     const safeMinY = minY === safeMaxY ? minY - 1 : Math.max(0, minY - 0.1 * (safeMaxY - minY));
 
-    const scaleX = (value) => padding.left + ((value - minX) / (safeMaxX - minX)) * innerW;
+    const scaleX = (value) => padding.left + ((value - safeMinX) / (safeMaxX - safeMinX)) * innerW;
     const scaleY = (value) => padding.top + ((safeMaxY - value) / (safeMaxY - safeMinY)) * innerH;
 
-    const xTicks = Array.from({ length: 5 }, (_, idx) => minX + ((safeMaxX - minX) * idx) / 4);
+    const xTicks = Array.from({ length: 5 }, (_, idx) => safeMinX + ((safeMaxX - safeMinX) * idx) / 4);
     const yTicks = Array.from({ length: 5 }, (_, idx) => safeMinY + ((safeMaxY - safeMinY) * idx) / 4);
 
-    const points = clusterResult.assignments.map((row) => ({
-      ...row,
-      cx: scaleX(row.days_since_planting),
-      cy: scaleY(row.height_cm),
-    }));
+    const shouldJitterX = xSpread < 0.35 && clusterResult.assignments.length > 1;
+    const jitterStepPx = shouldJitterX ? Math.max(6, Math.min(14, innerW * 0.015)) : 0;
+    const minCx = padding.left + 6;
+    const maxCx = width - padding.right - 6;
+
+    const points = clusterResult.assignments.map((row, idx, arr) => {
+      const baseCx = scaleX(row.days_since_planting);
+      const offset = shouldJitterX ? (idx - (arr.length - 1) / 2) * jitterStepPx : 0;
+      const cx = Math.max(minCx, Math.min(maxCx, baseCx + offset));
+      return {
+        ...row,
+        cx,
+        cy: scaleY(row.height_cm),
+      };
+    });
 
     return { width, height, padding, xTicks, yTicks, points, scaleX, scaleY };
   }, [clusterResult]);
@@ -4739,6 +4752,14 @@ function GrowthClusterPanel({ clusterResult }) {
             ) : (
               <EmptyState message="Not enough cluster points to render scatter plot." />
             )}
+            {clusterHelp ? (
+              <p className="mt-2 px-1 text-[11px] leading-relaxed text-subtle">
+                Chart note: X-axis is days since planting (current spread: {clusterHelp.daySpread.toFixed(1)} days).{" "}
+                {clusterHelp.daySpread < 0.35
+                  ? "Points are slightly offset left/right for readability when day values are nearly identical."
+                  : "Point spacing on the X-axis reflects actual day differences between jars."}
+              </p>
+            ) : null}
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
