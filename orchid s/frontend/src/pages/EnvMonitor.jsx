@@ -123,6 +123,14 @@ const EnvMonitor = () => {
     return history.filter((row) => row.ts >= previousStart && row.ts < start);
   }, [history, selectedFilter]);
 
+  const previousAverages = useMemo(() => {
+    const map = {};
+    ['temperature', 'humidity', 'light', 'co2'].forEach((key) => {
+      map[key] = average(previousWindow, key);
+    });
+    return map;
+  }, [previousWindow]);
+
   const comparisonSummary = useMemo(
     () => COMPARISON_METRIC_KEYS.map((key) => {
       const current = average(filteredHistory, key);
@@ -138,6 +146,7 @@ const EnvMonitor = () => {
     return keys.map((key) => {
       const metric = METRIC_DEFINITIONS[key];
       const value = latest?.[key];
+      const prev = previousAverages[key];
       const bounds = thresholds?.metrics?.[key];
       const min = bounds?.min;
       const max = bounds?.max;
@@ -151,12 +160,13 @@ const EnvMonitor = () => {
         key,
         label: metric?.label || key,
         value,
+        previous: prev,
         min,
         max,
         state,
       };
     });
-  }, [latest, thresholds]);
+  }, [latest, thresholds, previousAverages]);
 
   const handleGenerateReport = () => {
     const doc = new jsPDF();
@@ -593,6 +603,7 @@ const EnvMonitor = () => {
                 <thead>
                   <tr className="text-left text-subtle">
                     <th className="pb-2 pr-4 font-semibold">Factor</th>
+                    <th className="pb-2 pr-4 font-semibold">Previous</th>
                     <th className="pb-2 pr-4 font-semibold">Current</th>
                     <th className="pb-2 pr-4 font-semibold">Min</th>
                     <th className="pb-2 pr-4 font-semibold">Max</th>
@@ -611,6 +622,7 @@ const EnvMonitor = () => {
                     return (
                       <tr key={item.key} className="align-top">
                         <td className="py-2 pr-4 font-semibold text-dark">{item.label}</td>
+                        <td className="py-2 pr-4 text-dark">{formatMetric(item.previous, item.key)}</td>
                         <td className="py-2 pr-4 text-dark">{formatted}</td>
                         <td className="py-2 pr-4 text-subtle">{metric ? formatNumber(item.min ?? null, metric.decimals ?? 1) : '--'}</td>
                         <td className="py-2 pr-4 text-subtle">{metric ? formatNumber(item.max ?? null, metric.decimals ?? 1) : '--'}</td>
