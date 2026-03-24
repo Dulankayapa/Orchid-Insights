@@ -322,29 +322,6 @@ const calculateAgeDaysFromIso = (isoDate) => {
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 };
 
-const latestHeightFromHistory = (rows) => {
-  if (!rows || !rows.length) return null;
-  const enriched = rows
-    .map((row) => {
-      const ts = coerceTimestamp(row.timestamp ?? row.ts) ?? (row.date ? Date.parse(row.date) : null);
-      return { row, ts: Number.isFinite(ts) ? ts : null };
-    })
-    .filter((item) => item.ts !== null);
-
-  if (enriched.length) {
-    enriched.sort((a, b) => b.ts - a.ts);
-    return sanitizeHeightMm(enriched[0]?.row?.height_mm ?? enriched[0]?.row?.height);
-  }
-
-  return sanitizeHeightMm(rows[0]?.height_mm ?? rows[0]?.height);
-};
-
-const resolveCurrentHeight = (plant) => {
-  const fromHistory = latestHeightFromHistory(plant?.heights || []);
-  if (fromHistory !== null) return fromHistory;
-  return sanitizeHeightMm(plant?.height_mm ?? plant?.height ?? plant?.current_height);
-};
-
 const normalizeJarIdInput = (value) => {
   const next = (value || "").trimStart();
   if (!next) return value || "";
@@ -826,6 +803,7 @@ export default function GrowthTracker() {
     }
     const jarKey = canonicalJarKey(activeJarId);
     if (!jarKey) return undefined;
+    setJarLive(null);
 
     const jarRef = ref(db, jarKey);
     const off = onValue(
@@ -840,14 +818,6 @@ export default function GrowthTracker() {
     return () => off();
   }, [activeJarId]);
 
-  // Autofill the current height field from the latest live sensor reading when a Jar is selected.
-  useEffect(() => {
-    if (!activeJarId) return;
-    const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
-    if (liveHeight === null) return;
-    setCurrentHeight(String(liveHeight));
-  }, [activeJarId, sensorLatest, jarLive]);
-
   useEffect(() => {
     lastHeightLoggedRef.current = { ts: 0, height: null };
   }, [activeCanonicalId]);
@@ -855,7 +825,7 @@ export default function GrowthTracker() {
   // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
   useEffect(() => {
     setHeightLogError("");
-    const liveSource = jarLive || sensorLatest;
+    const liveSource = activeJarId ? jarLive : sensorLatest;
     if (!liveSource) return;
 
     const liveHeight = sanitizeHeightMm(liveSource.height_mm ?? liveSource.height);
@@ -933,15 +903,6 @@ export default function GrowthTracker() {
     if (!timestamps.length) return null;
     return Math.min(...timestamps);
   }, [sensorHistory]);
-  const latestSensorHistoryHeight = useMemo(() => {
-    const row = (sensorHistory || []).find((entry) => {
-      const height = sanitizeHeightMm(entry?.height_mm ?? entry?.height);
-      return height !== null && height !== undefined;
-    });
-    if (!row) return null;
-    return sanitizeHeightMm(row.height_mm ?? row.height);
-  }, [sensorHistory]);
-
   const resolvedPlantingInfo = useMemo(() => {
     if (!activeJarId) return { date: "", source: "" };
 
@@ -1005,21 +966,35 @@ export default function GrowthTracker() {
       setPlantingDate(normalizedPlanting);
     }
     setAgeSourceLabel(resolvedPlantingInfo.source || "");
-
-    const latestHeight = resolveCurrentHeight(plantRecord);
-    if (latestHeight !== undefined && latestHeight !== null) {
-      setCurrentHeight(String(latestHeight));
-    }
   }, [activeJarId, plantRecord, plantingDate, resolvedPlantingInfo]);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const clearAnalysisState = () => {
     setError("");
     setResult(null);
     setAnalyzedJarId("");
     setAnalyzedHeight(null);
     setAnalysisSaveStatus("");
     setAnalysisSaveError("");
+  };
+
+  const handleNewHeight = () => {
+    clearAnalysisState();
+    setCurrentHeight("");
+  };
+
+  useEffect(() => {
+    setCurrentHeight("");
+    setError("");
+    setResult(null);
+    setAnalyzedJarId("");
+    setAnalyzedHeight(null);
+    setAnalysisSaveStatus("");
+    setAnalysisSaveError("");
+  }, [activeJarId]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    clearAnalysisState();
 
     if (!activeCanonicalId) {
       setError("Enter a Jar/Plant ID before analysis so the result can be saved to the plant database.");
@@ -1033,7 +1008,7 @@ export default function GrowthTracker() {
     }
 
     if (!currentHeight) {
-      setError("Current height must come from plant record/live stream/growth history. Choose a Jar/Plant ID that has height logs.");
+      setError("Current height must come from live sensor stream. Wait for a fresh reading for this Jar/Plant ID.");
       return;
     }
 
@@ -1110,8 +1085,8 @@ export default function GrowthTracker() {
     return "border-border/45 bg-paper/70 text-subtle";
   }, [displayLabel]);
 
-  const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
-  const liveTimestamp = jarLive?.timestamp ?? sensorLatest?.timestamp ?? null;
+  const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height);
+  const liveTimestamp = jarLive?.timestamp ?? null;
 
   const heightPoints = useMemo(() => {
     const pts = [];
@@ -1127,7 +1102,7 @@ export default function GrowthTracker() {
       const h = sanitizeHeightMm(row.height_mm ?? row.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
     });
-    const latestPoint = jarLive || sensorLatest;
+    const latestPoint = activeJarId ? jarLive : sensorLatest;
     if (latestPoint) {
       const ts = Number(latestPoint.timestamp);
       const h = sanitizeHeightMm(latestPoint.height_mm ?? latestPoint.height);
@@ -1135,7 +1110,7 @@ export default function GrowthTracker() {
     }
     pts.sort((a, b) => a.x - b.x);
     return pts.slice(-120); // keep last 120 points
-  }, [plantRecord, sensorHistory, sensorLatest, jarLive]);
+  }, [plantRecord, sensorHistory, sensorLatest, jarLive, activeJarId]);
 
   // Listen directly to Firebase plants/{id} for real-time planting date/height updates
   useEffect(() => {
@@ -1154,29 +1129,17 @@ export default function GrowthTracker() {
             ""
         );
         if (planted) setPlantingDate(planted);
-        const h = sanitizeHeightMm(val.height_mm ?? val.height ?? val.current_height);
-        if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
-          setCurrentHeight(String(h));
-        }
       },
       (err) => setPlantFetchError(err?.message || "Failed to read plant record from Firebase")
     );
     return () => off();
-  }, [activeCanonicalId, liveHeight]);
+  }, [activeCanonicalId]);
 
   useEffect(() => {
     if (liveHeight !== null && liveHeight !== undefined) {
       setCurrentHeight(String(liveHeight));
     }
   }, [liveHeight]);
-
-  // If live node is unavailable, fall back to the latest value from growth history for the entered Jar/Plant ID.
-  useEffect(() => {
-    if (!activeJarId) return;
-    if (liveHeight !== null && liveHeight !== undefined) return;
-    if (latestSensorHistoryHeight === null || latestSensorHistoryHeight === undefined) return;
-    setCurrentHeight(String(latestSensorHistoryHeight));
-  }, [activeJarId, liveHeight, latestSensorHistoryHeight]);
 
   return (
     <div className="space-y-8">
@@ -1185,6 +1148,7 @@ export default function GrowthTracker() {
         <div className="lg:col-span-2 space-y-4">
           <FormCard
             onSubmit={submit}
+            onNewHeight={handleNewHeight}
             jarId={jarId}
             activeJarId={activeJarId}
             enteredJarCount={enteredJarIds.length}
@@ -1274,6 +1238,7 @@ function Hero() {
 
 function FormCard({
   onSubmit,
+  onNewHeight,
   jarId,
   activeJarId,
   enteredJarCount,
@@ -1347,7 +1312,7 @@ function FormCard({
               placeholder={
                 liveHeight !== null && liveHeight !== undefined
                   ? `Live: ${liveHeight} mm`
-                  : "Auto-filled from plant record or growth history"
+                  : "Waiting for live sensor reading"
               }
               className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
             />
@@ -1389,7 +1354,7 @@ function FormCard({
       )}
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
+          No record found for "{jarId}". Planting date and age come from database factors, and height waits for a live sensor reading. Try {demoIdHint || "a known ID"}.
         </p>
       )}
       {cultureRecord && (
@@ -1440,7 +1405,7 @@ function FormCard({
       <p className="text-xs text-slate-600">Today: {today}</p>
       {plantRecord && (
         <p className="text-xs text-teal-800 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">
-          Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
+          Planting date and age auto-filled from DB for {plantRecord.id}. Height comes from live sensor only.
         </p>
       )}
 
@@ -1450,19 +1415,29 @@ function FormCard({
         <p className="sm:col-span-2">Live height readings auto-fill when the sensor streams and are logged to Firebase instantly.</p>
       </div>
 
-      <button
-        type="submit"
-        disabled={loading}
-        className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        {loading ? (
-          <span className="flex items-center gap-2">
-            <Spinner /> Analyzing...
-          </span>
-        ) : (
-          "Analyze growth"
-        )}
-      </button>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={onNewHeight}
+          disabled={loading}
+          className="btn-soft w-full disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          New height
+        </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <Spinner /> Analyzing...
+            </span>
+          ) : (
+            "Analyze growth"
+          )}
+        </button>
+      </div>
 
       <AnimatePresence>
         {error && (

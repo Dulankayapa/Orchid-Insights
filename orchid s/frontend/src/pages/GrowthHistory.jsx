@@ -3734,8 +3734,8 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
       <div className="flex items-start justify-between">
         <div>
           <p className="kicker">Rack filter</p>
-          <h3 className="text-lg font-semibold text-dark">Plot all jars on a rack</h3>
-          <p className="text-sm text-subtle">Search by rack label to see every jar’s height line in one chart below.</p>
+          <h3 className="text-lg font-semibold text-dark">Find relevant jar on a rack</h3>
+          <p className="text-sm text-subtle">Search by rack label, then pick one jar to display as a single line chart.</p>
         </div>
         <span className="text-xs text-subtle">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
       </div>
@@ -3792,6 +3792,7 @@ function RackPairComparison({ combinedRecords }) {
   const rackOptions = useMemo(() => Array.from(rackMap.keys()).sort(), [rackMap]);
   const [leftRack, setLeftRack] = useState("");
   const [rightRack, setRightRack] = useState("");
+  const [hideComparison, setHideComparison] = useState(false);
 
   useEffect(() => {
     if (!rackOptions.length) {
@@ -3847,10 +3848,19 @@ function RackPairComparison({ combinedRecords }) {
             Analyze normal vs special nutrition for the same orchid type, and type differences under the same nutrition mode.
           </p>
         </div>
-        <span className="text-xs text-subtle">{rackOptions.length ? `${rackOptions.length} racks available` : "No rack data"}</span>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-subtle">{rackOptions.length ? `${rackOptions.length} racks available` : "No rack data"}</span>
+          <button
+            type="button"
+            onClick={() => setHideComparison((prev) => !prev)}
+            className="rounded-md border border-border/45 px-2 py-1 text-[11px] text-subtle transition hover:border-primary/50 hover:text-primary"
+          >
+            {hideComparison ? "Show" : "Hide"}
+          </button>
+        </div>
       </div>
 
-      {rackOptions.length ? (
+      {!hideComparison && rackOptions.length ? (
         <>
           <div className="grid sm:grid-cols-2 gap-3">
             <label className="panel-muted px-3 py-2 text-xs text-subtle space-y-1">
@@ -3911,8 +3921,10 @@ function RackPairComparison({ combinedRecords }) {
             </div>
           ) : null}
         </>
-      ) : (
+      ) : !hideComparison ? (
         <EmptyState message="Rack comparison will appear once rack records are available." />
+      ) : (
+        <p className="text-xs text-subtle">Comparison section is hidden.</p>
       )}
     </motion.div>
   );
@@ -4035,7 +4047,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
         responsive: true,
         maintainAspectRatio: false,
         parsing: false,
-        interaction: { mode: "index", intersect: false },
+        interaction: { mode: "nearest", intersect: false },
         layout: {
           padding: { right: 140 },
         },
@@ -4066,6 +4078,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
             },
           },
           tooltip: {
+            mode: "nearest",
+            intersect: false,
             callbacks: {
               title: (items) => {
                 const ts = items[0]?.parsed?.x;
@@ -4155,12 +4169,34 @@ function RackChart({
   reportInsightText,
   includeInsight,
 }) {
+  const ALL_RACK_JARS_ID = "__ALL_RACK_JARS__";
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const [selectedRackJarId, setSelectedRackJarId] = useState(ALL_RACK_JARS_ID);
   const categoryScenarioPlan = useMemo(
     () => buildRackCategoryScenarioPlan(rackPlants, rackCategoryStats),
     [rackPlants, rackCategoryStats]
   );
+
+  useEffect(() => {
+    if (!rackQuery || !rackStats?.length) {
+      setSelectedRackJarId(ALL_RACK_JARS_ID);
+      return;
+    }
+    if (selectedRackJarId === ALL_RACK_JARS_ID) return;
+    const normalizedSelected = normalizeId(selectedRackJarId);
+    const selectedStillExists = rackStats.some((item) => normalizeId(item?.id) === normalizedSelected);
+    if (selectedStillExists) return;
+
+    setSelectedRackJarId(ALL_RACK_JARS_ID);
+  }, [rackQuery, rackStats, selectedRackJarId, ALL_RACK_JARS_ID]);
+
+  const selectedRackPlant = useMemo(() => {
+    if (selectedRackJarId === ALL_RACK_JARS_ID) return null;
+    const target = normalizeId(selectedRackJarId);
+    if (!target) return null;
+    return rackPlants.find((plant) => normalizeId(plant?.id) === target) || null;
+  }, [rackPlants, selectedRackJarId, ALL_RACK_JARS_ID]);
 
   const handleReport = () => {
     if (!rackStats?.length || !rackQuery) return;
@@ -4211,8 +4247,9 @@ function RackChart({
     const palette = ["#0f172a", "#dc2626", "#2563eb", "#16a34a", "#d97706", "#9333ea", "#0ea5e9", "#e11d48"];
     const dashPatterns = [[], [10, 6], [3, 5], [14, 4, 3, 4], [2, 4], [8, 4]];
     const pointStyles = ["circle", "rectRot", "triangle", "rectRounded", "crossRot", "star"];
+    const plantsForChart = selectedRackJarId === ALL_RACK_JARS_ID ? rackPlants : selectedRackPlant ? [selectedRackPlant] : [];
 
-    const mainSeries = rackPlants
+    const mainSeries = plantsForChart
       .map((plant, idx) => {
         const plantingTs = toPlantingTimestamp(plant?.planting_date);
         const sorted = (plant.heights || [])
@@ -4246,68 +4283,10 @@ function RackChart({
       })
       .filter(Boolean);
 
-    if (mainSeries.length <= 1) return mainSeries;
+    return mainSeries;
+  }, [rackPlants, selectedRackPlant, selectedRackJarId, ALL_RACK_JARS_ID]);
 
-    const baseline = mainSeries[0];
-    const baselineMap = new Map(
-      (baseline.data || [])
-        .map((point) => [Number(point.x), Number(point.y)])
-        .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
-    );
-
-    const deltaSeries = mainSeries
-      .slice(1)
-      .map((series) => {
-        const deltaData = (series.data || [])
-          .map((point) => {
-            const x = Number(point.x);
-            const y = Number(point.y);
-            const baseY = baselineMap.get(x);
-            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(baseY)) return null;
-            return { x, y: Number((y - baseY).toFixed(2)) };
-          })
-          .filter(Boolean);
-
-        if (deltaData.length < 2) return null;
-        return {
-          label: `Δ ${series.label} vs ${baseline.label}`,
-          data: deltaData,
-          borderColor: series.borderColor,
-          borderDash: [3, 6],
-          borderWidth: 1.8,
-          pointRadius: 0,
-          tension: 0.28,
-          cubicInterpolationMode: "monotone",
-          fill: false,
-          yAxisID: "yDelta",
-          order: 1,
-          sourceJarId: series.sourceJarId,
-          sourcePlantingTs: series.sourcePlantingTs,
-        };
-      })
-      .filter(Boolean);
-
-    return [...mainSeries, ...deltaSeries];
-  }, [rackPlants]);
-
-  const deltaMaxAbs = useMemo(() => {
-    const absValues = datasets
-      .filter((dataset) => dataset.yAxisID === "yDelta")
-      .flatMap((dataset) => (dataset.data || []).map((point) => Math.abs(Number(point.y))))
-      .filter((value) => Number.isFinite(value));
-    if (!absValues.length) return 5;
-    const maxVal = Math.max(...absValues, 1);
-    return Math.ceil((maxVal + 0.5) / 1) * 1;
-  }, [datasets]);
-  const jarLineCount = useMemo(
-    () => datasets.filter((dataset) => dataset.yAxisID !== "yDelta").length,
-    [datasets]
-  );
-  const deltaLineCount = useMemo(
-    () => datasets.filter((dataset) => dataset.yAxisID === "yDelta").length,
-    [datasets]
-  );
-  const hasDelta = useMemo(() => deltaLineCount > 0, [deltaLineCount]);
+  const jarLineCount = useMemo(() => datasets.length, [datasets]);
 
   useEffect(() => {
     if (chartRef.current) {
@@ -4339,21 +4318,6 @@ function RackChart({
             ticks: { color: theme.ticks },
             title: { display: true, text: "Height (mm)", color: theme.axis },
           },
-          ...(hasDelta
-            ? {
-                yDelta: {
-                  position: "right",
-                  min: -deltaMaxAbs,
-                  max: deltaMaxAbs,
-                  grid: { drawOnChartArea: false, color: "rgba(148,163,184,0.15)" },
-                  ticks: {
-                    color: theme.ticks,
-                    callback: (value) => `${Number(value).toFixed(1)}`,
-                  },
-                  title: { display: true, text: "Delta vs baseline (mm)", color: theme.axis },
-                },
-              }
-            : {}),
         },
         plugins: {
           legend: {
@@ -4372,7 +4336,8 @@ function RackChart({
             haloColor: isLight ? "rgba(255,255,255,0.95)" : "rgba(15,23,42,0.85)",
           },
           tooltip: {
-            mode: "index",
+            mode: "nearest",
+            intersect: false,
             callbacks: {
               title: (items) => {
                 const ts = items[0]?.parsed?.x;
@@ -4382,9 +4347,6 @@ function RackChart({
                 const value = Number(ctx.parsed.y);
                 const ageDays = computeAgeDaysAt(ctx.dataset?.sourcePlantingTs, ctx.parsed?.x);
                 const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
-                if (ctx.dataset.yAxisID === "yDelta") {
-                  return `${ctx.dataset.label}: ${value >= 0 ? "+" : ""}${value.toFixed(2)} mm${ageText}`;
-                }
                 return `${ctx.dataset.label}: ${value.toFixed(1)} mm${ageText}`;
               },
             },
@@ -4396,7 +4358,7 @@ function RackChart({
     return () => {
       chartRef.current?.destroy();
     };
-  }, [datasets, isLight, deltaMaxAbs]);
+  }, [datasets, isLight]);
 
   return (
     <motion.div
@@ -4410,13 +4372,15 @@ function RackChart({
           <p className="kicker">Rack summary</p>
           <h3 className="text-xl font-semibold text-dark">Growth by rack</h3>
           <p className="text-sm text-subtle">
-            Solid lines show jar heights. Dashed lines show differences vs the first jar. Category cards summarize growth change and actions.
+            Keep "All jars" selected to view every line, or pick one jar below to focus on only that jar.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">
             {jarLineCount
-              ? `${jarLineCount} jar${jarLineCount > 1 ? "s" : ""}${deltaLineCount ? ` + ${deltaLineCount} delta line${deltaLineCount > 1 ? "s" : ""}` : ""}`
+              ? selectedRackJarId === ALL_RACK_JARS_ID
+                ? `Showing all jars (${jarLineCount} lines)`
+                : `Showing ${selectedRackJarId || datasets[0]?.label || "1 jar"}`
               : rackQuery
                 ? "No matches"
                 : "Waiting"}
@@ -4489,11 +4453,35 @@ function RackChart({
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs text-subtle">Average height per jar</p>
-            <span className="text-[11px] text-subtle">Best/Worst marked</span>
+            <span className="text-[11px] text-subtle">Choose All jars or click a jar to plot one line</span>
           </div>
           <div className="grid sm:grid-cols-2 gap-2 max-h-40 overflow-auto pr-1">
+            <button
+              type="button"
+              onClick={() => setSelectedRackJarId(ALL_RACK_JARS_ID)}
+              className={`w-full rounded-xl border px-3 py-2 text-left text-xs text-dark transition ${
+                selectedRackJarId === ALL_RACK_JARS_ID
+                  ? "border-primary/55 bg-primary/10 shadow-[0_0_0_1px_rgba(20,184,166,0.25)]"
+                  : "border-border/45 bg-paper/80 hover:border-primary/35"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">All jars</span>
+                <span className="text-[11px] text-subtle">{rackStats.length} lines</span>
+              </div>
+              <p className="text-[11px] text-subtle mt-1">Display all jars in this rack on the same chart.</p>
+            </button>
             {(rackStats || []).map((item) => (
-              <div key={item.id} className="rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-xs text-dark">
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => setSelectedRackJarId(item.id)}
+                className={`w-full rounded-xl border px-3 py-2 text-left text-xs text-dark transition ${
+                  normalizeId(item.id) === normalizeId(selectedRackJarId)
+                    ? "border-primary/55 bg-primary/10 shadow-[0_0_0_1px_rgba(20,184,166,0.25)]"
+                    : "border-border/45 bg-paper/80 hover:border-primary/35"
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold">{item.id}</span>
                   {item.rank && (
@@ -4512,7 +4500,7 @@ function RackChart({
                   Avg: {item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a"} | Age:{" "}
                   {item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a"} | {item.count} pts
                 </p>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -4973,3 +4961,4 @@ function formatDate(ts) {
     return "-";
   }
 }
+

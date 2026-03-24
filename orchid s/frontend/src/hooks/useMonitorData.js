@@ -48,6 +48,18 @@ const toTimestampMs = (value) => {
   return ts < 10000000000 ? ts * 1000 : ts;
 };
 
+const extractExplicitTimestampMs = (payload) => {
+  if (!isObject(payload)) return null;
+  return toTimestampMs(
+    payload.timestamp
+    ?? payload.ts
+    ?? payload.lastSeen
+    ?? payload.last_seen
+    ?? payload.updatedAt
+    ?? payload.updated_at
+  );
+};
+
 const deepMerge = (...objects) => {
   const output = {};
 
@@ -79,20 +91,14 @@ const pickMetricValue = (row, aliases = []) => {
 const normalizeSensor = (payload, fallback = {}) => {
   if (!isObject(payload)) return null;
 
-  const timestamp = toTimestampMs(
-    payload.timestamp
-    ?? payload.ts
-    ?? payload.lastSeen
-    ?? payload.last_seen
-    ?? payload.updatedAt
-    ?? payload.updated_at
-    ?? Date.now()
-  ) ?? Date.now();
+  const explicitTimestamp = extractExplicitTimestampMs(payload);
+  const timestamp = explicitTimestamp ?? Date.now();
 
   const normalized = {
     ...payload,
     timestamp,
     ts: timestamp,
+    hasExplicitTimestamp: explicitTimestamp !== null,
     nodeId: String(
       payload.nodeId
       ?? payload.node
@@ -388,6 +394,7 @@ export const useMonitorData = (settingsOverride = null) => {
   const [energyPayload, setEnergyPayload] = useState([]);
   const [lastUpdate, setLastUpdate] = useState(null);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
+  const [firebaseConnected, setFirebaseConnected] = useState(false);
 
   const publishedAlertIdsRef = useRef(new Set());
   const persistedReportRef = useRef('');
@@ -502,7 +509,7 @@ export const useMonitorData = (settingsOverride = null) => {
         ?? value.timestamp
         ?? value.ts
         ?? value.updatedAt
-        ?? normalizedLatest?.ts,
+        ?? (normalizedLatest?.hasExplicitTimestamp ? normalizedLatest.ts : null),
       );
       const status = (lastSeen !== null && (now - lastSeen) <= ((thresholds.offlineSeconds ?? DEFAULT_THRESHOLDS.offlineSeconds) * 1000))
         ? 'online'
@@ -527,8 +534,8 @@ export const useMonitorData = (settingsOverride = null) => {
       }, {});
 
       Object.entries(grouped).forEach(([nodeId, row]) => {
-        const lastSeen = row.ts;
-        const status = (now - lastSeen) <= ((thresholds.offlineSeconds ?? DEFAULT_THRESHOLDS.offlineSeconds) * 1000)
+        const lastSeen = row?.hasExplicitTimestamp ? row.ts : null;
+        const status = (lastSeen !== null && (now - lastSeen) <= ((thresholds.offlineSeconds ?? DEFAULT_THRESHOLDS.offlineSeconds) * 1000))
           ? 'online'
           : 'offline';
 
@@ -923,7 +930,7 @@ export const useMonitorData = (settingsOverride = null) => {
     const connectedRef = ref(db, '.info/connected');
     const unConnected = onValue(connectedRef, (snapshot) => {
       const connected = Boolean(snapshot.val());
-      setConnectionStatus(connected ? 'connected' : 'offline');
+      setFirebaseConnected(connected);
     });
 
     const latestRef = ref(db, 'orchidData/latest');
@@ -933,7 +940,7 @@ export const useMonitorData = (settingsOverride = null) => {
       const normalized = normalizeSensor(candidate ?? value);
       if (!normalized) return;
       setLatest(normalized);
-      setLastUpdate(Date.now());
+      setLastUpdate(normalized.hasExplicitTimestamp ? normalized.ts : null);
       setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
     });
 
@@ -1021,7 +1028,7 @@ export const useMonitorData = (settingsOverride = null) => {
             const prevTs = toTimestampMs(prev?.ts ?? prev?.timestamp) ?? 0;
             return normalized.ts >= prevTs ? normalized : prev;
           });
-          setLastUpdate(Date.now());
+          setLastUpdate(normalized.hasExplicitTimestamp ? normalized.ts : null);
           setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
           break;
         }
@@ -1038,16 +1045,37 @@ export const useMonitorData = (settingsOverride = null) => {
 
   useEffect(() => {
     const staleSec = thresholds.staleSeconds ?? DEFAULT_THRESHOLDS.staleSeconds;
+    const offlineSec = thresholds.offlineSeconds ?? DEFAULT_THRESHOLDS.offlineSeconds;
 
-    const timer = setInterval(() => {
-      if (!lastUpdate) return;
-      const stale = (Date.now() - lastUpdate) > (staleSec * 1000);
-      if (stale) setConnectionStatus('stale');
-      if (!stale && connectionStatus === 'stale') setConnectionStatus('connected');
-    }, 1000);
+    const updateStatus = () => {
+      if (!firebaseConnected) {
+        setConnectionStatus('offline');
+        return;
+      }
+
+      const hasSensorTimestamp = Boolean(
+        latestSnapshot?.hasExplicitTimestamp && Number.isFinite(latestSnapshot?.ts)
+      );
+      if (!hasSensorTimestamp) {
+        setConnectionStatus('offline');
+        return;
+      }
+
+      const ageSec = (Date.now() - latestSnapshot.ts) / 1000;
+      if (ageSec <= staleSec) {
+        setConnectionStatus('connected');
+      } else if (ageSec <= offlineSec) {
+        setConnectionStatus('stale');
+      } else {
+        setConnectionStatus('offline');
+      }
+    };
+
+    updateStatus();
+    const timer = setInterval(updateStatus, 1000);
 
     return () => clearInterval(timer);
-  }, [thresholds.staleSeconds, lastUpdate, connectionStatus]);
+  }, [thresholds.staleSeconds, thresholds.offlineSeconds, latestSnapshot, firebaseConnected]);
 
   useEffect(() => {
     if (!alerts.length) return;
@@ -1253,8 +1281,13 @@ export const useMonitorData = (settingsOverride = null) => {
     return { suggested, confidence };
   }, [latestSnapshot, thresholds, predictions, healthScore]);
 
+  const liveLatestSnapshot = useMemo(
+    () => (connectionStatus === 'connected' ? latestSnapshot : null),
+    [connectionStatus, latestSnapshot],
+  );
+
   return {
-    latest: latestSnapshot,
+    latest: liveLatestSnapshot,
     history: normalizedHistory,
     growthLogs,
     connectionStatus,
