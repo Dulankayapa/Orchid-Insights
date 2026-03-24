@@ -10,6 +10,7 @@ import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
 import OrchidCompanion from "./pages/OrchidCompanion.jsx";
+import OrchidAIBot from "./components/monitor/OrchidAIBot.jsx";
 import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
@@ -132,6 +133,10 @@ export default function App() {
                 </NavLink>
               ))}
             </nav>
+
+            <div className="mt-4">
+              <OrchidAIBot compact />
+            </div>
 
             <div className="mt-4">
               <SidebarOrchidBloom />

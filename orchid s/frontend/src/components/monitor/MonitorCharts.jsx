@@ -6,19 +6,21 @@ import {
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
   TimeScale,
   Filler,
 } from 'chart.js';
-import { Line } from 'react-chartjs-2';
+import { Line, Bar } from 'react-chartjs-2';
 
 ChartJS.register(
   CategoryScale,
   LinearScale,
   PointElement,
   LineElement,
+  BarElement,
   Title,
   Tooltip,
   Legend,
@@ -65,6 +67,14 @@ const METRIC_CONFIG = {
   },
 };
 
+const ZONE_METRIC_OPTIONS = [
+  { value: 'temperature', label: 'Temperature', unit: 'C' },
+  { value: 'humidity', label: 'Humidity', unit: '%' },
+  { value: 'light', label: 'Light', unit: 'lx' },
+  { value: 'co2', label: 'CO2/MQ135', unit: 'ppm' },
+  { value: 'ph', label: 'pH', unit: '' },
+];
+
 const toNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -90,6 +100,12 @@ const normalizeRows = (rows = []) => (
     .filter((row) => row.ts !== null)
     .sort((a, b) => a.ts - b.ts)
 );
+
+const average = (rows, key) => {
+  const values = rows.map((row) => toNumber(row?.[key])).filter((value) => value !== null);
+  if (!values.length) return null;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+};
 
 const buildTrendData = (points, key) => {
   const metric = METRIC_CONFIG[key];
@@ -146,8 +162,14 @@ const lineOptions = {
 
 const MonitorCharts = ({
   history = [],
+  previousWindow = [],
+  zoneComparison = [],
+  zoneMetric = 'temperature',
+  onZoneMetricChange,
 }) => {
   const points = useMemo(() => normalizeRows(history).slice(-240), [history]);
+  const previousPoints = useMemo(() => normalizeRows(previousWindow).slice(-240), [previousWindow]);
+  const latestPoint = points[points.length - 1] ?? null;
 
   const trendDatasets = useMemo(() => ({
     temperature: buildTrendData(points, 'temperature'),
@@ -155,6 +177,97 @@ const MonitorCharts = ({
     light: buildTrendData(points, 'light'),
     air: buildTrendData(points, 'air'),
   }), [points]);
+
+  const metricSnapshots = useMemo(
+    () => Object.entries(METRIC_CONFIG).map(([key, config]) => {
+      const current = latestPoint?.[key] ?? null;
+      const avgCurrent = average(points, key);
+      const avgPrevious = average(previousPoints, key);
+      const deltaPercent = (
+        avgCurrent !== null
+        && avgPrevious !== null
+        && Math.abs(avgPrevious) > 1e-6
+      )
+        ? ((avgCurrent - avgPrevious) / Math.abs(avgPrevious)) * 100
+        : null;
+      return { key, config, current, avgCurrent, avgPrevious, deltaPercent };
+    }),
+    [latestPoint, points, previousPoints],
+  );
+
+  const changeBarData = useMemo(() => ({
+    labels: metricSnapshots.map((item) => item.config.label),
+    datasets: [
+      {
+        label: 'Change vs previous window (%)',
+        data: metricSnapshots.map((item) => (
+          item.deltaPercent === null ? 0 : Number(item.deltaPercent.toFixed(2))
+        )),
+        backgroundColor: metricSnapshots.map((item) => (
+          item.deltaPercent === null ? 'rgba(148,163,184,0.45)' : (item.deltaPercent >= 0 ? 'rgba(16,185,129,0.65)' : 'rgba(239,68,68,0.65)')
+        )),
+        borderColor: metricSnapshots.map((item) => (
+          item.deltaPercent === null ? '#94a3b8' : (item.deltaPercent >= 0 ? '#10b981' : '#ef4444')
+        )),
+        borderWidth: 1,
+      },
+    ],
+  }), [metricSnapshots]);
+
+  const changeBarOptions = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => `${ctx.parsed.y > 0 ? '+' : ''}${ctx.parsed.y}%`,
+        },
+      },
+    },
+    scales: {
+      x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { display: false } },
+      y: {
+        ticks: {
+          color: '#64748b',
+          font: { size: 10 },
+          callback: (value) => `${value}%`,
+        },
+        grid: { color: '#e2e8f0' },
+      },
+    },
+  }), []);
+
+  const selectedZoneMetric = useMemo(
+    () => ZONE_METRIC_OPTIONS.find((item) => item.value === zoneMetric) ?? ZONE_METRIC_OPTIONS[0],
+    [zoneMetric],
+  );
+
+  const zoneBarData = useMemo(() => {
+    const rows = Array.isArray(zoneComparison) ? zoneComparison : [];
+    return {
+      labels: rows.map((row) => row.zoneId || 'Zone'),
+      datasets: [
+        {
+          label: `${selectedZoneMetric.label}${selectedZoneMetric.unit ? ` (${selectedZoneMetric.unit})` : ''}`,
+          data: rows.map((row) => toNumber(row?.[selectedZoneMetric.value]) ?? 0),
+          backgroundColor: 'rgba(79, 70, 229, 0.58)',
+          borderColor: '#4f46e5',
+          borderWidth: 1,
+        },
+      ],
+    };
+  }, [zoneComparison, selectedZoneMetric]);
+
+  const zoneBarOptions = useMemo(() => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { display: false } },
+      y: { ticks: { color: '#64748b', font: { size: 10 } }, grid: { color: '#e2e8f0' } },
+    },
+  }), []);
 
   if (!points.length) {
     return <div className="text-center py-10 text-slate-400">Waiting for live history data...</div>;
@@ -177,9 +290,47 @@ const MonitorCharts = ({
         </ChartCard>
       </div>
 
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <ChartCard title="Window Change (%)" icon="CMP" hasData={metricSnapshots.some((item) => item.deltaPercent !== null)}>
+          <Bar data={changeBarData} options={changeBarOptions} />
+        </ChartCard>
+
+        <div className="dashboard-card dashboard-card-hover group flex h-[300px] flex-col p-6">
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="flex items-center gap-2 text-[14px] font-semibold text-slate-700 dark:text-slate-200">
+              <span className="inline-flex h-6 min-w-[2.25rem] items-center justify-center rounded-md border border-slate-200/80 bg-white/80 px-2 text-[10px] font-bold tracking-[0.08em] text-slate-600 dark:border-slate-700/70 dark:bg-slate-800/70 dark:text-slate-300">
+                ZON
+              </span>
+              Zone Comparison
+            </h3>
+            <select
+              className="input-shell w-auto rounded-lg px-2 py-1 text-xs"
+              value={selectedZoneMetric.value}
+              onChange={(event) => {
+                if (typeof onZoneMetricChange === 'function') onZoneMetricChange(event.target.value);
+              }}
+            >
+              {ZONE_METRIC_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="relative min-h-0 w-full flex-1">
+            {!zoneBarData.labels.length ? (
+              <EmptyState text="No zone data available yet." />
+            ) : (
+              <Bar data={zoneBarData} options={zoneBarOptions} />
+            )}
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
+
+const EmptyState = ({ text }) => (
+  <div className="flex h-full items-center justify-center text-center text-sm text-subtle">{text}</div>
+);
 
 const ChartCard = ({ title, icon, children, hasData }) => (
   <div className="dashboard-card dashboard-card-hover group flex h-[300px] flex-col p-6">

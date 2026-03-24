@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
@@ -147,13 +147,8 @@ export default function Dashboard() {
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [feedbackList, setFeedbackList] = useState([]);
   const [editingId, setEditingId] = useState(null);
-  const [audioUrl, setAudioUrl] = useState("");
-  const [recording, setRecording] = useState(false);
-  const [audioSupported, setAudioSupported] = useState(false);
   const [clipFrameIndex, setClipFrameIndex] = useState(0);
   const [failedClipFrames, setFailedClipFrames] = useState([]);
-  const mediaRecorderRef = useRef(null);
-  const audioChunksRef = useRef([]);
   const growthWarnings = useMemo(() => buildDashboardGrowthWarnings(DASHBOARD_GROWTH_WARNING_MOCK), []);
 
   useEffect(() => {
@@ -173,10 +168,6 @@ export default function Dashboard() {
     } catch {
       setFeedbackList([]);
     }
-  }, []);
-
-  useEffect(() => {
-    setAudioSupported(Boolean(navigator.mediaDevices?.getUserMedia));
   }, []);
 
   const availableClipFrames = orchidClipFrames
@@ -209,47 +200,42 @@ export default function Dashboard() {
   const submitFeedback = (e) => {
     e.preventDefault();
     const message = feedback.trim();
-    if (!message && !audioUrl) {
-      setFeedbackStatus("Please add text or record a voice note before submitting.");
+    if (!message) {
+      setFeedbackStatus("Please enter feedback before submitting.");
       return;
     }
 
     if (editingId) {
       const updated = feedbackList.map((item) =>
-        item.id === editingId ? { ...item, message, audioUrl, updatedAt: new Date().toISOString() } : item
+        item.id === editingId ? { ...item, message, updatedAt: new Date().toISOString() } : item
       );
       persistFeedback(updated);
       setFeedbackStatus("Feedback updated.");
       setEditingId(null);
       setFeedback("");
-      setAudioUrl("");
       return;
     }
 
     const entry = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       message,
-      audioUrl,
       createdAt: new Date().toISOString(),
     };
     const updated = [entry, ...feedbackList].slice(0, 20);
     persistFeedback(updated);
     setFeedback("");
-    setAudioUrl("");
     setFeedbackStatus("Thank you. Your feedback has been submitted.");
   };
 
   const startEditFeedback = (item) => {
     setEditingId(item.id);
     setFeedback(item.message);
-    setAudioUrl(item.audioUrl || "");
     setFeedbackStatus("Editing feedback. Update and save when ready.");
   };
 
   const cancelEditFeedback = () => {
     setEditingId(null);
     setFeedback("");
-    setAudioUrl("");
     setFeedbackStatus("Edit cancelled.");
   };
 
@@ -261,49 +247,6 @@ export default function Dashboard() {
       setFeedback("");
     }
     setFeedbackStatus("Feedback deleted.");
-  };
-
-  const startRecording = async () => {
-    try {
-      if (!audioSupported) {
-        setFeedbackStatus("Voice capture is not supported in this browser.");
-        return;
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-        setAudioUrl("");
-      }
-      audioChunksRef.current = [];
-      const recorder = new MediaRecorder(stream);
-      recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) audioChunksRef.current.push(event.data);
-      };
-      recorder.onstop = () => {
-        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
-        const url = URL.createObjectURL(blob);
-        setAudioUrl(url);
-        setRecording(false);
-        stream.getTracks().forEach((t) => t.stop());
-      };
-      recorder.start();
-      mediaRecorderRef.current = recorder;
-      setRecording(true);
-      setFeedbackStatus("Recording... click stop when done.");
-    } catch (err) {
-      setFeedbackStatus(err?.message || "Microphone access was blocked.");
-    }
-  };
-
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && recording) {
-      mediaRecorderRef.current.stop();
-    }
-  };
-
-  const clearAudio = () => {
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
-    setAudioUrl("");
   };
 
   const currentClipFrame = availableClipFrames.length
@@ -447,19 +390,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="relative space-y-6 overflow-hidden">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.08] blur-[0px]"
-        style={{
-          backgroundImage: "url('/orchid-clip/frame-2.jpg')",
-          backgroundRepeat: "no-repeat",
-          backgroundSize: "55%",
-          backgroundPosition: "right -8% top 12%",
-          maskImage: "linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.0) 100%)",
-          WebkitMaskImage: "linear-gradient(180deg, rgba(0,0,0,0.65) 0%, rgba(0,0,0,0.0) 100%)",
-        }}
-      />
+    <div className="space-y-6">
       <section className="hero-glass modern-hero relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/35 via-transparent to-primary/10 dark:from-white/5" />
         <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-stretch">
@@ -477,7 +408,7 @@ export default function Dashboard() {
 
             {health && (
               <div className="grid gap-3 sm:grid-cols-3">
-                <StatusPill label="Growth model" ok={health.model_loaded ?? true} />
+                <StatusPill label="Growth model" ok={health.model_loaded} />
                 <StatusPill label="Firebase" ok={health.firebase_connected} />
                 <StatusPill label="API status" ok={health.status === "ok"} />
               </div>
@@ -632,22 +563,7 @@ export default function Dashboard() {
           />
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-subtle">{feedback.length}/500</p>
-            <div className="flex flex-wrap gap-2">
-              {audioSupported && !recording && (
-                <button type="button" onClick={startRecording} className="btn-soft">
-                  {audioUrl ? "Re-record voice" : "Record voice note"}
-                </button>
-              )}
-              {audioSupported && recording && (
-                <button type="button" onClick={stopRecording} className="btn-primary px-4">
-                  Stop recording
-                </button>
-              )}
-              {audioUrl && !recording && (
-                <button type="button" onClick={clearAudio} className="btn-soft">
-                  Remove voice note
-                </button>
-              )}
+            <div className="flex gap-2">
               {editingId && (
                 <button type="button" onClick={cancelEditFeedback} className="btn-soft">
                   Cancel Edit
@@ -657,29 +573,6 @@ export default function Dashboard() {
                 {editingId ? "Update Feedback" : "Submit Feedback"}
               </button>
             </div>
-          </div>
-
-          <div className="rounded-2xl border border-border/60 bg-paper/80 px-3.5 py-3">
-            <div className="flex items-center gap-2 text-sm font-semibold text-dark">
-              <span className={`h-2 w-2 rounded-full ${recording ? "bg-rose-500 animate-pulse" : audioUrl ? "bg-emerald-500" : "bg-subtle"}`} />
-              <span>
-                {recording ? "Recording..." : audioUrl ? "Voice note ready" : "Optional voice note (browser mic)"}
-              </span>
-            </div>
-            {audioSupported ? (
-              <>
-                {audioUrl && !recording && (
-                  <audio controls src={audioUrl} className="mt-2 w-full" />
-                )}
-                {recording && (
-                  <p className="mt-1 text-xs text-subtle">Speak now and tap “Stop recording” when done.</p>
-                )}
-              </>
-            ) : (
-              <p className="mt-1 text-xs text-rose-600 dark:text-rose-300">
-                Your browser does not allow microphone capture here.
-              </p>
-            )}
           </div>
         </form>
 
@@ -699,12 +592,6 @@ export default function Dashboard() {
               {feedbackList.slice(0, 5).map((item) => (
                 <div key={item.id} className="dashboard-card dashboard-card-hover px-3.5 py-3">
                   <p className="text-sm text-dark">{item.message}</p>
-                  {item.audioUrl && (
-                    <div className="mt-2 space-y-1">
-                      <p className="text-xs font-semibold text-subtle">Voice note:</p>
-                      <audio controls src={item.audioUrl} className="w-full" />
-                    </div>
-                  )}
                   <p className="mt-1 text-xs text-subtle">
                     {item.updatedAt
                       ? `Updated: ${new Date(item.updatedAt).toLocaleString()}`
@@ -732,27 +619,6 @@ export default function Dashboard() {
           ) : (
             <p className="text-sm text-subtle">No feedback submitted yet.</p>
           )}
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-          <div className="flex-1 space-y-1">
-            <p className="kicker">Orchid Inspiration</p>
-            <h3 className="module-title">Natural orchid beauty</h3>
-            <p className="page-description">A calm visual break while you monitor and manage your grow.</p>
-          </div>
-
-          <div className="shrink-0">
-            <div className="overflow-hidden rounded-[18px] border border-border/60 bg-paper/80 shadow-lg max-w-[320px] sm:max-w-[360px]">
-              <img
-                src="/orchid-clip/frame-4.jpg"
-                alt="Vibrant orchid bloom"
-                className="h-[220px] w-full object-cover"
-                loading="lazy"
-              />
-            </div>
-          </div>
         </div>
       </section>
     </div>

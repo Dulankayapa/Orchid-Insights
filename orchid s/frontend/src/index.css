@@ -496,8 +496,6 @@
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-[14px] px-4 py-2.5 text-[15px] font-semibold text-white transition-all duration-200;
     background-image: linear-gradient(120deg, #8b5cf6, #ec4899 55%, #22d3ee);
-    border: 1px solid rgba(var(--border) / 0.35);
-    text-shadow: 0 1px 4px rgba(0, 0, 0, 0.32);
     box-shadow:
       0 12px 26px -14px rgba(139, 92, 246, 0.45),
       0 10px 28px -14px rgba(236, 72, 153, 0.36),
@@ -514,8 +512,8 @@
   }
 
   .btn-soft {
-    @apply inline-flex items-center justify-center gap-2 rounded-[14px] border border-border/70 px-4 py-2.5 text-[15px] font-medium text-dark transition-all duration-200 hover:border-primary/45 hover:text-primary;
-    background-image: linear-gradient(160deg, rgba(var(--paper) / 0.98), rgba(var(--paper) / 0.9));
+    @apply inline-flex items-center justify-center gap-2 rounded-[14px] border border-border/65 bg-paper/95 px-4 py-2.5 text-[15px] font-medium text-dark transition-all duration-200 hover:border-primary/45 hover:text-primary;
+    background-image: linear-gradient(160deg, #ffffff, #f7fafc);
     box-shadow:
       0 1px 1px rgba(15, 23, 42, 0.02),
       0 8px 20px -18px rgba(15, 23, 42, 0.2);
@@ -530,22 +528,8 @@
 
   .btn-soft-emphasis {
     border-color: rgba(var(--primary) / 0.28);
-    background-image: linear-gradient(165deg, rgba(var(--paper) / 0.95), rgba(var(--paper) / 0.86));
+    background-image: linear-gradient(165deg, rgba(255, 255, 255, 0.95), rgba(241, 244, 255, 0.86));
     color: rgb(var(--primary));
-  }
-
-  .dark .btn-primary {
-    border-color: rgba(var(--primary) / 0.35);
-    text-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
-  }
-
-  .dark .btn-soft {
-    @apply text-dark;
-    background-image: linear-gradient(155deg, rgba(var(--paper) / 0.9), rgba(var(--paper) / 0.8));
-    border-color: rgba(var(--border) / 0.8);
-    box-shadow:
-      0 6px 18px -12px rgba(0, 0, 0, 0.42),
-      0 1px 0 rgba(255, 255, 255, 0.06);
   }
 
   .modern-hero {
