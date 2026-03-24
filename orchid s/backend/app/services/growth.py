@@ -14,6 +14,19 @@ from app.core.config import BASE_DIR, ROOT_DIR, get_settings
 def _first_existing(paths):
     return next((p for p in paths if p and Path(p).exists()), None)
 
+
+def _first_artifact_match(search_dirs, token: str):
+    for directory in search_dirs:
+        if not directory:
+            continue
+        d = Path(directory)
+        if not d.exists() or not d.is_dir():
+            continue
+        candidates = sorted(d.glob(f"*{token}*.joblib"))
+        if candidates:
+            return candidates[0]
+    return None
+
 # New folder/backend/app/services/growth.py
 @lru_cache(maxsize=1)
 def load_model():
@@ -35,6 +48,28 @@ def load_model():
 
     model_path = _first_existing(possible_model_paths)
     meta_path = _first_existing(possible_meta_paths)
+    if not model_path:
+        model_path = _first_artifact_match(
+            [
+                BASE_DIR,
+                ROOT_DIR / "models" / "growth",
+                ROOT_DIR / "new",
+                ROOT_DIR.parent / "Growth tracker Backend" / "Orchid Growth Tracker",
+                ROOT_DIR,
+            ],
+            "orchid_growth_rf_model",
+        )
+    if not meta_path:
+        meta_path = _first_artifact_match(
+            [
+                BASE_DIR,
+                ROOT_DIR / "models" / "growth",
+                ROOT_DIR / "new",
+                ROOT_DIR.parent / "Growth tracker Backend" / "Orchid Growth Tracker",
+                ROOT_DIR,
+            ],
+            "orchid_growth_metadata",
+        )
     if not model_path or not meta_path:
         raise FileNotFoundError("Growth model or metadata file missing. Configure GROWTH_MODEL_PATH/GROWTH_METADATA_PATH.")
 
@@ -128,15 +163,28 @@ def classify_growth(planting_date: str, current_date: str, height_mm: float, age
     model, metadata = load_model()
 
     age_days = age_days_override if age_days_override is not None else compute_age_days(planting_date, current_date)
-
-    X_new = pd.DataFrame(
-        [{"age_days": age_days, "plant_height_mm": float(height_mm)}],
-        columns=metadata["feature_cols"],
+    feature_cols = (
+        metadata.get("feature_cols")
+        or metadata.get("feature_names")
+        or metadata.get("columns")
+        or ["age_days", "plant_height_mm"]
     )
 
-    _ = model.predict(X_new)[0]  # original label not used after deterministic override
-    probs_arr = model.predict_proba(X_new)[0]
-    probs = {cls: float(p) for cls, p in zip(model.classes_, probs_arr)}
+    row = {col: 0.0 for col in feature_cols}
+    for col in feature_cols:
+        name = str(col).lower()
+        if ("age" in name and "day" in name) or name == "age_days":
+            row[col] = float(age_days)
+        if "height" in name or "plant_height" in name:
+            row[col] = float(height_mm)
+
+    X_new = pd.DataFrame([row], columns=feature_cols)
+    # Warm path for compatible artifacts; result is intentionally ignored because deterministic override is applied below.
+    if hasattr(model, "predict"):
+        try:
+            _ = model.predict(X_new)
+        except Exception:
+            pass
 
     expected_range = expected_range_from_lookup(age_days)
     min_expected, max_expected = expected_range
@@ -147,7 +195,11 @@ def classify_growth(planting_date: str, current_date: str, height_mm: float, age
     else:
         final_label = "within_expected"
 
-    final_probs = {cls: 0.0 for cls in model.classes_}
+    class_labels = (
+        [str(cls) for cls in getattr(model, "classes_", [])]
+        or ["below_expected", "within_expected", "above_expected"]
+    )
+    final_probs = {cls: 0.0 for cls in class_labels}
     final_probs[final_label] = 1.0
 
     return {
