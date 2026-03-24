@@ -135,6 +135,31 @@ const EnvMonitor = () => {
     [filteredHistory, previousWindow]
   );
 
+  const liveFactors = useMemo(() => {
+    const keys = ['temperature', 'humidity', 'light', 'co2'];
+    return keys.map((key) => {
+      const metric = METRIC_DEFINITIONS[key];
+      const value = latest?.[key];
+      const bounds = thresholds?.metrics?.[key];
+      const min = bounds?.min;
+      const max = bounds?.max;
+      let state = 'No data';
+      if (value !== null && value !== undefined) {
+        if (min !== undefined && value < min) state = 'Low';
+        else if (max !== undefined && value > max) state = 'High';
+        else state = 'OK';
+      }
+      return {
+        key,
+        label: metric?.label || key,
+        value,
+        min,
+        max,
+        state,
+      };
+    });
+  }, [latest, thresholds]);
+
   const handleGenerateReport = () => {
     const doc = new jsPDF();
     const now = new Date().toLocaleString();
@@ -558,6 +583,46 @@ const EnvMonitor = () => {
               <span className="text-xs text-subtle">Online nodes: {onlineNodes}/{nodeStatuses.length}</span>
             </div>
             <OverviewCards data={latest} lastUpdate={lastUpdate} thresholds={thresholds} />
+          </section>
+
+          <section className="panel">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="module-title">Live 4-Factor Comparison</h2>
+              <span className="text-xs text-subtle">Updates instantly with incoming telemetry</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-subtle">
+                    <th className="pb-2 pr-4 font-semibold">Factor</th>
+                    <th className="pb-2 pr-4 font-semibold">Current</th>
+                    <th className="pb-2 pr-4 font-semibold">Min</th>
+                    <th className="pb-2 pr-4 font-semibold">Max</th>
+                    <th className="pb-2 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {liveFactors.map((item) => {
+                    const metric = METRIC_DEFINITIONS[item.key];
+                    const formatted = formatMetric(item.value, item.key);
+                    const statusTone = item.state === 'OK'
+                      ? 'text-emerald-600 dark:text-emerald-300'
+                      : item.state === 'No data'
+                        ? 'text-subtle'
+                        : 'text-rose-600 dark:text-rose-300';
+                    return (
+                      <tr key={item.key} className="align-top">
+                        <td className="py-2 pr-4 font-semibold text-dark">{item.label}</td>
+                        <td className="py-2 pr-4 text-dark">{formatted}</td>
+                        <td className="py-2 pr-4 text-subtle">{metric ? formatNumber(item.min ?? null, metric.decimals ?? 1) : '--'}</td>
+                        <td className="py-2 pr-4 text-subtle">{metric ? formatNumber(item.max ?? null, metric.decimals ?? 1) : '--'}</td>
+                        <td className={`py-2 font-semibold ${statusTone}`}>{item.state}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
