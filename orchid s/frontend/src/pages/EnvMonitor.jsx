@@ -7,7 +7,6 @@ import { useAuthRole } from '../hooks/useAuthRole';
 import { useWeather } from '../hooks/useWeather';
 
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
-import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
 import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
 import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
 import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
@@ -684,16 +683,6 @@ const EnvMonitor = () => {
               onToggleDevice={toggleDevice}
               onApplyAuto={applyAutoRulesNow}
               onAutoRulesToggle={toggleAutoRules}
-            />
-
-            <ThresholdSettingsPanel
-              thresholds={thresholds}
-              canEdit={canEditSettings}
-              onSave={saveThresholds}
-              emailSettings={thresholds.notifications}
-              onSaveEmail={saveEmailSettings}
-              hideMetrics
-              title="Email Notifications"
             />
           </section>
 
