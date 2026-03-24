@@ -308,41 +308,29 @@ const buildEstimatedEnergy = (devicesState, energyRows) => {
   const daily = [];
   for (let i = 6; i >= 0; i -= 1) {
     const day = new Date(now - (i * 24 * 60 * 60 * 1000));
-    const dayFactor = 0.82 + (0.18 * Math.sin(i));
-    const kwh = GREENHOUSE_DEVICES.reduce((sum, device) => {
-      const isOn = !!devicesState?.[device.key];
-      const duty = isOn ? 0.58 : 0.18;
-      return sum + ((device.powerWatts / 1000) * 24 * duty * dayFactor);
-    }, 0);
     daily.push({
       label: `${day.getMonth() + 1}/${day.getDate()}`,
-      kwh,
+      kwh: 0,
     });
   }
 
   const weekly = [];
   for (let i = 5; i >= 0; i -= 1) {
-    const weekRows = daily.slice(Math.max(0, daily.length - ((i + 1) * 1) - 1), Math.max(0, daily.length - i));
-    const total = weekRows.reduce((sum, row) => sum + row.kwh, 0) * (6.4 + (i * 0.2));
-    weekly.push({ label: `W-${6 - i}`, kwh: total });
+    weekly.push({ label: `W-${6 - i}`, kwh: 0 });
   }
 
-  const perDevice = GREENHOUSE_DEVICES.map((device) => {
-    const isOn = !!devicesState?.[device.key];
-    const duty = isOn ? 0.58 : 0.18;
-    return {
-      ...device,
-      isOn,
-      kwh: (device.powerWatts / 1000) * 24 * 7 * duty,
-    };
-  });
+  const perDevice = GREENHOUSE_DEVICES.map((device) => ({
+    ...device,
+    isOn: !!devicesState?.[device.key],
+    kwh: 0,
+  }));
 
   return {
     daily,
     weekly,
     perDevice,
-    todayTotal: daily[daily.length - 1]?.kwh ?? 0,
-    weekTotal: daily.reduce((sum, row) => sum + row.kwh, 0),
+    todayTotal: 0,
+    weekTotal: 0,
   };
 };
 
@@ -563,6 +551,7 @@ export const useMonitorData = (settingsOverride = null) => {
   }), [normalizedHistory, forecastHorizon]);
 
   const healthScore = useMemo(() => {
+    if (connectionStatus !== 'connected') return null;
     if (!latestSnapshot) return null;
 
     let weightedStress = 0;
@@ -582,10 +571,11 @@ export const useMonitorData = (settingsOverride = null) => {
     if (!totalWeight) return null;
     const normalizedStress = weightedStress / totalWeight;
     return clamp(100 - normalizedStress, 0, 100);
-  }, [latestSnapshot, thresholds]);
+  }, [connectionStatus, latestSnapshot, thresholds]);
 
   const diagnostics = useMemo(() => {
     const findings = [];
+    if (connectionStatus !== 'connected') return findings;
     if (!latestSnapshot) {
       findings.push({
         id: 'diag-no-data',
@@ -658,12 +648,13 @@ export const useMonitorData = (settingsOverride = null) => {
     });
 
     return findings.slice(0, 20);
-  }, [latestSnapshot, nodeStatuses, normalizedHistory, thresholds.staleSeconds]);
+  }, [connectionStatus, latestSnapshot, nodeStatuses, normalizedHistory, thresholds.staleSeconds]);
 
   const alerts = useMemo(() => {
     const output = [];
     const now = Date.now();
 
+    if (connectionStatus !== 'connected') return output;
     if (!latestSnapshot) return output;
 
     Object.entries(METRIC_DEFINITIONS).forEach(([key, definition]) => {
@@ -731,7 +722,7 @@ export const useMonitorData = (settingsOverride = null) => {
         return (b.confidence ?? 0) - (a.confidence ?? 0);
       })
       .slice(0, 25);
-  }, [latestSnapshot, thresholds, predictions, diagnostics, forecastHorizon]);
+  }, [connectionStatus, latestSnapshot, thresholds, predictions, diagnostics, forecastHorizon]);
 
   const aiInsights = useMemo(() => {
     const insights = [];
