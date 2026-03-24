@@ -9,7 +9,6 @@ import { useWeather } from '../hooks/useWeather';
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
 import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
-import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
 import NotificationCenter from '../components/monitor/NotificationCenter.jsx';
 import GreenhouseLayout from '../components/monitor/GreenhouseLayout.jsx';
 import WeatherPanel from '../components/monitor/WeatherPanel.jsx';
@@ -639,28 +638,6 @@ const EnvMonitor = () => {
             <WeatherPanel weather={weather} weatherError={weatherError} />
           </section>
 
-          <section className="panel">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="module-title">Historical Analytics & Comparisons</h2>
-              <select
-                className="input-shell w-auto rounded-xl px-2 py-1.5 text-sm"
-                value={historyWindow}
-                onChange={(event) => setHistoryWindow(event.target.value)}
-              >
-                {HISTORY_FILTERS.map((window) => (
-                  <option key={window.value} value={window.value}>{window.label}</option>
-                ))}
-              </select>
-            </div>
-            <MonitorCharts
-              history={filteredHistory}
-              previousWindow={previousWindow}
-              zoneComparison={zoneComparison}
-              zoneMetric={zoneMetric}
-              onZoneMetricChange={setZoneMetric}
-            />
-          </section>
-
           <section className="space-y-4">
             <div className="panel">
               <div className="flex items-center justify-between gap-2">
@@ -673,16 +650,6 @@ const EnvMonitor = () => {
               thresholds={thresholds}
               canEdit={canEditSettings}
               onSave={saveThresholds}
-            />
-
-            <AutomationControlPanel
-              controlState={controlState}
-              recommendation={autoControlRecommendation}
-              canControl={canControlPanel}
-              onModeChange={updateControlMode}
-              onToggleDevice={toggleDevice}
-              onApplyAuto={applyAutoRulesNow}
-              onAutoRulesToggle={toggleAutoRules}
             />
           </section>
 
