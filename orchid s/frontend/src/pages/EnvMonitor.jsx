@@ -7,11 +7,8 @@ import { useAuthRole } from '../hooks/useAuthRole';
 import { useWeather } from '../hooks/useWeather';
 
 import OverviewCards from '../components/monitor/OverviewCards.jsx';
-import MonitorCharts from '../components/monitor/MonitorCharts.jsx';
-import HealthGauge from '../components/monitor/HealthGauge.jsx';
 import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
 import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
-import AutomationControlPanel from '../components/monitor/AutomationControlPanel.jsx';
 import NotificationCenter from '../components/monitor/NotificationCenter.jsx';
 import GreenhouseLayout from '../components/monitor/GreenhouseLayout.jsx';
 import WeatherPanel from '../components/monitor/WeatherPanel.jsx';
@@ -126,6 +123,14 @@ const EnvMonitor = () => {
     return history.filter((row) => row.ts >= previousStart && row.ts < start);
   }, [history, selectedFilter]);
 
+  const previousAverages = useMemo(() => {
+    const map = {};
+    ['temperature', 'humidity', 'light', 'co2'].forEach((key) => {
+      map[key] = average(previousWindow, key);
+    });
+    return map;
+  }, [previousWindow]);
+
   const comparisonSummary = useMemo(
     () => COMPARISON_METRIC_KEYS.map((key) => {
       const current = average(filteredHistory, key);
@@ -135,6 +140,33 @@ const EnvMonitor = () => {
     }),
     [filteredHistory, previousWindow]
   );
+
+  const liveFactors = useMemo(() => {
+    const keys = ['temperature', 'humidity', 'light', 'co2'];
+    return keys.map((key) => {
+      const metric = METRIC_DEFINITIONS[key];
+      const value = latest?.[key];
+      const prev = previousAverages[key];
+      const bounds = thresholds?.metrics?.[key];
+      const min = bounds?.min;
+      const max = bounds?.max;
+      let state = 'No data';
+      if (value !== null && value !== undefined) {
+        if (min !== undefined && value < min) state = 'Low';
+        else if (max !== undefined && value > max) state = 'High';
+        else state = 'OK';
+      }
+      return {
+        key,
+        label: metric?.label || key,
+        value,
+        previous: prev,
+        min,
+        max,
+        state,
+      };
+    });
+  }, [latest, thresholds, previousAverages]);
 
   const handleGenerateReport = () => {
     const doc = new jsPDF();
@@ -561,9 +593,49 @@ const EnvMonitor = () => {
             <OverviewCards data={latest} lastUpdate={lastUpdate} thresholds={thresholds} />
           </section>
 
-          <section className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <HealthGauge score={healthScore} />
+          <section className="panel">
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <h2 className="module-title">Live 4-Factor Comparison</h2>
+              <span className="text-xs text-subtle">Updates instantly with incoming telemetry</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead>
+                  <tr className="text-left text-subtle">
+                    <th className="pb-2 pr-4 font-semibold">Factor</th>
+                    <th className="pb-2 pr-4 font-semibold">Previous</th>
+                    <th className="pb-2 pr-4 font-semibold">Current</th>
+                    <th className="pb-2 pr-4 font-semibold">Min</th>
+                    <th className="pb-2 pr-4 font-semibold">Max</th>
+                    <th className="pb-2 font-semibold">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-border/60">
+                  {liveFactors.map((item) => {
+                    const metric = METRIC_DEFINITIONS[item.key];
+                    const formatted = formatMetric(item.value, item.key);
+                    const statusTone = item.state === 'OK'
+                      ? 'text-emerald-600 dark:text-emerald-300'
+                      : item.state === 'No data'
+                        ? 'text-subtle'
+                        : 'text-rose-600 dark:text-rose-300';
+                    return (
+                      <tr key={item.key} className="align-top">
+                        <td className="py-2 pr-4 font-semibold text-dark">{item.label}</td>
+                        <td className="py-2 pr-4 text-dark">{formatMetric(item.previous, item.key)}</td>
+                        <td className="py-2 pr-4 text-dark">{formatted}</td>
+                        <td className="py-2 pr-4 text-subtle">{metric ? formatNumber(item.min ?? null, metric.decimals ?? 1) : '--'}</td>
+                        <td className="py-2 pr-4 text-subtle">{metric ? formatNumber(item.max ?? null, metric.decimals ?? 1) : '--'}</td>
+                        <td className={`py-2 font-semibold ${statusTone}`}>{item.state}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </section>
 
+          <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
             <div className="dashboard-card p-5">
               <h3 className="mb-2 text-sm font-semibold text-dark">Automated Daily Report</h3>
               <p className="text-xs text-subtle">{dailyReport?.date || '--'}</p>
@@ -578,28 +650,6 @@ const EnvMonitor = () => {
             <WeatherPanel weather={weather} weatherError={weatherError} />
           </section>
 
-          <section className="panel">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-              <h2 className="module-title">Historical Analytics & Comparisons</h2>
-              <select
-                className="input-shell w-auto rounded-xl px-2 py-1.5 text-sm"
-                value={historyWindow}
-                onChange={(event) => setHistoryWindow(event.target.value)}
-              >
-                {HISTORY_FILTERS.map((window) => (
-                  <option key={window.value} value={window.value}>{window.label}</option>
-                ))}
-              </select>
-            </div>
-            <MonitorCharts
-              history={filteredHistory}
-              previousWindow={previousWindow}
-              zoneComparison={zoneComparison}
-              zoneMetric={zoneMetric}
-              onZoneMetricChange={setZoneMetric}
-            />
-          </section>
-
           <section className="space-y-4">
             <div className="panel">
               <div className="flex items-center justify-between gap-2">
@@ -612,26 +662,6 @@ const EnvMonitor = () => {
               thresholds={thresholds}
               canEdit={canEditSettings}
               onSave={saveThresholds}
-            />
-
-            <AutomationControlPanel
-              controlState={controlState}
-              recommendation={autoControlRecommendation}
-              canControl={canControlPanel}
-              onModeChange={updateControlMode}
-              onToggleDevice={toggleDevice}
-              onApplyAuto={applyAutoRulesNow}
-              onAutoRulesToggle={toggleAutoRules}
-            />
-
-            <ThresholdSettingsPanel
-              thresholds={thresholds}
-              canEdit={canEditSettings}
-              onSave={saveThresholds}
-              emailSettings={thresholds.notifications}
-              onSaveEmail={saveEmailSettings}
-              hideMetrics
-              title="Email Notifications"
             />
           </section>
 

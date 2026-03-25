@@ -391,7 +391,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <section className="hero-glass relative overflow-hidden">
+      <section className="hero-glass modern-hero relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/35 via-transparent to-primary/10 dark:from-white/5" />
         <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-stretch">
           <div className="space-y-4">
