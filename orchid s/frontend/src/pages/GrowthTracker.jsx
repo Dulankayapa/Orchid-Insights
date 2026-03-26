@@ -825,13 +825,13 @@ export default function GrowthTracker() {
   // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
   useEffect(() => {
     setHeightLogError("");
-    const liveSource = activeJarId ? jarLive : sensorLatest;
-    if (!liveSource) return;
+    const liveReading = jarLive ?? sensorLatest;
+    if (!liveReading) return;
 
-    const liveHeight = sanitizeHeightMm(liveSource.height_mm ?? liveSource.height);
+    const liveHeight = sanitizeHeightMm(liveReading.height_mm ?? liveReading.height);
     if (liveHeight === null) return;
 
-    const ts = Number(liveSource.timestamp) || Date.now();
+    const ts = Number(liveReading.timestamp) || Date.now();
 
     const last = lastHeightLoggedRef.current;
     const isDuplicate =
@@ -839,7 +839,7 @@ export default function GrowthTracker() {
     if (isDuplicate) return;
 
     const sourceJarId =
-      activeJarId || liveSource.jarId || liveSource.jar_id || liveSource.id || canonicalJarKey(activeJarId) || null;
+      activeJarId || liveReading.jarId || liveReading.jar_id || liveReading.id || canonicalJarKey(activeJarId) || null;
     const canonicalId = canonicalPlantId(sourceJarId);
     if (!canonicalId) return;
 
@@ -1085,8 +1085,9 @@ export default function GrowthTracker() {
     return "border-border/45 bg-paper/70 text-subtle";
   }, [displayLabel]);
 
-  const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height);
-  const liveTimestamp = jarLive?.timestamp ?? null;
+  const liveSource = useMemo(() => jarLive ?? sensorLatest, [jarLive, sensorLatest]);
+  const liveHeight = sanitizeHeightMm(liveSource?.height_mm ?? liveSource?.height);
+  const liveTimestamp = liveSource?.timestamp ?? liveSource?.ts ?? null;
 
   const heightPoints = useMemo(() => {
     const pts = [];
@@ -1102,7 +1103,7 @@ export default function GrowthTracker() {
       const h = sanitizeHeightMm(row.height_mm ?? row.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
     });
-    const latestPoint = activeJarId ? jarLive : sensorLatest;
+    const latestPoint = liveSource;
     if (latestPoint) {
       const ts = Number(latestPoint.timestamp);
       const h = sanitizeHeightMm(latestPoint.height_mm ?? latestPoint.height);
@@ -1110,7 +1111,7 @@ export default function GrowthTracker() {
     }
     pts.sort((a, b) => a.x - b.x);
     return pts.slice(-120); // keep last 120 points
-  }, [plantRecord, sensorHistory, sensorLatest, jarLive, activeJarId]);
+  }, [plantRecord, sensorHistory, liveSource]);
 
   // Listen directly to Firebase plants/{id} for real-time planting date/height updates
   useEffect(() => {
