@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Line } from "react-chartjs-2";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Chart as ChartJS,
   LineElement,
@@ -164,6 +165,20 @@ const splitJarInputs = (value) =>
         .filter(Boolean)
     )
   );
+
+const fetchQrDataUrl = async (data) => {
+  if (typeof fetch !== "function" || !data) return "";
+  const url = `https://quickchart.io/qr?text=${encodeURIComponent(data)}&margin=1&size=360&dark=0f172a&light=ffffff`;
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`QR request failed (${response.status})`);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result?.toString() || "");
+    reader.onerror = () => reject(new Error("QR blob read failed"));
+    reader.readAsDataURL(blob);
+  });
+};
 
 const coerceTimestamp = (value) => {
   const num = toNumber(value);
@@ -359,6 +374,8 @@ const deriveIdAliases = (value) => {
 export default function GrowthTracker() {
   const { theme } = useTheme();
   const isLight = theme === "light";
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [plantRecords, setPlantRecords] = useState([]);
@@ -389,6 +406,9 @@ export default function GrowthTracker() {
   const [firstGrowthTimestamp, setFirstGrowthTimestamp] = useState(null);
   const [firstGlobalGrowthTimestamp, setFirstGlobalGrowthTimestamp] = useState(null);
   const [ageSourceLabel, setAgeSourceLabel] = useState("");
+  const [qrDataUrl, setQrDataUrl] = useState("");
+  const [qrError, setQrError] = useState("");
+  const [qrStatus, setQrStatus] = useState("");
   const lastHeightLoggedRef = useRef({ ts: 0, height: null });
   const createdJarIdsRef = useRef(new Set());
 
@@ -455,6 +475,39 @@ export default function GrowthTracker() {
     }
     return null;
   }, [activeJarId, activeIdAliases, cultureMap]);
+
+  const qrJarId = useMemo(
+    () => canonicalJarKey(activeJarId) || activeCanonicalId || jarId || "",
+    [activeJarId, activeCanonicalId, jarId]
+  );
+
+  const qrLink = useMemo(() => {
+    if (!qrJarId) return "";
+    try {
+      const url = new URL(typeof window !== "undefined" ? window.location.href : "https://orchid-insights.local/growth");
+      url.pathname = "/growth";
+      url.searchParams.set("jar", qrJarId);
+      return url.toString();
+    } catch {
+      return `jar:${qrJarId}`;
+    }
+  }, [qrJarId]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "");
+    const incoming = params.get("jar") || params.get("jarId") || params.get("id");
+    if (!incoming) return;
+    const normalized = normalizeJarIdInput(incoming);
+    setJarId((prev) => (prev ? prev : normalized));
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!qrJarId) return;
+    const params = new URLSearchParams(location.search || "");
+    if (params.get("jar") === qrJarId) return;
+    params.set("jar", qrJarId);
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [qrJarId, location.pathname, location.search, navigate]);
 
   useEffect(() => {
     setPlantFetchError("");
@@ -968,6 +1021,58 @@ export default function GrowthTracker() {
     setAgeSourceLabel(resolvedPlantingInfo.source || "");
   }, [activeJarId, plantRecord, plantingDate, resolvedPlantingInfo]);
 
+  useEffect(() => {
+    setQrStatus("");
+    setQrError("");
+  }, [qrJarId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!qrLink) {
+      setQrDataUrl("");
+      return;
+    }
+
+    fetchQrDataUrl(qrLink)
+      .then((url) => {
+        if (!cancelled) {
+          setQrDataUrl(url);
+          setQrError("");
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setQrDataUrl("");
+          setQrError(err?.message || "Failed to generate QR code");
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [qrLink]);
+
+  const handleDownloadQr = () => {
+    if (!qrDataUrl || !qrJarId) return;
+    const anchor = document.createElement("a");
+    const safeId = normalizeId(qrJarId).replace(/[^a-z0-9]+/gi, "-") || "jar";
+    anchor.href = qrDataUrl;
+    anchor.download = `${safeId}-growth-qr.png`;
+    anchor.click();
+    setQrStatus("QR label downloaded");
+  };
+
+  const handleCopyQrLink = async () => {
+    if (!qrLink) return;
+    try {
+      await navigator.clipboard.writeText(qrLink);
+      setQrError("");
+      setQrStatus("Link copied");
+    } catch (err) {
+      setQrError(err?.message || "Copy failed. Copy manually from the label link.");
+    }
+  };
+
   const clearAnalysisState = () => {
     setError("");
     setResult(null);
@@ -1176,6 +1281,13 @@ export default function GrowthTracker() {
             analysisSaveError={analysisSaveError}
             liveHeight={liveHeight}
             liveTimestamp={liveTimestamp}
+            qrDataUrl={qrDataUrl}
+            qrLink={qrLink}
+            qrError={qrError}
+            qrStatus={qrStatus}
+            onDownloadQr={handleDownloadQr}
+            onCopyQrLink={handleCopyQrLink}
+            qrJarId={qrJarId}
           />
           <HeightChartCard isLight={isLight} points={heightPoints} />
         </div>
@@ -1266,6 +1378,13 @@ function FormCard({
   liveTimestamp,
   cultureError,
   heightLogError,
+  qrDataUrl,
+  qrLink,
+  qrError,
+  qrStatus,
+  onDownloadQr,
+  onCopyQrLink,
+  qrJarId,
 }) {
   return (
     <motion.form
@@ -1403,6 +1522,64 @@ function FormCard({
           {analysisSaveStatus}
         </p>
       )}
+
+      <div className="rounded-2xl border border-primary/25 bg-primary/5 px-4 py-4 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="kicker">QR label</p>
+            <p className="text-sm text-slate-700">Scan to open Growth Tracker with this Jar ID pre-filled.</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={onDownloadQr}
+              disabled={!qrDataUrl}
+              className="rounded-xl border border-primary/30 bg-white/80 px-3 py-1.5 text-xs font-semibold text-primary shadow-sm transition hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Download PNG
+            </button>
+            <button
+              type="button"
+              onClick={onCopyQrLink}
+              disabled={!qrLink}
+              className="rounded-xl border border-border/70 bg-paper/80 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Copy link
+            </button>
+          </div>
+        </div>
+
+        {qrError && (
+          <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+            QR error: {qrError}
+          </p>
+        )}
+        {qrStatus && (
+          <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+            {qrStatus}
+          </p>
+        )}
+
+        {qrDataUrl && qrJarId ? (
+          <div className="flex items-center gap-4">
+            <div className="h-28 w-28 rounded-xl border border-white bg-white p-2 shadow-sm shadow-primary/10">
+              <img src={qrDataUrl} alt={`QR code for ${qrJarId}`} className="h-full w-full object-contain" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-dark">Jar ID: {qrJarId}</p>
+              <p className="text-xs text-subtle">Label this to let anyone scan directly into this jar in Growth Tracker.</p>
+              <div className="text-[11px] text-slate-600 break-all rounded border border-border/60 bg-white/80 px-2 py-1">
+                {qrLink}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <p className="text-xs text-subtle rounded-lg border border-border/50 bg-paper/70 px-3 py-2">
+            Enter a Jar/Plant ID to generate a printable QR label for racks and trays.
+          </p>
+        )}
+      </div>
+
       <p className="text-xs text-slate-600">Today: {today}</p>
       {plantRecord && (
         <p className="text-xs text-teal-800 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">

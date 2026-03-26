@@ -1,6 +1,20 @@
 import React, { useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { jsPDF } from 'jspdf';
+import { Line, Pie } from 'react-chartjs-2';
+import {
+  Chart as ChartJS,
+  LineElement,
+  PointElement,
+  LinearScale,
+  TimeScale,
+  Tooltip,
+  Legend,
+  Filler,
+  CategoryScale,
+  ArcElement,
+} from 'chart.js';
+import 'chartjs-adapter-date-fns';
 
 import { useMonitorData } from '../hooks/useMonitorData';
 import { useAuthRole } from '../hooks/useAuthRole';
@@ -18,6 +32,8 @@ import {
   HISTORY_FILTERS,
   METRIC_DEFINITIONS,
 } from '../lib/monitorConfig';
+
+ChartJS.register(LineElement, PointElement, LinearScale, TimeScale, Tooltip, Legend, Filler, CategoryScale, ArcElement);
 
 const toNumber = (value) => {
   const parsed = Number(value);
@@ -167,6 +183,144 @@ const EnvMonitor = () => {
       };
     });
   }, [latest, thresholds, previousAverages]);
+
+  const metricCharts = useMemo(() => {
+    const palette = {
+      temperature: { border: 'rgba(239,68,68,1)', background: 'rgba(239,68,68,0.15)' },
+      humidity: { border: 'rgba(59,130,246,1)', background: 'rgba(59,130,246,0.15)' },
+      light: { border: 'rgba(234,179,8,1)', background: 'rgba(234,179,8,0.18)' },
+      co2: { border: 'rgba(16,185,129,1)', background: 'rgba(16,185,129,0.15)' },
+    };
+
+    const baseOptions = {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'nearest', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          displayColors: false,
+          backgroundColor: 'rgba(15,23,42,0.92)',
+          titleColor: '#e2e8f0',
+          bodyColor: '#f8fafc',
+        },
+      },
+      scales: {
+        x: {
+          type: 'time',
+          time: { unit: 'hour', tooltipFormat: 'PPpp' },
+          ticks: { display: false, color: '#475569' },
+          grid: { display: false, color: 'rgba(148,163,184,0.18)' },
+        },
+        y: {
+          ticks: { color: '#334155' },
+          grid: { color: 'rgba(148,163,184,0.16)' },
+        },
+      },
+    };
+
+    const metrics = [
+      { key: 'temperature', label: 'Temperature (°C)' },
+      { key: 'humidity', label: 'Humidity (%)' },
+      { key: 'light', label: 'Light (lux)' },
+      { key: 'co2', label: 'Air (CO₂ ppm)' },
+    ];
+
+    return metrics.map((def) => {
+      const color = palette[def.key] || palette.temperature;
+      const points = filteredHistory
+        .map((row) => {
+          const y = toNumber(row?.[def.key]);
+          const x = row?.ts || row?.timestamp;
+          if (!Number.isFinite(y) || !Number.isFinite(x)) return null;
+          return { x, y };
+        })
+        .filter(Boolean);
+
+      const yValues = points.map((p) => p.y);
+      const suggestedMax = yValues.length ? Math.max(...yValues) * 1.08 : undefined;
+      const suggestedMin = yValues.length ? Math.min(...yValues) * 0.92 : undefined;
+
+      return {
+        ...def,
+        hasData: points.length > 1,
+        data: {
+          datasets: [
+            {
+              label: def.label,
+              data: points,
+              parsing: false,
+              spanGaps: true,
+              borderColor: color.border,
+              borderWidth: 2.4,
+              backgroundColor: color.background,
+              fill: true,
+              tension: 0.35,
+              cubicInterpolationMode: 'monotone',
+              pointRadius: 0,
+            },
+          ],
+        },
+        options: {
+          ...baseOptions,
+          scales: {
+            ...baseOptions.scales,
+            y: {
+              ...baseOptions.scales.y,
+              suggestedMax,
+              suggestedMin,
+            },
+          },
+        },
+      };
+    });
+  }, [filteredHistory, selectedFilter]);
+
+  const pieChart = useMemo(() => {
+    const rows = (() => {
+      if (!latest) return filteredHistory;
+      const hasLatest = filteredHistory.some((row) => Number(row?.ts) === Number(latest?.ts));
+      return hasLatest ? filteredHistory : [...filteredHistory, latest];
+    })();
+
+    const keys = ['temperature', 'humidity', 'light', 'co2'];
+    const labels = keys.map((k) => METRIC_DEFINITIONS[k]?.label || k);
+    const palette = ['#ef4444', '#3b82f6', '#eab308', '#10b981'];
+    const values = keys.map((k) => average(rows, k) ?? 0);
+    const total = values.reduce((s, v) => s + Math.max(0, v), 0);
+    if (total <= 0.001) return null;
+    return {
+      data: {
+        labels,
+        datasets: [
+          {
+            data: values.map((v) => Math.max(0, v)),
+            backgroundColor: palette.map((c) => `${c}99`),
+            borderColor: palette,
+            borderWidth: 1,
+            hoverOffset: 6,
+          },
+        ],
+      },
+      options: {
+        plugins: {
+          legend: { position: 'right', labels: { boxWidth: 10, boxHeight: 10, font: { size: 11 } } },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const val = ctx.parsed || 0;
+                const pct = ((val / total) * 100).toFixed(1);
+                const metricKey = keys[ctx.dataIndex];
+                const metric = METRIC_DEFINITIONS[metricKey];
+                const unit = metric?.unit ? ` ${metric.unit}` : '';
+                return `${ctx.label}: ${val.toFixed(metric?.decimals ?? 1)}${unit} (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    };
+  }, [filteredHistory, latest]);
 
   const handleGenerateReport = () => {
     const doc = new jsPDF();
@@ -632,6 +786,45 @@ const EnvMonitor = () => {
                   })}
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="module-title">Environmental Trends</h2>
+              <span className="text-xs text-subtle">Temperature · Humidity · Light · Air (CO₂)</span>
+            </div>
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+              <div className="dashboard-card p-3">
+                <div className="mb-2 flex items-center justify-between">
+                  <p className="text-sm font-semibold text-dark">Average Mix</p>
+                  <span className="text-[11px] text-subtle">Window: {selectedFilter.label}</span>
+                </div>
+                <div className="h-56 flex items-center justify-center">
+                  {pieChart ? (
+                    <Pie data={pieChart.data} options={pieChart.options} />
+                  ) : (
+                    <div className="text-xs text-subtle">Not enough data yet.</div>
+                  )}
+                </div>
+              </div>
+              {metricCharts.map((chart) => (
+                <div key={chart.key} className="dashboard-card p-3">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-sm font-semibold text-dark">{chart.label}</p>
+                    <span className="text-[11px] text-subtle">Window: {selectedFilter.label}</span>
+                  </div>
+                  <div className="h-56">
+                    {chart.hasData ? (
+                      <Line data={chart.data} options={chart.options} />
+                    ) : (
+                      <div className="flex h-full items-center justify-center text-xs text-subtle">
+                        Not enough data points yet.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           </section>
 
