@@ -11,6 +11,7 @@ import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
 import OrchidCompanion from "./pages/OrchidCompanion.jsx";
 import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
+import Footer from "./components/Footer.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
@@ -143,7 +144,7 @@ export default function App() {
             </div>
           </aside>
 
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 flex flex-col">
             <header className="lg:hidden sticky top-0 z-20 border-b border-border/50 bg-gradient-to-r from-paper/95 via-paper/90 to-primary/10 px-4 py-4 backdrop-blur-xl">
               <div className="flex items-center justify-between">
                 <div>
@@ -171,7 +172,7 @@ export default function App() {
               </div>
             </header>
 
-            <main className="px-4 py-8 sm:px-8 lg:px-10">
+            <main className="px-4 py-8 sm:px-8 lg:px-10 flex-1">
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -191,6 +192,8 @@ export default function App() {
                 </Routes>
               </motion.div>
             </main>
+
+            <Footer />
           </div>
         </div>
       </div>
