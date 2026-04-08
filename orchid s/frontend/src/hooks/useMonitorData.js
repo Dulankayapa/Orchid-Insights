@@ -1028,8 +1028,9 @@ export const useMonitorData = (settingsOverride = null) => {
       }
     };
 
+    // Run once immediately, then poll every 2 minutes as a fallback in case realtime listeners fail.
     poll();
-    pollTimer = setInterval(poll, 10000);
+    pollTimer = setInterval(poll, 120000);
 
     return () => clearInterval(pollTimer);
   }, []);

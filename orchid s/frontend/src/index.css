@@ -526,10 +526,33 @@
       0 18px 30px -22px rgba(15, 23, 42, 0.18);
   }
 
+  .dark .btn-soft {
+    color: #e5e7eb;
+    border-color: rgba(var(--border) / 0.85);
+    background-image: linear-gradient(165deg, rgba(31, 41, 55, 0.94), rgba(17, 24, 39, 0.92));
+    box-shadow:
+      0 2px 10px -6px rgba(0, 0, 0, 0.45),
+      0 14px 30px -18px rgba(0, 0, 0, 0.52);
+  }
+
+  .dark .btn-soft:hover {
+    border-color: rgba(var(--primary) / 0.55);
+    color: #f8fafc;
+    box-shadow:
+      0 10px 26px -16px rgba(0, 0, 0, 0.55),
+      0 20px 34px -18px rgba(79, 70, 229, 0.45);
+  }
+
   .btn-soft-emphasis {
     border-color: rgba(var(--primary) / 0.28);
     background-image: linear-gradient(165deg, rgba(255, 255, 255, 0.95), rgba(241, 244, 255, 0.86));
     color: rgb(var(--primary));
+  }
+
+  .dark .btn-soft-emphasis {
+    color: #f5f3ff;
+    border-color: rgba(var(--primary) / 0.65);
+    background-image: linear-gradient(165deg, rgba(124, 58, 237, 0.45), rgba(236, 72, 153, 0.4));
   }
 
   .modern-hero {
