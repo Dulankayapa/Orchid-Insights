@@ -155,7 +155,7 @@ export default function App() {
                 <ThemeToggle />
               </div>
 
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+              <div className="mt-4 flex flex-wrap gap-2">
                 {navItems.map((item) => (
                   <NavLink
                     key={item.to}
