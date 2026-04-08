@@ -155,7 +155,7 @@ export default function App() {
                 <ThemeToggle />
               </div>
 
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap gap-2 sm:flex-nowrap sm:overflow-x-auto sm:pb-1 sm:[&::-webkit-scrollbar]:hidden sm:[-ms-overflow-style:'none'] sm:[scrollbar-width:'none'] justify-start">
                 {navItems.map((item) => (
                   <NavLink
                     key={item.to}
