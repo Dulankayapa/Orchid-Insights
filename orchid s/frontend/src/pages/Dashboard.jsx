@@ -48,6 +48,14 @@ const cards = [
     desc: "Live jar sensor values in a compact data table.",
   },
   {
+    title: "Orchid Classifier",
+    to: "/classifier",
+    tone: "from-indigo-300/35 to-primary/30",
+    icon: "\u{1F4F7}",
+    meta: "Vision",
+    desc: "Upload an orchid photo to predict class and OOD score.",
+  },
+  {
     title: "Env Monitor",
     to: "/monitor",
     tone: "from-sky-400/35 to-primary/30",
