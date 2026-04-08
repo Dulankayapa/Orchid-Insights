@@ -24,7 +24,6 @@ import OverviewCards from '../components/monitor/OverviewCards.jsx';
 import ThresholdSettingsPanel from '../components/monitor/ThresholdSettingsPanel.jsx';
 import SafeRangesPanel from '../components/monitor/SafeRangesPanel.jsx';
 import NotificationCenter from '../components/monitor/NotificationCenter.jsx';
-import GreenhouseLayout from '../components/monitor/GreenhouseLayout.jsx';
 import WeatherPanel from '../components/monitor/WeatherPanel.jsx';
 
 import {
@@ -974,7 +973,6 @@ const EnvMonitor = () => {
             />
           </section>
 
-          <GreenhouseLayout zones={zones} nodeStatuses={nodeStatuses} />
         </div>
 
         <aside className="space-y-6 xl:sticky xl:top-4">
@@ -1074,50 +1072,6 @@ const EnvMonitor = () => {
             </ul>
           </section>
 
-          <section className="panel">
-            <h2 className="module-title">Zone Comparison Table</h2>
-            <div className="mt-3 space-y-2">
-              {zoneComparison.map((zone) => (
-                <div key={zone.zoneId} className="dashboard-card p-3 text-xs">
-                  <div className="mb-1 flex items-center justify-between">
-                    <p className="text-sm font-semibold text-dark">{zone.zoneId}</p>
-                    <span className="text-subtle">Samples: {zone.samples}</span>
-                  </div>
-                  <div className="grid grid-cols-2 gap-y-1">
-                    {COMPARISON_METRIC_KEYS.map((key) => (
-                      <React.Fragment key={`${zone.zoneId}-${key}`}>
-                        <p className="text-subtle">{METRIC_DEFINITIONS[key].label}</p>
-                        <p className="text-dark">{formatMetric(zone[key], key)}</p>
-                      </React.Fragment>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="panel">
-            <h2 className="module-title">Visualization Comparison</h2>
-            <div className="mt-3 space-y-2">
-              {comparisonSummary.map((item) => {
-                const metric = METRIC_DEFINITIONS[item.key];
-                const delta = item.delta;
-                return (
-                  <div key={item.key} className="dashboard-card p-3 text-xs">
-                    <div className="mb-1 flex items-center justify-between">
-                      <p className="font-semibold text-dark">{metric.label}</p>
-                      <span className={`font-bold ${delta === null ? 'text-subtle' : delta >= 0 ? 'text-amber-600 dark:text-amber-300' : 'text-emerald-600 dark:text-emerald-300'}`}>
-                        {delta === null ? '--' : `${delta >= 0 ? '+' : ''}${delta.toFixed(metric.decimals)} ${metric.unit}`}
-                      </span>
-                    </div>
-                    <p className="text-subtle">
-                      Current {formatMetric(item.current, item.key)} vs Previous {formatMetric(item.previous, item.key)}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </section>
         </aside>
       </div>
     </div>

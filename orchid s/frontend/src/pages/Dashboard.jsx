@@ -326,7 +326,7 @@ export default function Dashboard() {
           : "text-emerald-600 dark:text-emerald-400",
     },
   ];
-  const handleExportDashboardReport = () => {
+  const buildDashboardReport = () => {
     const doc = new jsPDF();
     const generatedAt = new Date().toLocaleString();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -394,7 +394,55 @@ export default function Dashboard() {
       y += wrapped.length * 5 + 2;
     });
 
+    return doc;
+  };
+
+  const handleExportDashboardReport = () => {
+    const doc = buildDashboardReport();
     doc.save(`Orchid_Dashboard_Report_${new Date().toISOString().slice(0, 10)}.pdf`);
+  };
+
+  const [emailStatus, setEmailStatus] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [emailing, setEmailing] = useState(false);
+
+  const blobToBase64 = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = reader.result || "";
+        const base64 = String(result).split(",").pop();
+        resolve(base64);
+      };
+      reader.onerror = () => reject(new Error("Failed to read PDF"));
+      reader.readAsDataURL(blob);
+    });
+
+  const handleEmailDashboardReport = async () => {
+    setEmailStatus("");
+    setEmailError("");
+    setEmailing(true);
+    try {
+      const doc = buildDashboardReport();
+      const blob = doc.output("blob");
+      const base64 = await blobToBase64(blob);
+      const filename = `Orchid_Dashboard_Report_${new Date().toISOString().slice(0, 10)}.pdf`;
+      await api.post("/reports/email", {
+        to: "nimeshanmadurangapeeris@gmail.com",
+        subject: "Orchid Insights Dashboard Report",
+        body: "Attached is the latest Orchid Insights dashboard report.",
+        attachment: {
+          filename,
+          content: base64,
+          mimetype: "application/pdf",
+        },
+      });
+      setEmailStatus("Report emailed successfully.");
+    } catch (err) {
+      setEmailError(err?.response?.data?.detail || err?.message || "Failed to email report.");
+    } finally {
+      setEmailing(false);
+    }
   };
 
   return (
@@ -460,7 +508,7 @@ export default function Dashboard() {
             <p className="kicker">Live Snapshot</p>
             <p className="text-sm text-subtle">Quick health and monitoring summary.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={handleExportDashboardReport}
@@ -470,6 +518,17 @@ export default function Dashboard() {
             >
               <span className="text-base leading-none" aria-hidden="true">{"\u{1F4C4}"}</span>
               <span>Report</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleEmailDashboardReport}
+              disabled={emailing}
+              className="btn-soft btn-soft-emphasis rounded-xl px-3 py-1.5 text-sm disabled:opacity-60"
+              title="Email report"
+              aria-label="Email dashboard report"
+            >
+              <span className="text-base leading-none" aria-hidden="true">{"\u2709\uFE0F"}</span>
+              <span>{emailing ? "Sending..." : "Email report"}</span>
             </button>
             <button
               type="button"

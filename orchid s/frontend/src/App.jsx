@@ -168,7 +168,9 @@ export default function App() {
                       }`
                     }
                   >
-                    {item.label}
+                    <span className="mr-2">{item.code}</span>
+                    <span>{item.label}</span>
+                    <span className="ml-2 text-subtle">→</span>
                   </NavLink>
                 ))}
               </div>
