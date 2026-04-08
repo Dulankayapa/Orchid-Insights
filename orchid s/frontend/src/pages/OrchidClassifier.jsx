@@ -275,13 +275,6 @@ const OrchidClassifier = () => {
         </div>
       </div>
 
-      {hasResult ? (
-        <div className="panel-soft rounded-2xl border border-border/60 px-4 py-3 text-xs text-subtle">
-          Endpoint: POST /api/orchid-classifier/predict (multipart/form-data with `file`). Update the URL in
-          <code className="ml-1 rounded bg-paper px-1 py-0.5 text-[11px] text-dark">src/lib/api.js</code>
-          {' '}if your backend runs elsewhere.
-        </div>
-      ) : null}
     </div>
   );
 };
