@@ -139,6 +139,17 @@ const EnvMonitor = () => {
     return history.filter((row) => row.ts >= previousStart && row.ts < start);
   }, [history, selectedFilter]);
 
+  const previousSnapshot = useMemo(() => {
+    if (history.length < 2) return null;
+    const latestTs = history[history.length - 1]?.ts ?? 0;
+    for (let i = history.length - 2; i >= 0; i -= 1) {
+      const row = history[i];
+      if (!row) continue;
+      if (row.ts && row.ts < latestTs) return row;
+    }
+    return history[history.length - 2];
+  }, [history]);
+
   const previousAverages = useMemo(() => {
     const map = {};
     ['temperature', 'humidity', 'light', 'co2'].forEach((key) => {
@@ -162,7 +173,7 @@ const EnvMonitor = () => {
     return keys.map((key) => {
       const metric = METRIC_DEFINITIONS[key];
       const value = latest?.[key];
-      const prev = previousAverages[key];
+      const prev = previousAverages[key] ?? previousSnapshot?.[key] ?? null;
       const bounds = thresholds?.metrics?.[key];
       const min = bounds?.min;
       const max = bounds?.max;
@@ -677,6 +688,31 @@ const EnvMonitor = () => {
     }
   };
 
+  const saveLiveComparison = () => {
+    const headers = ['factor', 'previous', 'current', 'min', 'max', 'status', 'timestamp'];
+    const nowIso = new Date().toISOString();
+    const rows = liveFactors.map((item) => [
+      item.label,
+      formatMetric(item.previous, item.key),
+      formatMetric(item.value, item.key),
+      item.min ?? '',
+      item.max ?? '',
+      item.state,
+      nowIso,
+    ]);
+    const csv = [headers.join(','), ...rows.map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `orchid-live-comparison-${Date.now()}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    setActionMessage('Live comparison saved to CSV.');
+  };
+
   const handleMarkNotification = async (id) => {
     try {
       if (String(id).startsWith('live-')) return;
@@ -749,7 +785,16 @@ const EnvMonitor = () => {
 
           <section className="panel">
             <div className="mb-3 flex items-center justify-between gap-2">
-              <h2 className="module-title">Live 4-Factor Comparison</h2>
+              <div className="flex items-center gap-3">
+                <h2 className="module-title">Live 4-Factor Comparison</h2>
+                <button
+                  type="button"
+                  onClick={saveLiveComparison}
+                  className="btn-soft text-xs px-3 py-1.5"
+                >
+                  Save CSV
+                </button>
+              </div>
               <span className="text-xs text-subtle">Updates instantly with incoming telemetry</span>
             </div>
             <div className="overflow-x-auto">

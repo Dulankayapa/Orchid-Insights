@@ -19,21 +19,6 @@ export default function Footer() {
       <div className="pointer-events-none absolute inset-x-10 -top-14 h-28 rounded-[32px] bg-gradient-to-r from-primary/20 via-secondary/20 to-accent/20 blur-3xl opacity-70" />
       <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-8 lg:px-10">
         <div className="flex flex-col gap-7 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex items-start gap-3">
-            <div className="brand-orb text-xl" aria-hidden>
-              {"\u{1F338}"}
-            </div>
-            <div className="space-y-1">
-              <p className="kicker">Orchid Insights</p>
-              <p className="text-sm text-subtle">
-                Lab-built telemetry, culture care, and growth intelligence for orchids.
-              </p>
-              <p className="text-[12px] font-semibold uppercase tracking-[0.16em] text-subtle/80">
-                Based in Colombo - Always in bloom
-              </p>
-            </div>
-          </div>
-
           <div className="grid w-full gap-3 text-sm sm:grid-cols-2 sm:gap-4 lg:w-auto lg:flex lg:flex-wrap lg:items-center lg:justify-end lg:gap-3">
             {quickLinks.map((link) => (
               <NavLink
@@ -51,18 +36,6 @@ export default function Footer() {
                 {link.label}
               </NavLink>
             ))}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <span className="chip-subtle border-primary/40 bg-primary/10 text-primary">
-              Live dashboard
-            </span>
-            <span className="chip-subtle border-border/70 text-subtle">
-              Dark-mode ready
-            </span>
-            <span className="chip-subtle border-accent/50 bg-accent/10 text-dark">
-              TZ: Asia/Colombo
-            </span>
           </div>
         </div>
 
