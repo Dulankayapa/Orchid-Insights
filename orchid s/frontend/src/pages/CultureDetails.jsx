@@ -593,6 +593,11 @@ export default function CultureDetails() {
       setError(`Jar ${targetJarId} was not found.`);
       return;
     }
+    if (targetEntry.isRemoved) {
+      setStatus("");
+      setError(`Jar ${targetJarId} is already marked as removed.`);
+      return;
+    }
 
     const reasonLabel = getRemovalReasonLabel(removalReason);
     const shouldMark =
@@ -602,6 +607,17 @@ export default function CultureDetails() {
     if (!shouldMark) return;
 
     const nowIso = new Date().toISOString();
+    const removalDate = nowIso.slice(0, 10);
+    const updatedRecultures = [
+      ...(Array.isArray(targetEntry.recultures) ? targetEntry.recultures : []),
+      {
+        date: removalDate,
+        note: `End of lab life: ${reasonLabel}`,
+        recultureType: "REMOVED",
+        removedReason: removalReason,
+        createdAt: nowIso,
+      },
+    ].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
     setSaving(true);
     setStatus("");
     setError("");
@@ -615,6 +631,7 @@ export default function CultureDetails() {
         removed_reason: removalReason,
         removedAt: nowIso,
         removed_at: nowIso,
+        recultures: updatedRecultures,
         updatedAt: nowIso,
       });
       if (normalizeOptionKey(selectedRecultureJarId) === normalizeOptionKey(targetJarId)) {
@@ -630,7 +647,7 @@ export default function CultureDetails() {
         plant_count: String(targetEntry.plantCount || ""),
         seed_count: String(targetEntry.plantCount || ""),
         reculture_type: "REMOVED",
-        reculture_date: nowIso.slice(0, 10),
+        reculture_date: removalDate,
         removed_reason: removalReason,
         created_at: nowIso,
       });
@@ -1188,6 +1205,8 @@ export default function CultureDetails() {
             isEditing={isEditing}
             selectedEntry={selectedEntry}
             entries={entries}
+            onMarkRemoved={markJarRemoved}
+            onRestore={restoreJarRemoval}
             onSubmit={handleSubmit}
             clearForm={clearForm}
             status={status}
@@ -1208,7 +1227,15 @@ export default function CultureDetails() {
         />
       </div>
 
-      {selectedEntry && <Timeline entry={selectedEntry} entries={entries} />}
+      {selectedEntry && (
+        <Timeline
+          entry={selectedEntry}
+          entries={entries}
+          onMarkRemoved={markJarRemoved}
+          onRestore={restoreJarRemoval}
+          saving={saving}
+        />
+      )}
     </div>
   );
 }
@@ -1264,6 +1291,8 @@ function FormCard({
   isEditing,
   selectedEntry,
   entries,
+  onMarkRemoved,
+  onRestore,
   onSubmit,
   clearForm,
   status,
@@ -1282,6 +1311,16 @@ function FormCard({
     if (!parentId) return null;
     return (entries || []).find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(parentId)) || null;
   }, [entries, selectedEntry]);
+  const [detailRemovalReason, setDetailRemovalReason] = useState(REMOVAL_REASON_CONTAMINATION);
+
+  useEffect(() => {
+    if (!selectedEntry) return;
+    if (selectedEntry.isRemoved && selectedEntry.removedReason) {
+      setDetailRemovalReason(selectedEntry.removedReason);
+      return;
+    }
+    setDetailRemovalReason(REMOVAL_REASON_CONTAMINATION);
+  }, [selectedEntry]);
   return (
     <motion.form
       onSubmit={onSubmit}
@@ -1503,6 +1542,40 @@ function FormCard({
               {selectedParentEntry.nutrition || "-"}
             </p>
           )}
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-border/35 pt-3">
+            {!selectedEntry.isRemoved && (
+              <select
+                value={detailRemovalReason}
+                onChange={(e) => setDetailRemovalReason(e.target.value)}
+                className="input-shell max-w-[230px] py-1.5 text-xs"
+              >
+                {REMOVAL_REASON_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedEntry.isRemoved ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onRestore(selectedEntry.jarId)}
+                className="rounded-lg border border-emerald-200/70 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 hover:border-emerald-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Restore jar
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onMarkRemoved(selectedEntry.jarId, detailRemovalReason)}
+                className="rounded-lg border border-amber-200/70 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 hover:border-amber-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Mark as end of lab life
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1629,7 +1702,9 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
         filteredEntries.length ? (
           <div className="space-y-2 max-h-[24rem] overflow-auto pr-1">
             {filteredEntries.map((entry) => {
-              const nextReculture = entry.recultures.find((r) => new Date(r.date) >= new Date());
+              const nextReculture = entry.isRemoved
+                ? null
+                : entry.recultures.find((r) => new Date(r.date) >= new Date());
               const isSelected = selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase();
               const childCount = childCountByParent.get(normalizeOptionKey(entry.jarId)) || 0;
               return (
@@ -2781,7 +2856,7 @@ function RecultureWorkspace({
   );
 }
 
-function Timeline({ entry, entries }) {
+function Timeline({ entry, entries, onMarkRemoved, onRestore, saving }) {
   const entryById = useMemo(() => {
     const map = new Map();
     (entries || []).forEach((item) => {
@@ -2835,6 +2910,22 @@ function Timeline({ entry, entries }) {
     }
     return rows;
   }, [entry.jarId, parentChain, childJars]);
+  const historyRows = useMemo(
+    () =>
+      [...(Array.isArray(entry.recultures) ? entry.recultures : [])].sort(
+        (a, b) => new Date(a?.date || 0) - new Date(b?.date || 0)
+      ),
+    [entry.recultures]
+  );
+  const [timelineRemovalReason, setTimelineRemovalReason] = useState(REMOVAL_REASON_CONTAMINATION);
+
+  useEffect(() => {
+    if (entry.isRemoved && entry.removedReason) {
+      setTimelineRemovalReason(entry.removedReason);
+      return;
+    }
+    setTimelineRemovalReason(REMOVAL_REASON_CONTAMINATION);
+  }, [entry.isRemoved, entry.removedReason, entry.jarId]);
 
   return (
     <motion.div
@@ -2849,19 +2940,21 @@ function Timeline({ entry, entries }) {
           <h3 className="text-lg font-semibold text-dark">Re-culture trail for {entry.jarId}</h3>
         </div>
         <span className="text-xs text-primary px-3 py-1 rounded-full border border-primary/25 bg-primary/10">
-          {entry.recultures.length} planned
+          {historyRows.length} events
         </span>
       </div>
 
-      {entry.recultures.length === 0 ? (
+      {historyRows.length === 0 ? (
         <div className="panel-muted border-dashed px-4 py-3 text-sm text-subtle">
           No re-culture dates logged yet. Add them later without changing the jar ID.
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {entry.recultures.map((row, idx) => (
+          {historyRows.map((row, idx) => (
             <div key={`${entry.jarId}-${row.date}-${idx}`} className="panel-muted px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">Re-culture {idx + 1}</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">
+                {row?.recultureType === "REMOVED" ? "End of lab life" : `Re-culture ${idx + 1}`}
+              </p>
               <p className="text-lg font-semibold text-dark mt-1">{row.date}</p>
               {row.note ? (
                 <p className="text-sm text-subtle mt-1">{row.note}</p>
@@ -2878,6 +2971,48 @@ function Timeline({ entry, entries }) {
       </div>
       <div className="panel-muted px-4 py-3 text-sm text-subtle">
         Parent jar: {entry.parentJarId || "Root jar"} - Child jars: {childJars.length ? childJars.join(", ") : "None"}
+      </div>
+      <div className="panel-muted px-4 py-3 text-sm text-subtle space-y-2">
+        <p className="font-semibold text-dark">Hierarchy last step</p>
+        <p>
+          {entry.isRemoved
+            ? `Removed from lab (${getRemovalReasonLabel(entry.removedReason)}${entry.removedAt ? ` on ${normalizeDateValue(entry.removedAt) || entry.removedAt}` : ""}).`
+            : "Jar is active in lab."}
+        </p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {!entry.isRemoved && (
+            <select
+              value={timelineRemovalReason}
+              onChange={(e) => setTimelineRemovalReason(e.target.value)}
+              className="input-shell max-w-[230px] py-1.5 text-xs"
+            >
+              {REMOVAL_REASON_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {entry.isRemoved ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onRestore(entry.jarId)}
+              className="rounded-lg border border-emerald-200/70 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 hover:border-emerald-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Restore jar
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onMarkRemoved(entry.jarId, timelineRemovalReason)}
+              className="rounded-lg border border-amber-200/70 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 hover:border-amber-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Mark as end of lab life
+            </button>
+          )}
+        </div>
       </div>
       <div className="rounded-xl border border-border/45 bg-paper/70 overflow-hidden">
         <p className="px-4 py-3 text-sm font-semibold text-dark border-b border-border/45">Jar relationship table</p>
