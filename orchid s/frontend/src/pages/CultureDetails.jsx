@@ -822,7 +822,7 @@ export default function CultureDetails() {
           reculture_date: recultureDate,
           created_at: nowIso,
         });
-        setStatus(`Saved reculture update under same jar ${sourceJarId}. QR label is ready in Jar list.`);
+        setStatus(`Saved reculture update under same jar ${sourceJarId}. QR label is ready in QR list.`);
         setSameJarReculture(newSameJarReculture());
       } catch (err) {
         setError(err?.message || "Failed to save reculture update.");
@@ -989,7 +989,7 @@ export default function CultureDetails() {
       });
 
       await Promise.all(writeTasks);
-      setStatus(`Saved sub-culture split from ${sourceJarId} into ${newJarIds.join(", ")}. QR labels are ready in Jar list.`);
+      setStatus(`Saved sub-culture split from ${sourceJarId} into ${newJarIds.join(", ")}. QR labels are ready in QR list.`);
       setSplitRows([newSplitJarRow()]);
     } catch (err) {
       setError(err?.message || "Failed to save sub-culture split.");
@@ -1142,7 +1142,7 @@ export default function CultureDetails() {
       setStatus(
         `Saved ${jarId} with ${payload.recultures.length} re-culture dates${
           recultureMode === "subculture" && parentJarId ? ` (sub-culture from ${parentJarId})` : ""
-        }. QR label is ready in Jar list.`
+        }. QR label is ready in QR list.`
       );
     } catch (err) {
       setError(err?.message || "Failed to save to Firebase.");
@@ -1259,7 +1259,7 @@ function Hero({ onOpenJarList }) {
           onClick={onOpenJarList}
           className="btn-primary px-4 py-2 text-sm"
         >
-          Jar list
+          QR list
         </button>
       </div>
     </motion.div>
@@ -2247,7 +2247,7 @@ function JarLabelManager({ entries, onClose }) {
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="kicker">Jar list</p>
+            <p className="kicker">QR list</p>
             <h3 className="text-xl font-semibold text-dark">QR label preview and print</h3>
             <p className="text-sm text-subtle">
               Label size: {LABEL_WIDTH_IN}" x {LABEL_HEIGHT_IN}" | QR payload: Jar ID only

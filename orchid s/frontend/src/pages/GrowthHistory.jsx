@@ -227,6 +227,75 @@ const normalizeJarIdInput = (value) => {
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 
+const getJarIdNumericPart = (value) => {
+  const normalized = normalizeId(value);
+  const match = normalized.match(/^jar(\d+)$/);
+  return match ? match[1] : "";
+};
+
+const getJarSuggestions = (input, ids, limit = 12) => {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+  const normalizedInput = normalizeId(raw);
+  const numericPrefix = getJarIdNumericPart(raw);
+  const normalizedMap = new Map();
+  (ids || [])
+    .filter(Boolean)
+    .forEach((id) => {
+      const key = normalizeId(id) || String(id).toLowerCase();
+      if (!key || normalizedMap.has(key)) return;
+      normalizedMap.set(key, id);
+    });
+  const unique = Array.from(normalizedMap.values());
+  const matches = unique.filter((id) => {
+    if (numericPrefix) {
+      return getJarIdNumericPart(id).startsWith(numericPrefix);
+    }
+    const normalizedId = normalizeId(id);
+    return normalizedId.startsWith(normalizedInput) || String(id).toLowerCase().startsWith(raw.toLowerCase());
+  });
+  return matches
+    .sort((a, b) => {
+      if (numericPrefix) {
+        const aNumText = getJarIdNumericPart(a);
+        const bNumText = getJarIdNumericPart(b);
+        const aExactPrefixLength = aNumText.length === numericPrefix.length;
+        const bExactPrefixLength = bNumText.length === numericPrefix.length;
+        if (aExactPrefixLength !== bExactPrefixLength) return aExactPrefixLength ? 1 : -1;
+      }
+      const aNum = Number(getJarIdNumericPart(a));
+      const bNum = Number(getJarIdNumericPart(b));
+      if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) return aNum - bNum;
+      return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+    })
+    .slice(0, limit);
+};
+
+const normalizeRackSearchKey = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^RACK\s*/i, "")
+    .replace(/[\s_-]+/g, "");
+
+const getRackSuggestions = (input, rackHints = [], limit = 12) => {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+  const inputKey = normalizeRackSearchKey(raw);
+  const unique = Array.from(new Set((rackHints || []).filter(Boolean)));
+  const matches = unique.filter((label) => {
+    const rackCode = extractRackCode(label);
+    const labelKey = normalizeRackSearchKey(label);
+    const rackCodeKey = normalizeRackSearchKey(rackCode);
+    return labelKey.startsWith(inputKey) || rackCodeKey.startsWith(inputKey);
+  });
+  return matches
+    .map((label) => extractRackCode(label) || label.replace(/^Rack\s+/i, "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+    .slice(0, limit);
+};
+
 const buildLineageIndex = (cultureEntries) => {
   const parentById = new Map();
   const childrenById = new Map();
@@ -310,6 +379,13 @@ const formatAgeDays = (value) => {
   return `${days >= 10 ? days.toFixed(0) : days.toFixed(1)} days`;
 };
 
+const formatNutritionOutcome = (outcome) => {
+  if (outcome === "improved") return "Improved";
+  if (outcome === "slowed") return "Slowed";
+  if (outcome === "no_clear_change") return "No clear change";
+  return "Insufficient data";
+};
+
 const escapeHtml = (value) =>
   String(value ?? "")
     .replace(/&/g, "&amp;")
@@ -330,9 +406,9 @@ const formatReportDate = () =>
 const renderKeyValueTable = (rows) => {
   if (!rows || !rows.length) return "";
   const body = rows
-    .map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`)
+    .map(([label, value]) => `<tr><td class="label">${escapeHtml(label)}</td><td class="value">${escapeHtml(value)}</td></tr>`)
     .join("");
-  return `<table class="kv"><tbody>${body}</tbody></table>`;
+  return `<table class="report-table kv-table"><tbody>${body}</tbody></table>`;
 };
 
 const renderDataTable = (headers, rows) => {
@@ -341,17 +417,58 @@ const renderDataTable = (headers, rows) => {
   const body = rows
     .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
     .join("");
-  return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  return `<table class="report-table data-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 };
 
-const openReportWindow = ({ title, subtitle, chartImage, sections }) => {
-  const reportWindow = window.open("", "_blank");
-  if (!reportWindow) return;
+const buildReportFilename = (title) => {
+  const safeTitle = String(title || "jar-history-report")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `${safeTitle || "jar-history-report"}-${stamp}.html`;
+};
 
+const downloadReportHtml = (filename, html) => {
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+};
+
+const openReportWindow = ({ title, subtitle, chartImage, chartImages, sections, mode = "preview" }) => {
+  const targetMode = ["preview", "print", "download"].includes(mode) ? mode : "preview";
+
+  const reportId = `GH-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
+  const generatedAt = formatReportDate();
+  const fileName = buildReportFilename(title);
+  const normalizedCharts = (Array.isArray(chartImages) ? chartImages : [])
+    .map((entry) => {
+      if (!entry) return null;
+      if (typeof entry === "string") return { src: entry, caption: "" };
+      return { src: firstText(entry.src), caption: firstText(entry.caption) };
+    })
+    .filter((entry) => entry?.src);
+  if (!normalizedCharts.length && chartImage) {
+    normalizedCharts.push({ src: chartImage, caption: subtitle || "Chart" });
+  }
+  const chartsHtml = normalizedCharts.length
+    ? normalizedCharts
+        .map(
+          (entry, idx) =>
+            `<figure class="chart"><img src="${escapeHtml(entry.src)}" alt="Chart ${idx + 1}" />${
+              entry.caption ? `<figcaption>${escapeHtml(entry.caption)}</figcaption>` : ""
+            }</figure>`
+        )
+        .join("")
+    : "";
   const sectionsHtml = (sections || [])
     .map((section) => {
       const heading = section.heading ? `<h2>${escapeHtml(section.heading)}</h2>` : "";
-      return `<section>${heading}${section.content || ""}</section>`;
+      return `<section class="report-section">${heading}${section.content || ""}</section>`;
     })
     .join("");
 
@@ -361,41 +478,388 @@ const openReportWindow = ({ title, subtitle, chartImage, sections }) => {
     <meta charset="utf-8" />
     <title>${escapeHtml(title || "Report")}</title>
     <style>
-      body { font-family: "Manrope", Arial, sans-serif; color: #0f172a; padding: 32px; }
-      h1 { margin: 0 0 6px; font-size: 24px; }
-      h2 { margin: 20px 0 8px; font-size: 16px; }
-      p { margin: 6px 0; }
-      .muted { color: #64748b; font-size: 12px; }
-      .chart { margin: 16px 0; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
-      .chart img { width: 100%; height: auto; display: block; }
-      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-      table.kv td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
-      table.kv td:first-child { color: #64748b; width: 180px; }
-      table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: left; }
-      table.data th { color: #475569; font-weight: 600; background: #f8fafc; }
-      .footer { margin-top: 32px; }
-      .signature { margin-top: 24px; }
-      .signature-line { margin-top: 32px; border-bottom: 1px solid #94a3b8; width: 240px; }
+      :root {
+        --ink: #0f172a;
+        --ink-soft: #334155;
+        --muted: #64748b;
+        --line: #dbe3ee;
+        --paper: #ffffff;
+        --paper-soft: #f8fafc;
+        --brand: #0f766e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px;
+        font-family: "Manrope", "Segoe UI", Arial, sans-serif;
+        color: var(--ink);
+        background: var(--paper-soft);
+      }
+      .report-actions {
+        max-width: 980px;
+        margin: 0 auto 12px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .report-actions button {
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--ink);
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+      .report-actions button:hover { border-color: #94a3b8; }
+      .report-page {
+        max-width: 980px;
+        margin: 0 auto;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .academic-head {
+        padding: 14px 26px 12px;
+        border-bottom: 1px solid var(--line);
+        background: #ffffff;
+      }
+      .academic-head .lab-name {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        color: var(--ink);
+        text-transform: uppercase;
+      }
+      .academic-head .lab-unit {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      .academic-head .lab-doc {
+        margin: 4px 0 0;
+        font-size: 11px;
+        color: var(--muted);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+      .report-head {
+        padding: 22px 26px 20px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(135deg, #f0fdfa, #ecfeff);
+      }
+      .kicker {
+        margin: 0 0 8px;
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.2;
+      }
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+      .meta-strip {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+      }
+      .meta-chip {
+        border: 1px solid var(--line);
+        background: #ffffffcc;
+        border-radius: 10px;
+        padding: 8px 10px;
+      }
+      .meta-chip .label {
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+      }
+      .meta-chip .value {
+        margin-top: 2px;
+        font-size: 13px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .report-body { padding: 20px 26px 8px; }
+      .charts-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        align-items: start;
+      }
+      .chart {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 8px;
+        background: #fff;
+      }
+      .chart img {
+        width: 100%;
+        height: auto;
+        max-height: 230px;
+        object-fit: contain;
+        display: block;
+      }
+      .chart figcaption {
+        margin-top: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: var(--ink-soft);
+        text-transform: uppercase;
+      }
+      .report-section {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        background: #fff;
+        margin: 0 0 14px;
+        page-break-inside: avoid;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 15px;
+        letter-spacing: 0.01em;
+      }
+      p { margin: 6px 0; color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
+      .muted { color: var(--muted); font-size: 12px; }
+      .report-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 6px;
+      }
+      .report-table th,
+      .report-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 7px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .report-table th {
+        color: var(--ink-soft);
+        font-size: 11px;
+        font-weight: 700;
+        background: #f8fafc;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .report-table td {
+        font-size: 12px;
+        color: var(--ink);
+      }
+      .kv-table td.label {
+        color: var(--muted);
+        width: 220px;
+        font-weight: 600;
+      }
+      .kv-table td.value { color: var(--ink); }
+      .report-foot {
+        border-top: 1px solid var(--line);
+        margin-top: 16px;
+        padding: 14px 26px 18px;
+        background: #fff;
+      }
+      .report-foot .foot-note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .report-foot .foot-note + .foot-note {
+        margin-top: 4px;
+      }
+      .approval-grid {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .approval-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #f8fafc;
+        padding: 10px 12px;
+      }
+      .approval-title {
+        margin: 0 0 8px;
+        font-size: 11px;
+        color: var(--ink-soft);
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .sign-field {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin: 6px 0 0;
+      }
+      .sign-label {
+        min-width: 66px;
+        font-size: 11px;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .sign-fill {
+        flex: 1;
+        border-bottom: 1px solid #94a3b8;
+        min-height: 16px;
+        font-size: 12px;
+        color: var(--ink);
+        padding-bottom: 1px;
+        outline: none;
+      }
+      .sign-fill:empty::before {
+        content: attr(data-placeholder);
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      @media print {
+        body { padding: 0; background: #fff; }
+        .no-print { display: none !important; }
+        .report-page { max-width: none; border: none; border-radius: 0; }
+        .report-section { break-inside: avoid; }
+        .approval-card { break-inside: avoid; }
+        .chart img { max-height: 200px; }
+      }
     </style>
   </head>
   <body>
-    <h1>${escapeHtml(title || "Report")}</h1>
-    ${subtitle ? `<p class="muted">${escapeHtml(subtitle)}</p>` : ""}
-    ${chartImage ? `<div class="chart"><img src="${chartImage}" alt="Chart" /></div>` : ""}
-    ${sectionsHtml}
-    <div class="footer">
-      <p class="muted">Generated: ${escapeHtml(formatReportDate())}</p>
-      <div class="signature">
-        <p class="muted">Signature</p>
-        <div class="signature-line"></div>
+    <div class="report-actions no-print">
+      <button id="printReportBtn" type="button">Print</button>
+      <button id="downloadReportBtn" type="button">Download</button>
+      <button id="closeReportBtn" type="button">Close</button>
+    </div>
+    <div class="report-page">
+      <header class="academic-head">
+        <p class="lab-name">Orchid Insights Laboratory</p>
+        <p class="lab-unit">Growth Analytics and Tissue Culture Monitoring Unit</p>
+        <p class="lab-doc">Academic Laboratory Report</p>
+      </header>
+      <header class="report-head">
+        <p class="kicker">Orchid Insights - Growth History</p>
+        <h1>${escapeHtml(title || "Report")}</h1>
+        ${subtitle ? `<p class="subtitle">${escapeHtml(subtitle)}</p>` : ""}
+        <div class="meta-strip">
+          <div class="meta-chip">
+            <div class="label">Generated</div>
+            <div class="value">${escapeHtml(generatedAt)}</div>
+          </div>
+          <div class="meta-chip">
+            <div class="label">Report ID</div>
+            <div class="value">${escapeHtml(reportId)}</div>
+          </div>
+          <div class="meta-chip">
+            <div class="label">Source</div>
+            <div class="value">Growth History Analytics</div>
+          </div>
+        </div>
+      </header>
+      <main class="report-body">
+        ${chartsHtml ? `<section class="report-section"><h2>Charts</h2><div class="charts-grid">${chartsHtml}</div></section>` : ""}
+        ${sectionsHtml}
+      </main>
+      <div class="report-foot">
+        <p class="foot-note">Prepared by Orchid Insights reporting engine.</p>
+        <p class="foot-note">For academic and laboratory documentation use.</p>
+        <div class="approval-grid">
+          <div class="approval-card">
+            <p class="approval-title">Prepared By</p>
+            <div class="sign-field">
+              <span class="sign-label">Name</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter name"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Position</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter position"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Signature</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Sign here"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Date</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="YYYY-MM-DD"></span>
+            </div>
+          </div>
+          <div class="approval-card">
+            <p class="approval-title">Reviewed / Approved By</p>
+            <div class="sign-field">
+              <span class="sign-label">Name</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter name"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Position</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter position"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Signature</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Sign here"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Date</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="YYYY-MM-DD"></span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+    <script>
+      (function () {
+        const fileName = ${JSON.stringify(fileName)};
+        const printBtn = document.getElementById("printReportBtn");
+        const downloadBtn = document.getElementById("downloadReportBtn");
+        const closeBtn = document.getElementById("closeReportBtn");
+        if (printBtn) printBtn.addEventListener("click", function () { window.print(); });
+        if (downloadBtn) {
+          downloadBtn.addEventListener("click", function () {
+            const blob = new Blob([document.documentElement.outerHTML], { type: "text/html;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName;
+            link.click();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1200);
+          });
+        }
+        if (closeBtn) closeBtn.addEventListener("click", function () { window.close(); });
+      })();
+    </script>
   </body>
 </html>`;
 
+  if (targetMode === "download") {
+    downloadReportHtml(fileName, html);
+    return;
+  }
+
+  const reportWindow = window.open("", "_blank");
+  if (!reportWindow) return;
   reportWindow.document.write(html);
   reportWindow.document.close();
   reportWindow.focus();
+  if (targetMode === "print") {
+    reportWindow.onload = () => {
+      reportWindow.focus();
+      reportWindow.print();
+    };
+  }
 };
 
 const computeSeriesStats = (points) => {
@@ -1319,6 +1783,71 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
   if (!stats || !history.length) return "No measurement data is available yet.";
 
   const q = question.toLowerCase();
+  const qualityVerdict = (() => {
+    if (!stats || history.length < 2 || stats.days === null || stats.rate === null || !Number.isFinite(stats.rate)) {
+      return {
+        label: "Insufficient trend confidence",
+        detail: "Need more time-based points before judging growth quality.",
+      };
+    }
+
+    const rate = Number(stats.rate);
+    const spanDays = Number(stats.days);
+    const sampleCount = history.length;
+    const confidence =
+      sampleCount >= 8 && spanDays >= 45
+        ? "High"
+        : sampleCount >= 4 && spanDays >= 14
+          ? "Medium"
+          : "Low";
+
+    if (rate < 0) {
+      return {
+        label: "Bad",
+        detail: `Height is declining (${rate.toFixed(2)} mm/day). Confidence ${confidence}.`,
+      };
+    }
+    if (rate < 0.08) {
+      return {
+        label: "Weak",
+        detail: `Growth is very slow (${rate.toFixed(2)} mm/day). Confidence ${confidence}.`,
+      };
+    }
+    if (rate < 0.2) {
+      return {
+        label: "Moderate",
+        detail: `Growth is acceptable but not strong (${rate.toFixed(2)} mm/day). Confidence ${confidence}.`,
+      };
+    }
+    return {
+      label: "Good",
+      detail: `Growth is strong (${rate.toFixed(2)} mm/day) with an increasing trend. Confidence ${confidence}.`,
+    };
+  })();
+
+  if (
+    q.includes("good") ||
+    q.includes("bad") ||
+    q.includes("healthy") ||
+    q.includes("ok") ||
+    q.includes("okay") ||
+    q.includes("well") ||
+    q.includes("improv") ||
+    q.includes("worse") ||
+    q.includes("better") ||
+    q.includes("progress")
+  ) {
+    return `${record?.id ? `Jar ${record.id}` : "This jar"} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+  }
+
+  if (q.includes("why")) {
+    return `${qualityVerdict.detail} This is based on total change ${
+      Number.isFinite(stats.delta) ? `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm` : "n/a"
+    }, average ${
+      Number.isFinite(stats.avg) ? `${stats.avg.toFixed(1)} mm` : "n/a"
+    }, and span ${stats.days !== null ? `${stats.days.toFixed(0)} days` : "n/a"}.`;
+  }
+
   if (q.includes("rate") || q.includes("growth")) {
     return stats.rate !== null ? `Growth rate is ${stats.rate.toFixed(2)} mm/day.` : "Growth rate is not available yet.";
   }
@@ -2454,47 +2983,86 @@ export default function GrowthHistory() {
   }, [combinedRecords]);
   const [includeRackInsight, setIncludeRackInsight] = useState(true);
   const [rackReportInsight, setRackReportInsight] = useState("");
-  const clusterSelectionIds = useMemo(() => {
+  const jarClusterSelectionIds = useMemo(() => {
+    const set = new Set();
+    const key = normalizeId(record?.id);
+    if (key) set.add(key);
+    return set;
+  }, [record?.id]);
+  const jarClusterResult = useMemo(() => {
+    if (!jarClusterSelectionIds.size) {
+      return {
+        ready: false,
+        reason: "Select a jar first to run clustering for this section.",
+        assignments: [],
+        counts: {},
+        mode: "kmeans",
+        note: "",
+        iterations: 0,
+        totalJars: 0,
+        sourceLabel: "jar history scope",
+      };
+    }
+    return buildGrowthClusterResult(combinedRecords, {
+      mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+      includeIdSet: jarClusterSelectionIds,
+    });
+  }, [combinedRecords, jarClusterSelectionIds]);
+  const rackClusterSelectionIds = useMemo(() => {
+    const set = new Set();
+    if (!(rackQuery || "").trim()) return set;
+    (rackPlants || []).forEach((plant) => {
+      const key = normalizeId(plant?.id);
+      if (key) set.add(key);
+    });
+    return set;
+  }, [rackQuery, rackPlants]);
+  const rackClusterResult = useMemo(() => {
+    if (!rackClusterSelectionIds.size) {
+      return {
+        ready: false,
+        reason: "Enter a rack ID first to run clustering for this section.",
+        assignments: [],
+        counts: {},
+        mode: "kmeans",
+        note: "",
+        iterations: 0,
+        totalJars: 0,
+        sourceLabel: "rack insights scope",
+      };
+    }
+    return buildGrowthClusterResult(combinedRecords, {
+      mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+      includeIdSet: rackClusterSelectionIds,
+    });
+  }, [combinedRecords, rackClusterSelectionIds]);
+  const compareClusterSelectionIds = useMemo(() => {
     const set = new Set();
     (compareIds || []).forEach((id) => {
       const key = normalizeId(id);
       if (key) set.add(key);
     });
-    if (record?.id) {
-      const key = normalizeId(record.id);
-      if (key) set.add(key);
-    }
-    if ((rackQuery || "").trim()) {
-      (rackPlants || []).forEach((plant) => {
-        const key = normalizeId(plant?.id);
-        if (key) set.add(key);
-      });
-    }
     return set;
-  }, [compareIds, record, rackQuery, rackPlants]);
-  const hasClusterScope = clusterSelectionIds.size > 0;
-  const clusterResult = useMemo(
-    () => {
-      if (!hasClusterScope) {
-        return {
-          ready: false,
-          reason: "Select a rack or jar to view growth clustering.",
-          assignments: [],
-          counts: {},
-          mode: "kmeans",
-          note: "",
-          iterations: 0,
-          totalJars: 0,
-          sourceLabel: "no active selection",
-        };
-      }
-      return buildGrowthClusterResult(combinedRecords, {
-        mockIdSet: HISTORY_TEST_MOCK_ID_SET,
-        includeIdSet: clusterSelectionIds,
-      });
-    },
-    [combinedRecords, clusterSelectionIds, hasClusterScope]
-  );
+  }, [compareIds]);
+  const compareClusterResult = useMemo(() => {
+    if (!compareClusterSelectionIds.size) {
+      return {
+        ready: false,
+        reason: "Select jar IDs in comparison first to run clustering for this section.",
+        assignments: [],
+        counts: {},
+        mode: "kmeans",
+        note: "",
+        iterations: 0,
+        totalJars: 0,
+        sourceLabel: "comparison scope",
+      };
+    }
+    return buildGrowthClusterResult(combinedRecords, {
+      mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+      includeIdSet: compareClusterSelectionIds,
+    });
+  }, [combinedRecords, compareClusterSelectionIds]);
   const globalGrowthFeatures = useMemo(() => buildJarClusterFeatures(combinedRecords), [combinedRecords]);
   const heroWarnings = useMemo(() => {
     return buildGrowthAttentionWarnings(globalGrowthFeatures);
@@ -2511,133 +3079,304 @@ export default function GrowthHistory() {
   useEffect(() => {
     setRackReportInsight(rackBrief);
   }, [rackBrief]);
+  const [activeSectionId, setActiveSectionId] = useState("");
+  const activeSectionRef = useRef(null);
+
+  useEffect(() => {
+    if (!activeSectionId || !activeSectionRef.current) return;
+    activeSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeSectionId]);
+
+  const sectionNavItems = useMemo(
+    () => [
+      {
+        id: "jar-history-section",
+        kicker: "Predictive",
+        title: "Jar History",
+        description: "Jar search, snapshot, growth chart, report/print/download, assistant, clustering, and measurement timeline.",
+        icon: "\u{1F4C8}",
+        status: record ? `${history.length} measurement${history.length === 1 ? "" : "s"} loaded` : "Select a jar to begin",
+        tone: "default",
+      },
+      {
+        id: "rack-insights-section",
+        kicker: "Analytics",
+        title: "Rack Insights",
+        description: "Rack-level analysis, rack trend charts, rack-pair comparison, and rack-focused guidance.",
+        icon: "\u{1F4CA}",
+        status: rackQuery ? `Active rack: ${rackQuery}` : "No rack selected",
+        tone: rackQuery ? "default" : "muted",
+      },
+      {
+        id: "jar-comparison-section",
+        kicker: "Comparison",
+        title: "Jar Comparison",
+        description: "Compare up to three jars, track trends, ask questions, and run clustering.",
+        icon: "\u2696\uFE0F",
+        status: compareIds.length ? `${compareIds.length} jar${compareIds.length > 1 ? "s" : ""} selected` : "No jars selected",
+        tone: compareIds.length ? "default" : "muted",
+      },
+    ],
+    [record, history.length, rackQuery, compareIds.length]
+  );
+
+  const openSection = (id) => {
+    if (!id) return;
+    setActiveSectionId((prev) => (prev === id ? "" : id));
+  };
 
   return (
     <div className="relative space-y-8">
       <Backdrop isLight={isLight} />
       <Hero warnings={heroWarnings} />
-      <LookupCard
-        jarId={jarId}
-        setJarId={setJarId}
-        record={record}
-        history={history}
-        query={query}
-        setQuery={setQuery}
-        status={status}
-        setStatus={setStatus}
-        demoIdHint={demoIdHint}
-        demoIds={demoIds}
-        plantsError={plantsError}
-        cultureError={cultureError}
-      />
+      <SectionModuleGrid items={sectionNavItems} onOpen={openSection} activeId={activeSectionId} />
 
-      <div className="relative space-y-6">
-        <SummaryCard record={record} history={history} />
-        <ChartCard
-          isLight={isLight}
-          record={record}
-          history={history}
-          reportInsightText={growthReportInsight || growthBrief}
-          includeInsight={includeInsightInReport}
-        />
-        <InsightAssistant
-          kicker="Chart assistant"
-          title="Growth conclusion"
-          insightText={growthBrief}
-          summaryText={growthInsight}
-          includeInsight={includeInsightInReport}
-          setIncludeInsight={setIncludeInsightInReport}
-          placeholder="Ask about rate, change, average, or latest..."
-          onReportTextChange={setGrowthReportInsight}
-          onAsk={(question) =>
-            answerGrowthQuestion({
-              question,
-              stats: historyStats,
-              history,
-              record,
-              insight: growthInsight,
-            })
-          }
-        />
-        <HistoryList history={history} />
-        <RackSearch
-          rackQuery={rackQuery}
-          setRackQuery={setRackQuery}
-          rackStatus={rackStatus}
-          setRackStatus={setRackStatus}
-          rackPlants={rackPlants}
-          rackHintString={rackHintString}
-        />
-        <RackChart
-          isLight={isLight}
-          rackQuery={rackQuery}
-          rackPlants={rackPlants}
-          rackHintString={rackHintString}
-          rackStats={rackStats}
-          rackCategoryStats={rackCategoryStats}
-          reportInsightText={rackReportInsight || rackBrief}
-          includeInsight={includeRackInsight}
-        />
-        <RackPairComparison combinedRecords={combinedRecords} />
-        <InsightAssistant
-          kicker="Rack assistant"
-          title="Rack summary"
-          insightText={rackBrief}
-          summaryText={rackInsight}
-          includeInsight={includeRackInsight}
-          setIncludeInsight={setIncludeRackInsight}
-          placeholder="Ask about category growth, best/worst, or suggestions..."
-          onReportTextChange={setRackReportInsight}
-          onAsk={(question) =>
-            answerRackQuestion({
-              question,
-              rackStats,
-              rackQuery,
-              categoryStats: rackCategoryStats,
-              insight: rackInsight,
-              rackSnapshots,
-            })
-          }
-        />
-        <ComparePanel
-          combinedRecords={combinedRecords}
-          compareIds={compareIds}
-          setCompareIds={setCompareIds}
-          compareWindow={compareWindow}
-          setCompareWindow={setCompareWindow}
-        />
-        <CompareChart
-          combinedRecords={combinedRecords}
-          compareIds={compareIds}
-          compareWindow={compareWindow}
-          isLight={isLight}
-          metrics={compareMetrics}
-          reportInsightText={compareReportInsight || compareBrief}
-          includeInsight={includeCompareInsight}
-        />
-        <InsightAssistant
-          kicker="Compare assistant"
-          title="Comparison summary"
-          insightText={compareBrief}
-          summaryText={compareInsight}
-          includeInsight={includeCompareInsight}
-          setIncludeInsight={setIncludeCompareInsight}
-          placeholder="Ask about best, worst, change, or average..."
-          onReportTextChange={setCompareReportInsight}
-          onAsk={(question) =>
-            answerCompareQuestion({
-              question,
-              metrics: compareMetrics,
-              compareWindow,
-              insight: compareInsight,
-            })
-          }
-        />
-        {hasClusterScope ? <GrowthClusterPanel clusterResult={clusterResult} /> : null}
+      <div ref={activeSectionRef} className="relative space-y-6">
+        {activeSectionId === "jar-history-section" ? (
+          <SectionCard
+          id="jar-history-section"
+          kicker="Section 1"
+          title="Jar History"
+          subtitle="Jar search, snapshot, growth chart, report actions, Assistant Q&A, clustering, and measurement log."
+          status={record ? `${history.length} measurement${history.length === 1 ? "" : "s"} loaded` : "Select a jar to begin"}
+          onClose={() => setActiveSectionId("")}
+        >
+          <LookupCard
+            jarId={jarId}
+            setJarId={setJarId}
+            record={record}
+            history={history}
+            query={query}
+            setQuery={setQuery}
+            status={status}
+            setStatus={setStatus}
+            demoIdHint={demoIdHint}
+            demoIds={demoIds}
+            plantsError={plantsError}
+            cultureError={cultureError}
+          />
+          <SummaryCard record={record} history={history} />
+          <ChartCard
+            isLight={isLight}
+            record={record}
+            history={history}
+            reportInsightText={growthReportInsight || growthBrief}
+            includeInsight={includeInsightInReport}
+          />
+          <InsightAssistant
+            kicker="Chart assistant"
+            title="Growth conclusion"
+            insightText={growthBrief}
+            summaryText={growthInsight}
+            includeInsight={includeInsightInReport}
+            setIncludeInsight={setIncludeInsightInReport}
+            placeholder="Ask: is this good or bad, why, rate, change, average, latest..."
+            onReportTextChange={setGrowthReportInsight}
+            onAsk={(question) =>
+              answerGrowthQuestion({
+                question,
+                stats: historyStats,
+                history,
+                record,
+                insight: growthInsight,
+              })
+            }
+          />
+          <GrowthClusterPanel clusterResult={jarClusterResult} />
+          <HistoryList history={history} />
+          </SectionCard>
+        ) : null}
+
+        {activeSectionId === "rack-insights-section" ? (
+          <SectionCard
+          id="rack-insights-section"
+          kicker="Section 2"
+          title="Rack Performance & Zone Comparison"
+          subtitle="Analyze growth by rack, compare rack zones, and review rack-level recommendations."
+          status={rackQuery ? `Active rack: ${rackQuery}` : "Enter a rack label to analyze"}
+          onClose={() => setActiveSectionId("")}
+        >
+          <RackSearch
+            rackQuery={rackQuery}
+            setRackQuery={setRackQuery}
+            rackStatus={rackStatus}
+            setRackStatus={setRackStatus}
+            rackPlants={rackPlants}
+            rackHints={rackHints}
+            rackHintString={rackHintString}
+          />
+          <RackChart
+            isLight={isLight}
+            rackQuery={rackQuery}
+            rackPlants={rackPlants}
+            rackHintString={rackHintString}
+            rackStats={rackStats}
+            rackCategoryStats={rackCategoryStats}
+            reportInsightText={rackReportInsight || rackBrief}
+            includeInsight={includeRackInsight}
+          />
+          <RackPairComparison combinedRecords={combinedRecords} />
+          <InsightAssistant
+            kicker="Rack assistant"
+            title="Rack summary"
+            insightText={rackBrief}
+            summaryText={rackInsight}
+            includeInsight={includeRackInsight}
+            setIncludeInsight={setIncludeRackInsight}
+            placeholder="Ask about category growth, best/worst, or suggestions..."
+            onReportTextChange={setRackReportInsight}
+            onAsk={(question) =>
+              answerRackQuestion({
+                question,
+                rackStats,
+                rackQuery,
+                categoryStats: rackCategoryStats,
+                insight: rackInsight,
+                rackSnapshots,
+              })
+            }
+          />
+          <GrowthClusterPanel clusterResult={rackClusterResult} />
+          </SectionCard>
+        ) : null}
+
+        {activeSectionId === "jar-comparison-section" ? (
+          <SectionCard
+          id="jar-comparison-section"
+          kicker="Section 3"
+          title="Jar Comparison"
+          subtitle="Select up to three jars, compare growth lines, and ask comparison questions."
+          status={compareIds.length ? `${compareIds.length} jar${compareIds.length > 1 ? "s" : ""} selected` : "No jars selected"}
+          onClose={() => setActiveSectionId("")}
+        >
+          <ComparePanel
+            combinedRecords={combinedRecords}
+            compareIds={compareIds}
+            setCompareIds={setCompareIds}
+            compareWindow={compareWindow}
+            setCompareWindow={setCompareWindow}
+          />
+          <CompareChart
+            combinedRecords={combinedRecords}
+            compareIds={compareIds}
+            compareWindow={compareWindow}
+            isLight={isLight}
+            metrics={compareMetrics}
+            reportInsightText={compareReportInsight || compareBrief}
+            includeInsight={includeCompareInsight}
+          />
+          <InsightAssistant
+            kicker="Compare assistant"
+            title="Comparison summary"
+            insightText={compareBrief}
+            summaryText={compareInsight}
+            includeInsight={includeCompareInsight}
+            setIncludeInsight={setIncludeCompareInsight}
+            placeholder="Ask about best, worst, change, or average..."
+            onReportTextChange={setCompareReportInsight}
+            onAsk={(question) =>
+              answerCompareQuestion({
+                question,
+                metrics: compareMetrics,
+                compareWindow,
+                insight: compareInsight,
+              })
+            }
+          />
+          <GrowthClusterPanel clusterResult={compareClusterResult} />
+          </SectionCard>
+        ) : null}
       </div>
     </div>
   );
 }
+
+function SectionModuleGrid({ items, onOpen, activeId }) {
+  if (!items?.length) return null;
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="space-y-3"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="kicker">Sections</p>
+          <h3 className="text-lg font-semibold text-dark">Choose where to work</h3>
+        </div>
+        <span className="text-xs text-subtle">{items.length} modules</span>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {items.map((item) => {
+          const isMuted = item.tone === "muted";
+          return (
+            <div
+              key={item.id}
+              className={`rounded-3xl border p-4 shadow-sm backdrop-blur-sm ${
+                isMuted
+                  ? "border-border/45 bg-paper/75"
+                  : "border-primary/20 bg-gradient-to-br from-paper/90 via-paper/80 to-primary/5"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">{item.kicker}</p>
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/55 bg-paper/85 text-base">
+                  {item.icon || "*"}
+                </span>
+              </div>
+              <h4 className="mt-2 text-2xl font-semibold text-dark">{item.title}</h4>
+              <p className="mt-1 text-sm text-subtle min-h-[44px]">{item.description}</p>
+              <p className={`mt-2 text-xs ${isMuted ? "text-subtle" : "text-primary"}`}>{item.status}</p>
+              <button
+                type="button"
+                onClick={() => onOpen(item.id)}
+                className={`mt-3 text-xs font-semibold uppercase tracking-[0.16em] transition ${
+                  activeId === item.id ? "text-emerald-700" : "text-primary hover:text-primary/80"
+                }`}
+              >
+                {activeId === item.id ? "Hide section" : "Open section"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </motion.section>
+  );
+}
+
+function SectionCard({ id, kicker, title, subtitle, status, onClose, children }) {
+  return (
+    <motion.section
+      id={id}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="scroll-mt-24 rounded-2xl border border-primary/20 bg-paper/65 p-4 md:p-5 space-y-4 shadow-sm"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/45 pb-3">
+        <div className="space-y-1">
+          <p className="kicker">{kicker}</p>
+          <h2 className="text-xl font-semibold text-dark">{title}</h2>
+          <p className="text-sm text-subtle">{subtitle}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {status}
+          </span>
+          {onClose ? (
+            <button type="button" onClick={onClose} className="btn-soft px-3 py-1.5 text-xs">
+              Close
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </motion.section>
+  );
+}
+
 // Lookup card with search input and status messages.
 function LookupCard({
   jarId,
@@ -2653,6 +3392,18 @@ function LookupCard({
   plantsError,
   cultureError,
 }) {
+  const [showJarSuggestions, setShowJarSuggestions] = useState(false);
+  const jarSuggestions = useMemo(() => getJarSuggestions(query, demoIds, 60), [query, demoIds]);
+
+  const selectJarSuggestion = (value) => {
+    const selected = String(value || "").trim();
+    if (!selected) return;
+    setQuery(selected);
+    setJarId(selected);
+    setStatus(`Loaded ${selected} from Firebase.`);
+    setShowJarSuggestions(false);
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     const term = query.trim();
@@ -2700,12 +3451,22 @@ function LookupCard({
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
         <form onSubmit={handleSearch} className="space-y-2">
           <span className="text-xs uppercase tracking-[0.22em] text-subtle">Jar / Plant ID</span>
-          <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
+          <div className="relative">
+            <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
             <input
               value={query}
               onChange={(e) => {
                 setQuery(normalizeJarIdInput(e.target.value));
                 if (status) setStatus("");
+                setShowJarSuggestions(true);
+              }}
+              onFocus={() => setShowJarSuggestions(true)}
+              onBlur={() => {
+                if (typeof window !== "undefined") {
+                  window.setTimeout(() => setShowJarSuggestions(false), 120);
+                } else {
+                  setShowJarSuggestions(false);
+                }
               }}
               placeholder={`Search Jar ID (${demoIdHint || "known IDs"})`}
               className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
@@ -2713,12 +3474,13 @@ function LookupCard({
             {query && (
               <button
                 type="button"
-                onClick={() => {
-                  setQuery("");
-                  setStatus("");
-                }}
-                className="text-xs text-subtle hover:text-dark transition"
-              >
+              onClick={() => {
+                setQuery("");
+                setStatus("");
+                setShowJarSuggestions(false);
+              }}
+              className="text-xs text-subtle hover:text-dark transition"
+            >
                 Clear
               </button>
             )}
@@ -2728,6 +3490,24 @@ function LookupCard({
             >
               Search
             </button>
+            </div>
+            {showJarSuggestions && query.trim() && jarSuggestions.length ? (
+              <div className="absolute z-20 mt-2 w-full max-h-64 overflow-auto rounded-xl border border-border/60 bg-paper shadow-lg">
+                {jarSuggestions.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onMouseDown={(ev) => {
+                      ev.preventDefault();
+                      selectJarSuggestion(id);
+                    }}
+                    className="block w-full border-b border-border/35 px-3 py-2 text-left text-sm text-dark last:border-b-0 hover:bg-primary/5"
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <p className="text-[11px] text-subtle">Known IDs: {demoIdHint}</p>
         </form>
@@ -3075,20 +3855,29 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         event.afterRate !== null ? `${event.afterRate.toFixed(2)} mm/day` : "n/a",
         event.afterDelta !== null ? `${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : "n/a",
         event.confidence,
-        event.outcome === "improved"
-          ? "Improved"
-          : event.outcome === "slowed"
-            ? "Slowed"
-            : event.outcome === "no_clear_change"
-              ? "No clear change"
-              : "Insufficient data",
+        formatNutritionOutcome(event.outcome),
       ]),
     [nutritionImpactRows]
   );
 
-  const handleReport = () => {
+  const handleReport = (mode = "preview") => {
     if (!cleanedPoints.length) return;
-    const chartImage = chartRef.current?.toBase64Image?.();
+    const lineChartImage = chartRef.current?.toBase64Image?.();
+    const interventionPieImage = pieChartRef.current?.toBase64Image?.();
+    const chartImages = [
+      lineChartImage
+        ? {
+            src: lineChartImage,
+            caption: "Height over time line chart",
+          }
+        : null,
+      interventionPieImage
+        ? {
+            src: interventionPieImage,
+            caption: "Intervention outcomes pie chart",
+          }
+        : null,
+    ].filter(Boolean);
     const statsRows = [
       ["Jar ID", record?.id || "-"],
       ["Lineage jars", record?.lineageCount ? String(record.lineageCount) : "1"],
@@ -3125,9 +3914,10 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
 
     openReportWindow({
       title: `Jar History Report - ${record?.id || "Unknown"}`,
-      subtitle: "Height over time",
-      chartImage,
+      subtitle: chartImages.length > 1 ? "Height trend and intervention outcome charts" : "Height over time chart",
+      chartImages,
       sections,
+      mode,
     });
   };
 
@@ -3354,8 +4144,14 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">{cleanedPoints.length} points</span>
-          <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
+          <button type="button" onClick={() => handleReport("preview")} className="btn-soft text-xs px-3 py-1.5">
             Report
+          </button>
+          <button type="button" onClick={() => handleReport("print")} className="btn-soft text-xs px-3 py-1.5">
+            Print
+          </button>
+          <button type="button" onClick={() => handleReport("download")} className="btn-soft text-xs px-3 py-1.5">
+            Download
           </button>
         </div>
       </div>
@@ -3404,39 +4200,44 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       {nutritionImpactRows.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Nutrition change impact</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Nutrition / culture changes</p>
             <span className="text-[11px] text-subtle">{nutritionImpactRows.length} event(s)</span>
           </div>
-          <div className="grid sm:grid-cols-2 gap-2 max-h-52 overflow-auto pr-1">
-            {nutritionImpactRows.map((event) => (
-              <div key={`${event.label}-${event.x}`} className="rounded-xl border border-border/40 bg-paper/80 px-3 py-2">
-                <p className="text-xs font-semibold text-dark">
-                  {event.label} - {formatDate(event.x)}
-                </p>
-                <p className="text-[11px] text-subtle">
-                  Nutrition: {event.nutritionText || "-"}
-                </p>
-                <p className="text-[11px] text-subtle">
-                  {event.effectText}
-                  {event.afterDelta !== null ? ` | 14-day height change: ${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : ""}
-                </p>
-                <p className="text-[11px] text-subtle">
-                  Confidence:{" "}
-                  <span
-                    className={`font-semibold ${
-                      event.confidence === "High"
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : event.confidence === "Medium"
-                          ? "text-sky-700 dark:text-sky-300"
-                          : "text-amber-700 dark:text-amber-300"
-                    }`}
-                  >
-                    {event.confidence}
-                  </span>
-                  {` (before ${event.beforeCount} pts, after ${event.afterCount} pts)`}
-                </p>
-              </div>
-            ))}
+          <div className="overflow-x-auto rounded-xl border border-border/45 bg-paper/80">
+            <table className="w-full text-xs min-w-[820px]">
+              <thead className="bg-paper/90">
+                <tr>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Event</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Date</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Nutrition</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Before rate</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">After rate</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">After 14d change</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Confidence</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nutritionImpactRows.map((event) => (
+                  <tr key={`${event.label}-${event.x}`} className="border-t border-border/35">
+                    <td className="px-3 py-2 text-dark font-medium">{event.label}</td>
+                    <td className="px-3 py-2 text-subtle">{formatDate(event.x)}</td>
+                    <td className="px-3 py-2 text-subtle">{event.nutritionText || "-"}</td>
+                    <td className="px-3 py-2 text-subtle">
+                      {event.beforeRate !== null ? `${event.beforeRate.toFixed(2)} mm/day` : "n/a"}
+                    </td>
+                    <td className="px-3 py-2 text-subtle">
+                      {event.afterRate !== null ? `${event.afterRate.toFixed(2)} mm/day` : "n/a"}
+                    </td>
+                    <td className="px-3 py-2 text-subtle">
+                      {event.afterDelta !== null ? `${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : "n/a"}
+                    </td>
+                    <td className="px-3 py-2 text-subtle">{event.confidence}</td>
+                    <td className="px-3 py-2 text-subtle">{formatNutritionOutcome(event.outcome)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       ) : null}
@@ -3602,10 +4403,23 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
     { key: "all", label: "All" },
   ];
 
-  const sortedIds = useMemo(() => combinedRecords.map((p) => p.id).sort(), [combinedRecords]);
+  const sortedIds = useMemo(() => {
+    const byNormalized = new Map();
+    (combinedRecords || []).forEach((record) => {
+      const id = String(record?.id || "").trim();
+      const key = normalizeId(id);
+      if (!id || !key || byNormalized.has(key)) return;
+      byNormalized.set(key, id);
+    });
+    return Array.from(byNormalized.values()).sort((a, b) =>
+      String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [combinedRecords]);
   const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return sortedIds.filter((id) => !compareIds.includes(id) && (!term || id.toLowerCase().includes(term))).slice(0, 10);
+    const selected = new Set(compareIds.map((id) => normalizeId(id)).filter(Boolean));
+    const term = search.trim();
+    const base = term ? getJarSuggestions(term, sortedIds, 80) : sortedIds;
+    return base.filter((id) => !selected.has(normalizeId(id))).slice(0, 80);
   }, [sortedIds, compareIds, search]);
 
   const handleSubmit = (e) => {
@@ -3649,7 +4463,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
           <div className="flex-1 rounded-xl border border-border/45 bg-paper/70 px-3 py-2 flex items-center gap-2 shadow-sm">
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => setSearch(normalizeJarIdInput(e.target.value))}
               placeholder="Search Jar ID (type to filter)"
               className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
             />
@@ -3676,7 +4490,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
             >
               {id}
               <button onClick={() => toggleId(id)} className="text-xs text-primary/80 hover:text-primary">
-                ×
+                x
               </button>
             </span>
           ))}
@@ -3685,13 +4499,13 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
         <div className="rounded-xl border border-border/40 bg-paper/60 px-3 py-2">
           <p className="text-[11px] text-subtle">Matches</p>
           {filtered.length ? (
-            <div className="flex flex-wrap gap-2 mt-1">
+            <div className="mt-1 max-h-56 overflow-auto pr-1 space-y-1">
               {filtered.map((id) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => toggleId(id)}
-                  className="px-3 py-1.5 rounded-lg text-xs border border-border/45 bg-paper/80 text-subtle hover:border-primary/50 hover:text-primary transition"
+                  className="w-full px-3 py-1.5 rounded-lg text-xs text-left border border-border/45 bg-paper/80 text-subtle hover:border-primary/50 hover:text-primary transition"
                 >
                   {id}
                 </button>
@@ -3703,12 +4517,23 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
         </div>
       </div>
 
-      <p className="text-[11px] text-subtle mt-2">Select 2–3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
+      <p className="text-[11px] text-subtle mt-2">Select 2-3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
     </motion.div>
   );
 }
 
-function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPlants, rackHintString }) {
+function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPlants, rackHints, rackHintString }) {
+  const [showRackSuggestions, setShowRackSuggestions] = useState(false);
+  const rackSuggestions = useMemo(() => getRackSuggestions(rackQuery, rackHints), [rackQuery, rackHints]);
+
+  const selectRackSuggestion = (value) => {
+    const selected = String(value || "").trim();
+    if (!selected) return;
+    setRackQuery(selected);
+    setRackStatus("");
+    setShowRackSuggestions(false);
+  };
+
   const handleRackSearch = (e) => {
     e.preventDefault();
     const term = rackQuery.trim();
@@ -3729,24 +4554,34 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="panel space-y-4"
+      className="panel relative z-30 space-y-4"
     >
       <div className="flex items-start justify-between">
         <div>
-          <p className="kicker">Rack filter</p>
-          <h3 className="text-lg font-semibold text-dark">Find relevant jar on a rack</h3>
-          <p className="text-sm text-subtle">Search by rack label, then pick one jar to display as a single line chart.</p>
+          <p className="kicker">Rack analysis</p>
+          <h3 className="text-lg font-semibold text-dark">Analyze a rack</h3>
+          <p className="text-sm text-subtle">Search by rack label to load rack-specific growth trends and compare rack performance.</p>
         </div>
         <span className="text-xs text-subtle">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
       </div>
 
       <form onSubmit={handleRackSearch} className="space-y-2">
-        <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
+        <div className="relative">
+          <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
           <input
             value={rackQuery}
             onChange={(e) => {
               setRackQuery(e.target.value);
               if (rackStatus) setRackStatus("");
+              setShowRackSuggestions(true);
+            }}
+            onFocus={() => setShowRackSuggestions(true)}
+            onBlur={() => {
+              if (typeof window !== "undefined") {
+                window.setTimeout(() => setShowRackSuggestions(false), 120);
+              } else {
+                setShowRackSuggestions(false);
+              }
             }}
             placeholder="e.g. A1, B3, C2, A4"
             className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
@@ -3757,6 +4592,7 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
               onClick={() => {
                 setRackQuery("");
                 setRackStatus("");
+                setShowRackSuggestions(false);
               }}
               className="text-xs text-subtle hover:text-dark transition"
             >
@@ -3769,6 +4605,24 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
           >
             Search
           </button>
+          </div>
+          {showRackSuggestions && rackQuery.trim() && rackSuggestions.length ? (
+            <div className="absolute z-50 mt-2 w-full max-h-64 overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-paper shadow-lg">
+              {rackSuggestions.map((rack) => (
+                <button
+                  key={rack}
+                  type="button"
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    selectRackSuggestion(rack);
+                  }}
+                  className="block w-full border-b border-border/35 px-3 py-2 text-left text-sm text-dark last:border-b-0 hover:bg-primary/5"
+                >
+                  {rack}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <p className="text-[11px] text-subtle">Known racks: {rackHintString || "n/a"}</p>
         {rackStatus && <p className="text-[12px] text-primary">{rackStatus}</p>}
@@ -4791,7 +5645,7 @@ function GrowthClusterPanel({ clusterResult }) {
 function HistoryList({ history }) {
   const rows = [...history].reverse(); // newest first
   const hasRows = rows.length > 0;
-  const [isExpanded, setIsExpanded] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const toggleLabel = isExpanded ? "Hide measurements" : "Show measurements";
 
   return (
@@ -4842,7 +5696,7 @@ function HistoryList({ history }) {
 
       {hasRows ? (
         isExpanded ? (
-          <div className="divide-y divide-border/30">
+          <div className="max-h-[26rem] overflow-auto pr-1 divide-y divide-border/30">
             {rows.map((row, idx) => {
               const prev = rows[idx + 1];
               const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
@@ -4982,4 +5836,5 @@ function formatDate(ts) {
     return "-";
   }
 }
+
 
