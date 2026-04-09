@@ -786,3 +786,51 @@
   border-color: rgba(148, 163, 184, 0.28);
   background: rgba(15, 23, 42, 0.46);
 }
+
+@media (max-width: 640px) {
+  .panel,
+  .hero-glass,
+  .feedback-panel {
+    padding: 1rem;
+    border-radius: 1.5rem;
+  }
+
+  .dashboard-card,
+  .stat-card,
+  .hero-media-card {
+    border-radius: 1.35rem;
+  }
+
+  .feedback-head {
+    padding: 0.95rem;
+  }
+
+  .kicker {
+    letter-spacing: 0.24em;
+  }
+
+  .title-lg {
+    font-size: clamp(2.2rem, 9vw, 2.9rem);
+    line-height: 1.06;
+    letter-spacing: -0.05em;
+  }
+
+  .module-title {
+    font-size: 1.12rem;
+  }
+
+  .page-description {
+    font-size: 0.98rem;
+    line-height: 1.65;
+  }
+
+  .chip-subtle {
+    padding: 0.55rem 0.9rem;
+    font-size: 0.78rem;
+  }
+
+  .btn-soft,
+  .btn-primary {
+    min-height: 3rem;
+  }
+}

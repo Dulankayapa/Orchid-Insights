@@ -70,6 +70,22 @@ const average = (rows, key) => {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
+const DEFAULT_PUBLIC_MONITOR_URL = 'https://orchid-insights.web.app/monitor';
+
+const buildMonitorUrl = (baseUrl, nodeId, zoneId) => {
+  if (!baseUrl) return '';
+
+  try {
+    const url = new URL(baseUrl);
+    url.search = '';
+    if (nodeId) url.searchParams.set('node', nodeId);
+    if (zoneId) url.searchParams.set('zone', zoneId);
+    return url.toString();
+  } catch {
+    return '';
+  }
+};
+
 const EnvMonitor = () => {
   const [historyWindow, setHistoryWindow] = useState('24h');
   const [zoneMetric, setZoneMetric] = useState('temperature');
@@ -161,13 +177,12 @@ const EnvMonitor = () => {
   }, [previousWindow]);
 
   const monitorLink = useMemo(() => {
-    if (typeof window === 'undefined') return '';
-    const url = new URL(window.location.href);
-    url.pathname = '/monitor';
-    url.search = '';
-    if (latest?.nodeId) url.searchParams.set('node', latest.nodeId);
-    if (latest?.zoneId) url.searchParams.set('zone', latest.zoneId);
-    return url.toString();
+    const configuredBaseUrl = String(import.meta.env.VITE_PUBLIC_MONITOR_URL ?? '').trim();
+    return buildMonitorUrl(
+      configuredBaseUrl || DEFAULT_PUBLIC_MONITOR_URL,
+      latest?.nodeId,
+      latest?.zoneId,
+    );
   }, [latest?.nodeId, latest?.zoneId]);
 
   const qrLabel = useMemo(() => {
@@ -175,6 +190,14 @@ const EnvMonitor = () => {
     if (latest?.zoneId) return `Zone: ${latest.zoneId}`;
     return 'Env Monitor';
   }, [latest?.nodeId, latest?.zoneId]);
+
+  const qrPayload = useMemo(() => monitorLink, [monitorLink]);
+
+  const qrDescription = 'Scan to open the public Env Monitor page.';
+
+  const qrPreview = monitorLink || 'Waiting for public link';
+
+  const qrCopyLabel = 'Copy link';
 
   const fetchQrDataUrl = async (target) => {
     const qrUrl = `https://quickchart.io/qr?text=${encodeURIComponent(target)}&margin=1&size=320&dark=0f172a&light=ffffff`;
@@ -191,9 +214,9 @@ const EnvMonitor = () => {
 
   useEffect(() => {
     let cancelled = false;
-    if (!monitorLink) return undefined;
+    if (!qrPayload) return undefined;
     setQrError('');
-    fetchQrDataUrl(monitorLink)
+    fetchQrDataUrl(qrPayload)
       .then((dataUrl) => {
         if (!cancelled) setQrDataUrl(dataUrl);
       })
@@ -204,7 +227,7 @@ const EnvMonitor = () => {
         }
       });
     return () => { cancelled = true; };
-  }, [monitorLink]);
+  }, [qrPayload]);
 
   const handleDownloadQr = () => {
     if (!qrDataUrl) return;
@@ -217,10 +240,10 @@ const EnvMonitor = () => {
     setTimeout(() => setQrStatus(''), 1500);
   };
 
-  const handleCopyQrLink = async () => {
-    if (!monitorLink) return;
+  const handleCopyQrPayload = async () => {
+    if (!qrPayload) return;
     try {
-      await navigator.clipboard.writeText(monitorLink);
+      await navigator.clipboard.writeText(qrPayload);
       setQrStatus('Link copied');
     } catch (err) {
       setQrError(err?.message || 'Copy failed');
@@ -986,7 +1009,7 @@ const EnvMonitor = () => {
             <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="kicker">QR label</p>
-                <p className="text-sm text-subtle">Scan to open Env Monitor with this node/zone pre-filtered.</p>
+                <p className="text-sm text-subtle">{qrDescription}</p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <button
@@ -999,11 +1022,11 @@ const EnvMonitor = () => {
                 </button>
                 <button
                   type="button"
-                  onClick={handleCopyQrLink}
-                  disabled={!monitorLink}
+                  onClick={handleCopyQrPayload}
+                  disabled={!qrPayload}
                   className="rounded-xl border border-border/70 bg-paper/80 px-3 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-paper disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Copy link
+                  {qrCopyLabel}
                 </button>
               </div>
             </div>
@@ -1033,8 +1056,8 @@ const EnvMonitor = () => {
                 <p className="text-xs text-subtle">
                   Temp {formatMetric(latest?.temperature, 'temperature')} · Hum {formatMetric(latest?.humidity, 'humidity')}
                 </p>
-                <div className="text-[11px] text-slate-600 break-all rounded border border-border/60 bg-white/80 px-2 py-1">
-                  {monitorLink || 'Waiting for link'}
+                <div className="text-[11px] text-slate-600 whitespace-pre-wrap break-words rounded border border-border/60 bg-white/80 px-2 py-1">
+                  {qrPreview}
                 </div>
               </div>
             </div>
