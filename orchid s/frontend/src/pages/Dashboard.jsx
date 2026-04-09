@@ -3,7 +3,6 @@ import { Link } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
 import { useMonitorData } from "../hooks/useMonitorData";
-import useDeviceStatus from "../hooks/useDeviceStatus";
 
 const FEEDBACK_STORAGE_KEY = "orchid-insights-dashboard-feedback";
 
@@ -112,6 +111,32 @@ const DASHBOARD_GROWTH_WARNING_MOCK = [
   },
 ];
 
+const isLikelyLocalHost = (hostname = "") => {
+  const value = String(hostname || "").trim().toLowerCase();
+  return value === "localhost" || value === "127.0.0.1" || value === "::1";
+};
+
+const shouldAttemptHealthCheck = () => {
+  if (typeof window === "undefined") return true;
+
+  const baseUrl = String(api.defaults.baseURL || "").trim();
+  if (!baseUrl) return false;
+
+  try {
+    const apiUrl = new URL(baseUrl);
+    const appHost = window.location.hostname;
+    const apiHost = apiUrl.hostname;
+
+    if (isLikelyLocalHost(apiHost) && !isLikelyLocalHost(appHost)) {
+      return false;
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 const buildDashboardGrowthWarnings = (records) =>
   (records || [])
     .map((record) => {
@@ -149,8 +174,6 @@ const buildDashboardGrowthWarnings = (records) =>
 
 export default function Dashboard() {
   const { latest: liveMonitorLatest, connectionStatus: monitorConnectionStatus } = useMonitorData();
-  const deviceStatus = useDeviceStatus("orchid-node-1", 5000);
-  const offline = deviceStatus.state !== "online";
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [showStats, setShowStats] = useState(true);
@@ -163,10 +186,26 @@ export default function Dashboard() {
   const growthWarnings = useMemo(() => buildDashboardGrowthWarnings(DASHBOARD_GROWTH_WARNING_MOCK), []);
 
   useEffect(() => {
+    if (!shouldAttemptHealthCheck()) {
+      setError("");
+      return undefined;
+    }
+
     api
       .get("/health")
       .then((res) => setHealth(res.data))
-      .catch((err) => setError(err.response?.data?.detail || err.message));
+      .catch((err) => {
+        const detail = err.response?.data?.detail || err.message || "";
+        const code = String(err.code || "").toUpperCase();
+        const isNetworkError = code === "ERR_NETWORK" || detail === "Network Error";
+
+        if (isNetworkError) {
+          setError("");
+          return;
+        }
+
+        setError(detail);
+      });
   }, []);
 
   useEffect(() => {
@@ -329,6 +368,23 @@ export default function Dashboard() {
           : "text-emerald-600 dark:text-emerald-400",
     },
   ];
+  const heroHighlights = [
+    {
+      label: "Sensors",
+      value: `${activeSensorCount}/${totalSensors}`,
+      detail: hasLiveSensorStream ? "Live feed" : "Awaiting data",
+    },
+    {
+      label: "Connection",
+      value: liveSensorTrend,
+      detail: monitorConnectionStatus === "connected" ? "Realtime" : "Sync watch",
+    },
+    {
+      label: "Alerts",
+      value: String(totalAlerts),
+      detail: growthWarningCount ? "Needs review" : "Stable",
+    },
+  ];
   const handleExportDashboardReport = () => {
     const doc = new jsPDF();
     const generatedAt = new Date().toLocaleString();
@@ -402,7 +458,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      {offline && (
+      {false && (
         <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2">
           <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
           Device disconnected — showing last known values.
@@ -410,35 +466,52 @@ export default function Dashboard() {
       )}
       <section className="hero-glass modern-hero relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/35 via-transparent to-primary/10 dark:from-white/5" />
-        <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-stretch">
-          <div className="space-y-4">
-            <p className="kicker">Orchid Insights</p>
-            <h2 className="title-lg">Orchid Insights Dashboard</h2>
-            <p className="page-description max-w-3xl">
-              Growth analytics, plant database operations, and real-time environmental monitoring in one modern workspace.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              <span className="chip-subtle">{cards.length} active modules</span>
-              <span className="chip-subtle">Live telemetry</span>
-              <span className="chip-subtle">Team-ready workspace</span>
+        <div className="relative grid gap-5 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-stretch">
+          <div className="flex flex-col justify-between gap-5 text-center sm:text-left">
+            <div className="space-y-4">
+              <p className="kicker">Orchid Insights</p>
+              <h2 className="title-lg mx-auto max-w-[12ch] text-balance sm:mx-0 sm:max-w-none">
+                Orchid Insights Dashboard
+              </h2>
+              <p className="page-description mx-auto max-w-3xl sm:mx-0">
+                Growth analytics, plant database operations, and real-time environmental monitoring in one modern workspace.
+              </p>
+              <div className="flex flex-wrap justify-center gap-2 sm:justify-start">
+                <span className="chip-subtle">{cards.length} active modules</span>
+                <span className="chip-subtle">Live telemetry</span>
+                <span className="chip-subtle">Team-ready workspace</span>
+              </div>
+
+              {health && (
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <StatusPill label="Growth model" ok={health.model_loaded} />
+                  <StatusPill label="Firebase" ok={health.firebase_connected} />
+                  <StatusPill label="API status" ok={health.status === "ok"} />
+                </div>
+              )}
+
+              {error && (
+                <p className="mx-auto w-full max-w-md rounded-xl border border-rose-300/45 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300 sm:mx-0">
+                  Health check failed: {error}
+                </p>
+              )}
             </div>
 
-            {health && (
-              <div className="grid gap-3 sm:grid-cols-3">
-                <StatusPill label="Growth model" ok={health.model_loaded} />
-                <StatusPill label="Firebase" ok={health.firebase_connected} />
-                <StatusPill label="API status" ok={health.status === "ok"} />
-              </div>
-            )}
-
-            {error && (
-              <p className="rounded-xl border border-rose-300/45 bg-rose-500/10 px-3 py-2 text-sm text-rose-700 dark:text-rose-300">
-                Health check failed: {error}
-              </p>
-            )}
+            <div className="grid grid-cols-3 gap-2 text-left">
+              {heroHighlights.map((item) => (
+                <div
+                  key={item.label}
+                  className="rounded-[18px] border border-white/45 bg-white/72 px-3 py-3 shadow-[0_14px_28px_-22px_rgba(15,23,42,0.25)] backdrop-blur-md dark:border-white/10 dark:bg-white/6"
+                >
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-subtle">{item.label}</p>
+                  <p className="mt-2 text-sm font-semibold text-dark sm:text-base">{item.value}</p>
+                  <p className="mt-1 text-[11px] text-subtle">{item.detail}</p>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <div className="hero-media-card group relative h-[230px] w-full sm:h-[280px] lg:h-[320px] xl:h-[340px]">
+          <div className="hero-media-card group relative mx-auto h-[250px] w-full max-w-[430px] sm:h-[300px] lg:mx-0 lg:h-[340px]">
             {currentClipFrame ? (
               <img
                 key={currentClipFrame.src}
@@ -458,22 +531,35 @@ export default function Dashboard() {
                 Add orchid images in <span className="mx-1 rounded bg-white/70 px-2 py-0.5 font-semibold text-slate-700">public/orchid-clip</span> to run the clip in one frame.
               </div>
             )}
-            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/50 via-slate-900/5 to-transparent" />
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-900/55 via-slate-900/8 to-transparent" />
+            <div className="absolute inset-x-3 bottom-3 rounded-[18px] border border-white/20 bg-slate-900/45 px-3 py-3 text-white shadow-[0_18px_40px_-24px_rgba(15,23,42,0.7)] backdrop-blur-md">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/70">Live Focus</p>
+                  <p className="mt-1 text-sm font-semibold">
+                    {monitorConnectionStatus === "connected" ? "Realtime orchid overview" : "Latest synced orchid overview"}
+                  </p>
+                </div>
+                <span className="inline-flex rounded-full border border-white/15 bg-white/10 px-2.5 py-1 text-[11px] font-semibold text-white/90">
+                  {activeSensorCount}/{totalSensors} sensors
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       <section className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
             <p className="kicker">Live Snapshot</p>
             <p className="text-sm text-subtle">Quick health and monitoring summary.</p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="grid w-full grid-cols-1 gap-2 sm:flex sm:w-auto sm:items-center">
             <button
               type="button"
               onClick={handleExportDashboardReport}
-              className="btn-soft rounded-xl px-3 py-1.5 text-sm"
+              className="btn-soft w-full rounded-xl px-3 py-2 text-sm sm:w-auto sm:px-3 sm:py-1.5"
               title="Generate report"
               aria-label="Generate dashboard report"
             >
@@ -483,7 +569,7 @@ export default function Dashboard() {
             <button
               type="button"
               onClick={() => setShowStats((prev) => !prev)}
-              className="btn-soft btn-soft-emphasis rounded-xl px-3 py-1.5 text-sm"
+              className="btn-soft btn-soft-emphasis w-full rounded-xl px-3 py-2 text-sm sm:w-auto sm:px-3 sm:py-1.5"
               aria-expanded={showStats}
             >
               <span className="inline-flex h-2 w-2 rounded-full bg-primary" />
