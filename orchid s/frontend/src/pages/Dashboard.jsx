@@ -63,6 +63,14 @@ const cards = [
     meta: "Sensors",
     desc: "Real-time environment status with alerts and charts.",
   },
+  {
+    title: "Orchid Companion",
+    to: "/companion",
+    tone: "from-fuchsia-400/35 to-secondary/30",
+    icon: "\u{1F916}",
+    meta: "Assistant",
+    desc: "Ask the assistant for orchid care and growth guidance using live monitor context.",
+  },
 ];
 const ORCHID_FRAME_DURATION_MS = 5000;
 const orchidClipFrames = [
@@ -334,6 +342,7 @@ export default function Dashboard() {
       ["Plant Database", "Browse and search stored orchid plant records synced from backend and Firebase."],
       ["Firebase Table", "Inspect live sensor payloads and merged values from Firebase in tabular form."],
       ["Env Monitor", "Track real-time temperature, humidity, light, air quality, alerts, and AI tips."],
+      ["Orchid Companion", "Get context-aware orchid care guidance using live monitor sensor data."],
     ];
 
     doc.setFontSize(20);
