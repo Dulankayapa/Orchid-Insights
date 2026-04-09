@@ -24,6 +24,12 @@ const newSameJarReculture = () => ({
 const NEW_CULTURE = "NEW_CULTURE";
 const RECULTURE_WITHOUT_SUB = "WITHOUT_SUBCULTURE";
 const RECULTURE_WITH_SUB = "WITH_SUBCULTURE";
+const REMOVAL_REASON_CONTAMINATION = "CONTAMINATION";
+const REMOVAL_REASON_GREENHOUSE = "MOVED_TO_GREENHOUSE";
+const REMOVAL_REASON_OPTIONS = [
+  { value: REMOVAL_REASON_CONTAMINATION, label: "Contamination" },
+  { value: REMOVAL_REASON_GREENHOUSE, label: "Moved to greenhouse" },
+];
 const OPTIONS_PATH = "recultureOptions";
 const LABEL_TYPE_ALL = "all";
 const LABEL_TYPE_CULTURE = "culture";
@@ -118,6 +124,10 @@ const buildJarLabelRows = (entries) => {
 // Utility functions for normalizing and managing options
 const normalizeOption = (value) => (value || "").trim();
 const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
+const getRemovalReasonLabel = (value) => {
+  const option = REMOVAL_REASON_OPTIONS.find((item) => item.value === value);
+  return option?.label || "Removed";
+};
 const findRackTypeConflict = ({ entries, rackNo, orchidType, ignoreJarId = "" }) => {
   const rackKey = normalizeOptionKey(rackNo);
   const orchidKey = normalizeOptionKey(orchidType);
@@ -288,6 +298,9 @@ export default function CultureDetails() {
               addSpecialNutrition: Boolean(entry.addSpecialNutrition),
               specialNutritionDetail: entry.specialNutritionDetail || "",
               recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+              isRemoved: Boolean(entry.isRemoved || entry.removed || entry.status === "removed"),
+              removedReason: entry.removedReason || entry.removalReason || entry.removed_reason || "",
+              removedAt: entry.removedAt || entry.removed_at || "",
               updatedAt: entry.updatedAt,
             };
           })
@@ -349,9 +362,10 @@ export default function CultureDetails() {
   const rackOptions = optionStore.racks;
   const orchidOptions = optionStore.orchids;
   const recultureSearchRows = useMemo(() => {
+    const activeEntries = entries.filter((entry) => !entry.isRemoved);
     const term = recultureSearch.trim().toLowerCase();
-    if (!term) return entries.slice(0, 8);
-    return entries.filter((entry) => {
+    if (!term) return activeEntries.slice(0, 8);
+    return activeEntries.filter((entry) => {
       const haystack = [
         entry.jarId,
         entry.orchidType,
@@ -564,6 +578,104 @@ export default function CultureDetails() {
     setError("");
   };
 
+  const markJarRemoved = async (jarId, removalReason) => {
+    const targetJarId = normalizeLinkedJarId(jarId);
+    if (!targetJarId) return;
+    if (!REMOVAL_REASON_OPTIONS.some((option) => option.value === removalReason)) {
+      setStatus("");
+      setError("Select a valid removal reason.");
+      return;
+    }
+
+    const targetEntry = entries.find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(targetJarId));
+    if (!targetEntry) {
+      setStatus("");
+      setError(`Jar ${targetJarId} was not found.`);
+      return;
+    }
+
+    const reasonLabel = getRemovalReasonLabel(removalReason);
+    const shouldMark =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Mark ${targetJarId} as removed (${reasonLabel})?`);
+    if (!shouldMark) return;
+
+    const nowIso = new Date().toISOString();
+    setSaving(true);
+    setStatus("");
+    setError("");
+    try {
+      await update(ref(db, `recultureEntries/${encodeFirebaseKeySegment(targetJarId)}`), {
+        isRemoved: true,
+        removed: true,
+        status: "removed",
+        removedReason: removalReason,
+        removalReason: removalReason,
+        removed_reason: removalReason,
+        removedAt: nowIso,
+        removed_at: nowIso,
+        updatedAt: nowIso,
+      });
+      if (normalizeOptionKey(selectedRecultureJarId) === normalizeOptionKey(targetJarId)) {
+        setSelectedRecultureJarId("");
+      }
+      await appendCultureRecord({
+        jar_id: targetJarId,
+        parent_jar_id: targetEntry.parentJarId || "",
+        plant_date: targetEntry.cultureDate || "",
+        plant_type: targetEntry.orchidType || "",
+        nutrition_type: targetEntry.nutrition || "",
+        rack_location: targetEntry.rackNo || "",
+        plant_count: String(targetEntry.plantCount || ""),
+        seed_count: String(targetEntry.plantCount || ""),
+        reculture_type: "REMOVED",
+        reculture_date: nowIso.slice(0, 10),
+        removed_reason: removalReason,
+        created_at: nowIso,
+      });
+      setStatus(`Marked ${targetJarId} as removed: ${reasonLabel}.`);
+    } catch (err) {
+      setError(err?.message || `Failed to mark ${targetJarId} as removed.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreJarRemoval = async (jarId) => {
+    const targetJarId = normalizeLinkedJarId(jarId);
+    if (!targetJarId) return;
+
+    const shouldRestore =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Restore ${targetJarId} as active jar?`);
+    if (!shouldRestore) return;
+
+    const nowIso = new Date().toISOString();
+    setSaving(true);
+    setStatus("");
+    setError("");
+    try {
+      await update(ref(db, `recultureEntries/${encodeFirebaseKeySegment(targetJarId)}`), {
+        isRemoved: false,
+        removed: false,
+        status: "active",
+        removedReason: "",
+        removalReason: "",
+        removed_reason: "",
+        removedAt: "",
+        removed_at: "",
+        updatedAt: nowIso,
+      });
+      setStatus(`Restored ${targetJarId} as active.`);
+    } catch (err) {
+      setError(err?.message || `Failed to restore ${targetJarId}.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const deleteJarEntry = async (jarId) => {
     const targetJarId = normalizeLinkedJarId(jarId);
     if (!targetJarId) return;
@@ -613,6 +725,12 @@ export default function CultureDetails() {
     const source = selectedRecultureEntry;
     if (!source?.jarId) {
       setError("Select a source jar from the search table before re-culturing.");
+      return;
+    }
+    if (source.isRemoved) {
+      setError(
+        `Jar ${source.jarId} is marked as removed (${getRemovalReasonLabel(source.removedReason)}). Restore it before re-culturing.`
+      );
       return;
     }
     if (![RECULTURE_WITHOUT_SUB, RECULTURE_WITH_SUB].includes(recultureType)) {
@@ -972,6 +1090,14 @@ export default function CultureDetails() {
       recultures: cleanedRecultures.sort((a, b) => new Date(a.date) - new Date(b.date)),
       reculture_type: effectiveRecultureType,
       reculture_date: cleanedRecultures.length ? cleanedRecultures[cleanedRecultures.length - 1].date : "",
+      isRemoved: false,
+      removed: false,
+      status: "active",
+      removedReason: "",
+      removalReason: "",
+      removed_reason: "",
+      removedAt: "",
+      removed_at: "",
       created_at: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -1075,6 +1201,8 @@ export default function CultureDetails() {
           entries={entries}
           selectedId={selectedId}
           onSelect={loadEntry}
+          onMarkRemoved={markJarRemoved}
+          onRestore={restoreJarRemoval}
           onDelete={deleteJarEntry}
           saving={saving}
         />
@@ -1145,6 +1273,10 @@ function FormCard({
   saving,
 }) {
   const previewMode = isEditing && !reculturePanelOpen;
+  const rackSelectOptions = useMemo(
+    () => uniqueSortedOptions([...(rackOptions || []), form.rackNo]),
+    [rackOptions, form.rackNo]
+  );
   const selectedParentEntry = useMemo(() => {
     const parentId = selectedEntry?.parentJarId;
     if (!parentId) return null;
@@ -1204,20 +1336,20 @@ function FormCard({
               />
               <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
             </Field>
-            <Field label="Rack number *">
-              <input
+            <Field label="Rack ID *">
+              <select
                 value={form.rackNo}
                 onChange={onFieldChange("rackNo")}
-                placeholder="Rack or shelf location"
-                list="rack-options"
                 disabled={previewMode}
-                className="input-shell"
-              />
-              <datalist id="rack-options">
-                {rackOptions.map((rack) => (
-                  <option key={rack} value={rack} />
+                className={`input-shell ${previewMode ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
+              >
+                <option value="">Select rack ID</option>
+                {rackSelectOptions.map((rack) => (
+                  <option key={rack} value={rack}>
+                    {rack}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </Field>
             <Field label="Orchid type *">
               <input
@@ -1316,6 +1448,7 @@ function FormCard({
           setRecultureSearch={setRecultureSearch}
           recultureSearchRows={recultureSearchRows}
           entries={entries}
+          rackOptions={rackOptions}
           selectedRecultureEntry={selectedRecultureEntry}
           selectRecultureSource={selectRecultureSource}
           recultureType={recultureType}
@@ -1410,9 +1543,10 @@ function FormCard({
   );
 }
 
-function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
+function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDelete, saving }) {
   const [query, setQuery] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
+  const [removeReasonByJar, setRemoveReasonByJar] = useState({});
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -1514,6 +1648,8 @@ function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
                   className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm cursor-pointer ${
                     isSelected
                       ? "border-primary/35 bg-primary/10 text-primary shadow-md"
+                      : entry.isRemoved
+                        ? "border-amber-300/55 bg-amber-50/60 text-dark hover:border-amber-400/70"
                       : "border-border/45 bg-paper/70 text-dark hover:border-primary/35 hover:bg-primary/5"
                   }`}
                 >
@@ -1528,24 +1664,69 @@ function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
                       </p>
                       <p className="text-[11px] text-subtle">Nutrition: {entry.nutrition || "Not noted"}</p>
                     </div>
-                    <span className="text-[11px] uppercase tracking-[0.16em] text-subtle">
-                      {entry.recultures.length} dates
-                    </span>
+                    {entry.isRemoved ? (
+                      <span className="text-[11px] uppercase tracking-[0.16em] text-amber-700">Removed</span>
+                    ) : (
+                      <span className="text-[11px] uppercase tracking-[0.16em] text-subtle">
+                        {entry.recultures.length} dates
+                      </span>
+                    )}
                   </div>
+                  {entry.isRemoved && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Removed: {getRemovalReasonLabel(entry.removedReason)}
+                      {entry.removedAt ? ` on ${normalizeDateValue(entry.removedAt) || entry.removedAt}` : ""}
+                    </p>
+                  )}
                   {nextReculture && (
                     <p className="text-xs text-primary mt-1">
                       Next re-culture: {nextReculture.date}
                       {nextReculture.note ? ` - ${nextReculture.note}` : ""}
                     </p>
                   )}
-                  <div className="mt-2 flex justify-end border-t border-border/35 pt-2">
+                  <div
+                    className="mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-border/35 pt-2"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    {!entry.isRemoved && (
+                      <select
+                        value={removeReasonByJar[entry.jarId] || REMOVAL_REASON_CONTAMINATION}
+                        onChange={(e) =>
+                          setRemoveReasonByJar((prev) => ({ ...prev, [entry.jarId]: e.target.value }))
+                        }
+                        className="input-shell max-w-[210px] py-1.5 text-xs"
+                      >
+                        {REMOVAL_REASON_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {entry.isRemoved ? (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => onRestore(entry.jarId)}
+                        className="rounded-lg border border-emerald-200/70 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 hover:border-emerald-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Restore
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => onMarkRemoved(entry.jarId, removeReasonByJar[entry.jarId] || REMOVAL_REASON_CONTAMINATION)}
+                        className="rounded-lg border border-amber-200/70 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 hover:border-amber-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Mark removed
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={saving}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(entry.jarId);
-                      }}
+                      onClick={() => onDelete(entry.jarId)}
                       className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       Delete
@@ -2339,6 +2520,7 @@ function RecultureWorkspace({
   setRecultureSearch,
   recultureSearchRows,
   entries,
+  rackOptions,
   selectedRecultureEntry,
   selectRecultureSource,
   recultureType,
@@ -2356,6 +2538,10 @@ function RecultureWorkspace({
     if (!parentId) return null;
     return (entries || []).find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(parentId)) || null;
   }, [entries, selectedRecultureEntry]);
+  const splitRackOptions = useMemo(
+    () => uniqueSortedOptions([...(rackOptions || []), ...splitRows.map((row) => row.rackLocation)]),
+    [rackOptions, splitRows]
+  );
 
   return (
     <div className="space-y-4 rounded-2xl border border-primary/25 bg-primary/5 px-4 py-4">
@@ -2538,13 +2724,19 @@ function RecultureWorkspace({
                         className="input-shell"
                       />
                     </Field>
-                    <Field label="Rack location *">
-                      <input
+                    <Field label="Rack ID *">
+                      <select
                         value={row.rackLocation}
                         onChange={(e) => updateSplitRow(idx, "rackLocation", e.target.value)}
-                        placeholder="e.g. R-3B"
                         className="input-shell"
-                      />
+                      >
+                        <option value="">Select rack ID</option>
+                        {splitRackOptions.map((rack) => (
+                          <option key={rack} value={rack}>
+                            {rack}
+                          </option>
+                        ))}
+                      </select>
                     </Field>
                     <Field label="Plant count *">
                       <input
