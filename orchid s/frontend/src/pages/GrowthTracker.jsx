@@ -2,9 +2,9 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Line } from "react-chartjs-2";
 import { useLocation, useNavigate } from "react-router-dom";
-import jsQR from "jsqr";
+import jsQR from "jsqr";//webcam live scan + upload scan with jsQR fallback
 import {
-  Chart as ChartJS,
+  Chart as ChartJS, //Chart as ChartJS
   LineElement,
   PointElement,
   LinearScale,
@@ -494,7 +494,7 @@ export default function GrowthTracker() {
 
   useEffect(() => {
     if (!routeJarId) return;
-    const params = new URLSearchParams(location.search || "");
+    const params = new URLSearchParams(location.search || "");//search
     if (params.get("jar") === routeJarId) return;
     params.set("jar", routeJarId);
     navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
@@ -503,7 +503,7 @@ export default function GrowthTracker() {
   useEffect(() => {
     setPlantFetchError("");
 
-    const plantsRef = ref(db, "plants");
+    const plantsRef = ref(db, "plants");//plants
     const unsubscribe = onValue(
       plantsRef,
       (snap) => {
@@ -522,7 +522,7 @@ export default function GrowthTracker() {
   }, []);
 
   useEffect(() => {
-    const entriesRef = ref(db, "recultureEntries");
+    const entriesRef = ref(db, "recultureEntries");//recultureEntries
     const unsubscribe = onValue(
       entriesRef,
       (snap) => {
@@ -585,7 +585,7 @@ export default function GrowthTracker() {
 
         try {
           const resp = await api.put(`/env/plants/${encodeURIComponent(canonicalId)}`, baseRecord);
-          return { ok: true, canonicalId, record: normalizePlantRecord(resp?.data) || normalizePlantRecord(baseRecord), via: "api" };
+          return { ok: true, canonicalId, record: normalizePlantRecord(resp?.data) || normalizePlantRecord(baseRecord), via: "api" };//env/plants
         } catch (apiErr) {
           try {
             // Fallback to direct RTDB write when backend env is not configured.
@@ -625,7 +625,7 @@ export default function GrowthTracker() {
           }
 
           createdJarIdsRef.current.delete(normalized);
-          const message = result.value?.message || result.reason?.message || "Failed to save Jar ID";
+          const message = result.value?.message || result.reason?.message || "Failed to save Jar ID";//Failed to save Jar ID
           failed.push(`${canonicalId} (${message})`);
         });
 
@@ -1294,6 +1294,7 @@ function Hero() {
   );
 }
 
+// FormCard component web camera scanner
 function FormCard({
   onSubmit,
   onNewHeight,
@@ -1324,7 +1325,7 @@ function FormCard({
   cultureError,
   heightLogError,
 }) {
-  const [cameraOpen, setCameraOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false); // true when webcam scanner UI is open
   const [scanBusy, setScanBusy] = useState(false);
   const [scanStatus, setScanStatus] = useState("");
   const cameraVideoRef = useRef(null);
@@ -1354,7 +1355,7 @@ function FormCard({
   useEffect(() => () => stopCameraScan(), []);
 
   useEffect(() => {
-    if (!cameraOpen || !cameraStreamRef.current || !cameraVideoRef.current) return;
+    if (!cameraOpen || !cameraStreamRef.current || !cameraVideoRef.current) return; 
     const videoEl = cameraVideoRef.current;
     if (videoEl.srcObject !== cameraStreamRef.current) {
       videoEl.srcObject = cameraStreamRef.current;
@@ -1381,6 +1382,7 @@ function FormCard({
     }
   };
 
+  // Fallback QR code detection using jsQR library when BarcodeDetector is unavailable or fails.
   const detectWithJsQr = (source) => {
     if (!source || typeof document === "undefined") return [];
     const sourceWidth = Number(source.videoWidth || source.naturalWidth || source.width || 0);
@@ -1492,7 +1494,7 @@ function FormCard({
         }, 100);
       });
     };
-
+// Try multiple constraint sets to maximize compatibility across different devices and browsers.
     setScanBusy(true);
     try {
       const attempts = [
@@ -1553,7 +1555,7 @@ function FormCard({
       setScanBusy(false);
     }
   };
-
+// Trigger file input click to select an image for QR scanning.
   const triggerUploadScan = () => {
     uploadInputRef.current?.click();
   };
@@ -1601,7 +1603,7 @@ function FormCard({
       setScanBusy(false);
     }
   };
-
+// Render
   return (
     <motion.form
       onSubmit={onSubmit}

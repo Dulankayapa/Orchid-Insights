@@ -34,10 +34,10 @@ const REMOVAL_REASON_OPTIONS = [
 const OPTIONS_PATH = "recultureOptions";
 const LABEL_TYPE_ALL = "all";
 const LABEL_TYPE_CULTURE = "culture";
-const LABEL_TYPE_RECULTURE = "reculture";
+const LABEL_TYPE_RECULTURE = "reculture"; // subcultural
 const PRINT_MODE_JAR = "jar";
 const PRINT_MODE_RACK = "rack";
-const LABEL_WIDTH_IN = 2.35;
+const LABEL_WIDTH_IN = 2.35; // 2.35 inches is the typical width of a 3x1 label on A4 paper, allowing for some margin
 const LABEL_HEIGHT_IN = 1.1;
 const QR_SIZE_IN = 1;
 const LABEL_TEXT_BOX_IN = 1.1;
@@ -2408,7 +2408,7 @@ function JarLabelManager({ entries, onClose }) {
         `;
       })
       .join("");
-
+// Write the complete HTML document to the new window.
     win.document.write(`
       <!doctype html>
       <html>
@@ -2545,7 +2545,7 @@ function JarLabelManager({ entries, onClose }) {
         doc.setDrawColor(17, 24, 39);
         doc.setLineWidth(0.2);
         doc.roundedRect(x, y, labelWidthMm, labelHeightMm, 1.2, 1.2);
-
+// For debugging label boundaries
         if (printMode === PRINT_MODE_RACK) {
           doc.setFont("helvetica", "bold");
           doc.setFontSize(9);
@@ -2809,8 +2809,9 @@ function JarLabelManager({ entries, onClose }) {
               )}
             </div>
           </div>
+              
 
-          <div className="rounded-xl border border-border/45 bg-paper/70 p-3 overflow-auto">
+          <div className="rounded-xl border border-border/45 bg-paper/70 p-3 overflow-auto"> 
             <p className="text-xs font-semibold text-dark mb-2">A4 preview (3 labels per row)</p>
             <div className="overflow-auto rounded-lg border border-border/40 bg-slate-100 p-3">
               <div
@@ -2822,7 +2823,7 @@ function JarLabelManager({ entries, onClose }) {
                   padding: "12mm 10mm",
                   boxSizing: "border-box",
                   display: "grid",
-                  gridTemplateColumns: `repeat(3, ${LABEL_WIDTH_IN}in)`,
+                  gridTemplateColumns: `repeat(3, ${LABEL_WIDTH_IN}in)`, // 3 labels per row
                   justifyContent: "center",
                   gap: "4mm",
                 }}
