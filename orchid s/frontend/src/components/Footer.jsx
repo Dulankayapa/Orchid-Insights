@@ -2,12 +2,12 @@ import { NavLink } from "react-router-dom";
 
 const quickLinks = [
   { to: "/", label: "Dashboard" },
+  { to: "/monitor", label: "Env Monitor" },
   { to: "/reculture", label: "Culture Details" },
   { to: "/growth", label: "Growth Tracker" },
   { to: "/history", label: "Growth History" },
   { to: "/plants", label: "Plant Database" },
   { to: "/firebase", label: "Firebase Table" },
-  { to: "/monitor", label: "Env Monitor" },
   { to: "/companion", label: "Orchid Companion" },
 ];
 

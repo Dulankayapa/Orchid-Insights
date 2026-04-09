@@ -19,13 +19,13 @@ import ThemeToggle from "./components/ThemeToggle";
 
 const navItems = [
   { to: "/", label: "Dashboard", code: "\u{1F4CA}" },
+  { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
   { to: "/reculture", label: "Culture Details", code: "\u{1F9EA}" },
   { to: "/growth", label: "Growth Tracker", code: "\u{1F4C8}" },
   { to: "/history", label: "Growth History", code: "\u{1F552}" },
   { to: "/plants", label: "Plant Database", code: "\u{1F33F}" },
   { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
   { to: "/classifier", label: "Orchid Classifier", code: "\u{1F4F7}" },
-  { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
   { to: "/companion", label: "Orchid Companion", code: "\u{1F916}" },
 ];
 
@@ -155,7 +155,7 @@ export default function App() {
                 <ThemeToggle />
               </div>
 
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+              <div className="mt-4 flex flex-wrap gap-2 sm:flex-nowrap sm:overflow-x-auto sm:pb-1 sm:[&::-webkit-scrollbar]:hidden sm:[-ms-overflow-style:'none'] sm:[scrollbar-width:'none'] justify-start">
                 {navItems.map((item) => (
                   <NavLink
                     key={item.to}
@@ -168,7 +168,9 @@ export default function App() {
                       }`
                     }
                   >
-                    {item.label}
+                    <span className="mr-2">{item.code}</span>
+                    <span>{item.label}</span>
+                    <span className="ml-2 text-subtle">→</span>
                   </NavLink>
                 ))}
               </div>
