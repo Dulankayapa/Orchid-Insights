@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { onValue, push, ref, remove, set, update } from "firebase/database";
+import { jsPDF } from "jspdf";
 import { db } from "../lib/firebase";
 import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 // Components
@@ -23,10 +24,110 @@ const newSameJarReculture = () => ({
 const NEW_CULTURE = "NEW_CULTURE";
 const RECULTURE_WITHOUT_SUB = "WITHOUT_SUBCULTURE";
 const RECULTURE_WITH_SUB = "WITH_SUBCULTURE";
+const REMOVAL_REASON_CONTAMINATION = "CONTAMINATION";
+const REMOVAL_REASON_GREENHOUSE = "MOVED_TO_GREENHOUSE";
+const REMOVAL_REASON_OPTIONS = [
+  { value: REMOVAL_REASON_CONTAMINATION, label: "Contamination" },
+  { value: REMOVAL_REASON_GREENHOUSE, label: "Moved to greenhouse" },
+];
 const OPTIONS_PATH = "recultureOptions";
+const LABEL_TYPE_ALL = "all";
+const LABEL_TYPE_CULTURE = "culture";
+const LABEL_TYPE_RECULTURE = "reculture";
+const PRINT_MODE_JAR = "jar";
+const PRINT_MODE_RACK = "rack";
+const LABEL_WIDTH_IN = 2;
+const LABEL_HEIGHT_IN = 0.7;
+const QR_SIZE_IN = 0.52;
+const IN_TO_MM = 25.4;
+const A4_WIDTH_MM = 210;
+const A4_HEIGHT_MM = 297;
+const LABEL_COLUMNS = 3;
+const LABEL_X_GAP_MM = 4;
+const LABEL_Y_GAP_MM = 4;
+const LABEL_MARGIN_Y_MM = 12;
+
+const normalizeDateValue = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (/^\d{4}-\d{2}-\d{2}/.test(raw)) return raw.slice(0, 10);
+  const ts = Date.parse(raw);
+  if (!Number.isFinite(ts)) return "";
+  return new Date(ts).toISOString().slice(0, 10);
+};
+
+const buildQrImageUrl = (jarId) => {
+  const payload = String(jarId || "").trim();
+  if (!payload) return "";
+  return `https://quickchart.io/qr?text=${encodeURIComponent(payload)}&margin=1&size=300&dark=111827&light=ffffff`;
+};
+
+const fetchQrDataUrlForJarId = async (jarId) => {
+  const url = buildQrImageUrl(jarId);
+  if (!url || typeof fetch !== "function") return "";
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(`QR request failed (${response.status})`);
+  const blob = await response.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => resolve(reader.result?.toString() || "");
+    reader.onerror = () => reject(new Error("QR read failed"));
+    reader.readAsDataURL(blob);
+  });
+};
+
+const buildJarLabelRows = (entries) => {
+  const rows = [];
+  (entries || []).forEach((entry) => {
+    const jarId = String(entry?.jarId || "").trim();
+    if (!jarId) return;
+
+    const parentJarId = normalizeLinkedJarId(entry?.directParentJarId || entry?.parentJarId || "");
+    const cultureDate = normalizeDateValue(entry?.cultureDate);
+    const createdByReculture = Boolean(parentJarId);
+
+    if (cultureDate) {
+      rows.push({
+        id: `${createdByReculture ? "child" : "culture"}:${normalizeOptionKey(jarId)}:${cultureDate}`,
+        jarId,
+        type: createdByReculture ? LABEL_TYPE_RECULTURE : LABEL_TYPE_CULTURE,
+        eventDate: cultureDate,
+        eventLabel: createdByReculture ? "Re-culture date" : "Culture date",
+        orchidType: entry?.orchidType || "",
+        rackNo: entry?.rackNo || "",
+      });
+    }
+
+    const recRows = Array.isArray(entry?.recultures) ? entry.recultures : [];
+    recRows.forEach((row, idx) => {
+      const date = normalizeDateValue(row?.date || row?.recultureDate || row?.cultureDate || "");
+      if (!date) return;
+      rows.push({
+        id: `reculture:${normalizeOptionKey(jarId)}:${date}:${idx}`,
+        jarId,
+        type: LABEL_TYPE_RECULTURE,
+        eventDate: date,
+        eventLabel: "Re-culture date",
+        orchidType: entry?.orchidType || "",
+        rackNo: entry?.rackNo || "",
+      });
+    });
+  });
+
+  return rows.sort((a, b) => {
+    const dateA = a.eventDate || "";
+    const dateB = b.eventDate || "";
+    if (dateA !== dateB) return dateB.localeCompare(dateA);
+    return a.jarId.localeCompare(b.jarId, undefined, { numeric: true, sensitivity: "base" });
+  });
+};
 // Utility functions for normalizing and managing options
 const normalizeOption = (value) => (value || "").trim();
 const normalizeOptionKey = (value) => normalizeOption(value).toLowerCase();
+const getRemovalReasonLabel = (value) => {
+  const option = REMOVAL_REASON_OPTIONS.find((item) => item.value === value);
+  return option?.label || "Removed";
+};
 const findRackTypeConflict = ({ entries, rackNo, orchidType, ignoreJarId = "" }) => {
   const rackKey = normalizeOptionKey(rackNo);
   const orchidKey = normalizeOptionKey(orchidType);
@@ -143,6 +244,7 @@ export default function CultureDetails() {
   const [recultureType, setRecultureType] = useState("");
   const [sameJarReculture, setSameJarReculture] = useState(newSameJarReculture());
   const [splitRows, setSplitRows] = useState([newSplitJarRow()]);
+  const [jarLabelOpen, setJarLabelOpen] = useState(false);
   const isEditing = Boolean(selectedId);
 
   useEffect(() => {
@@ -196,6 +298,9 @@ export default function CultureDetails() {
               addSpecialNutrition: Boolean(entry.addSpecialNutrition),
               specialNutritionDetail: entry.specialNutritionDetail || "",
               recultures: Array.isArray(entry.recultures) ? entry.recultures : [],
+              isRemoved: Boolean(entry.isRemoved || entry.removed || entry.status === "removed"),
+              removedReason: entry.removedReason || entry.removalReason || entry.removed_reason || "",
+              removedAt: entry.removedAt || entry.removed_at || "",
               updatedAt: entry.updatedAt,
             };
           })
@@ -257,9 +362,10 @@ export default function CultureDetails() {
   const rackOptions = optionStore.racks;
   const orchidOptions = optionStore.orchids;
   const recultureSearchRows = useMemo(() => {
+    const activeEntries = entries.filter((entry) => !entry.isRemoved);
     const term = recultureSearch.trim().toLowerCase();
-    if (!term) return entries.slice(0, 8);
-    return entries.filter((entry) => {
+    if (!term) return activeEntries.slice(0, 8);
+    return activeEntries.filter((entry) => {
       const haystack = [
         entry.jarId,
         entry.orchidType,
@@ -472,6 +578,121 @@ export default function CultureDetails() {
     setError("");
   };
 
+  const markJarRemoved = async (jarId, removalReason) => {
+    const targetJarId = normalizeLinkedJarId(jarId);
+    if (!targetJarId) return;
+    if (!REMOVAL_REASON_OPTIONS.some((option) => option.value === removalReason)) {
+      setStatus("");
+      setError("Select a valid removal reason.");
+      return;
+    }
+
+    const targetEntry = entries.find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(targetJarId));
+    if (!targetEntry) {
+      setStatus("");
+      setError(`Jar ${targetJarId} was not found.`);
+      return;
+    }
+    if (targetEntry.isRemoved) {
+      setStatus("");
+      setError(`Jar ${targetJarId} is already marked as removed.`);
+      return;
+    }
+
+    const reasonLabel = getRemovalReasonLabel(removalReason);
+    const shouldMark =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Mark ${targetJarId} as removed (${reasonLabel})?`);
+    if (!shouldMark) return;
+
+    const nowIso = new Date().toISOString();
+    const removalDate = nowIso.slice(0, 10);
+    const updatedRecultures = [
+      ...(Array.isArray(targetEntry.recultures) ? targetEntry.recultures : []),
+      {
+        date: removalDate,
+        note: `End of lab life: ${reasonLabel}`,
+        recultureType: "REMOVED",
+        removedReason: removalReason,
+        createdAt: nowIso,
+      },
+    ].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+    setSaving(true);
+    setStatus("");
+    setError("");
+    try {
+      await update(ref(db, `recultureEntries/${encodeFirebaseKeySegment(targetJarId)}`), {
+        isRemoved: true,
+        removed: true,
+        status: "removed",
+        removedReason: removalReason,
+        removalReason: removalReason,
+        removed_reason: removalReason,
+        removedAt: nowIso,
+        removed_at: nowIso,
+        recultures: updatedRecultures,
+        updatedAt: nowIso,
+      });
+      if (normalizeOptionKey(selectedRecultureJarId) === normalizeOptionKey(targetJarId)) {
+        setSelectedRecultureJarId("");
+      }
+      await appendCultureRecord({
+        jar_id: targetJarId,
+        parent_jar_id: targetEntry.parentJarId || "",
+        plant_date: targetEntry.cultureDate || "",
+        plant_type: targetEntry.orchidType || "",
+        nutrition_type: targetEntry.nutrition || "",
+        rack_location: targetEntry.rackNo || "",
+        plant_count: String(targetEntry.plantCount || ""),
+        seed_count: String(targetEntry.plantCount || ""),
+        reculture_type: "REMOVED",
+        reculture_date: removalDate,
+        removed_reason: removalReason,
+        created_at: nowIso,
+      });
+      setStatus(`Marked ${targetJarId} as removed: ${reasonLabel}.`);
+    } catch (err) {
+      setError(err?.message || `Failed to mark ${targetJarId} as removed.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const restoreJarRemoval = async (jarId) => {
+    const targetJarId = normalizeLinkedJarId(jarId);
+    if (!targetJarId) return;
+
+    const shouldRestore =
+      typeof window === "undefined"
+        ? true
+        : window.confirm(`Restore ${targetJarId} as active jar?`);
+    if (!shouldRestore) return;
+
+    const nowIso = new Date().toISOString();
+    setSaving(true);
+    setStatus("");
+    setError("");
+    try {
+      await update(ref(db, `recultureEntries/${encodeFirebaseKeySegment(targetJarId)}`), {
+        isRemoved: false,
+        removed: false,
+        status: "active",
+        removedReason: "",
+        removalReason: "",
+        removed_reason: "",
+        removedAt: "",
+        removed_at: "",
+        updatedAt: nowIso,
+      });
+      setStatus(`Restored ${targetJarId} as active.`);
+    } catch (err) {
+      setError(err?.message || `Failed to restore ${targetJarId}.`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const deleteJarEntry = async (jarId) => {
     const targetJarId = normalizeLinkedJarId(jarId);
     if (!targetJarId) return;
@@ -521,6 +742,12 @@ export default function CultureDetails() {
     const source = selectedRecultureEntry;
     if (!source?.jarId) {
       setError("Select a source jar from the search table before re-culturing.");
+      return;
+    }
+    if (source.isRemoved) {
+      setError(
+        `Jar ${source.jarId} is marked as removed (${getRemovalReasonLabel(source.removedReason)}). Restore it before re-culturing.`
+      );
       return;
     }
     if (![RECULTURE_WITHOUT_SUB, RECULTURE_WITH_SUB].includes(recultureType)) {
@@ -595,7 +822,7 @@ export default function CultureDetails() {
           reculture_date: recultureDate,
           created_at: nowIso,
         });
-        setStatus(`Saved reculture update under same jar ${sourceJarId}.`);
+        setStatus(`Saved reculture update under same jar ${sourceJarId}. QR label is ready in Jar list.`);
         setSameJarReculture(newSameJarReculture());
       } catch (err) {
         setError(err?.message || "Failed to save reculture update.");
@@ -762,7 +989,7 @@ export default function CultureDetails() {
       });
 
       await Promise.all(writeTasks);
-      setStatus(`Saved sub-culture split from ${sourceJarId} into ${newJarIds.join(", ")}.`);
+      setStatus(`Saved sub-culture split from ${sourceJarId} into ${newJarIds.join(", ")}. QR labels are ready in Jar list.`);
       setSplitRows([newSplitJarRow()]);
     } catch (err) {
       setError(err?.message || "Failed to save sub-culture split.");
@@ -880,6 +1107,14 @@ export default function CultureDetails() {
       recultures: cleanedRecultures.sort((a, b) => new Date(a.date) - new Date(b.date)),
       reculture_type: effectiveRecultureType,
       reculture_date: cleanedRecultures.length ? cleanedRecultures[cleanedRecultures.length - 1].date : "",
+      isRemoved: false,
+      removed: false,
+      status: "active",
+      removedReason: "",
+      removalReason: "",
+      removed_reason: "",
+      removedAt: "",
+      removed_at: "",
       created_at: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -907,7 +1142,7 @@ export default function CultureDetails() {
       setStatus(
         `Saved ${jarId} with ${payload.recultures.length} re-culture dates${
           recultureMode === "subculture" && parentJarId ? ` (sub-culture from ${parentJarId})` : ""
-        }.`
+        }. QR label is ready in Jar list.`
       );
     } catch (err) {
       setError(err?.message || "Failed to save to Firebase.");
@@ -918,7 +1153,14 @@ export default function CultureDetails() {
 
   return (
     <div className="space-y-8">
-      <Hero />
+      <Hero onOpenJarList={() => setJarLabelOpen(true)} />
+
+      {jarLabelOpen && (
+        <JarLabelManager
+          entries={entries}
+          onClose={() => setJarLabelOpen(false)}
+        />
+      )}
 
       <div className="grid lg:grid-cols-3 gap-6 relative">
         <div className="lg:col-span-2 space-y-6">
@@ -963,6 +1205,8 @@ export default function CultureDetails() {
             isEditing={isEditing}
             selectedEntry={selectedEntry}
             entries={entries}
+            onMarkRemoved={markJarRemoved}
+            onRestore={restoreJarRemoval}
             onSubmit={handleSubmit}
             clearForm={clearForm}
             status={status}
@@ -976,17 +1220,27 @@ export default function CultureDetails() {
           entries={entries}
           selectedId={selectedId}
           onSelect={loadEntry}
+          onMarkRemoved={markJarRemoved}
+          onRestore={restoreJarRemoval}
           onDelete={deleteJarEntry}
           saving={saving}
         />
       </div>
 
-      {selectedEntry && <Timeline entry={selectedEntry} entries={entries} />}
+      {selectedEntry && (
+        <Timeline
+          entry={selectedEntry}
+          entries={entries}
+          onMarkRemoved={markJarRemoved}
+          onRestore={restoreJarRemoval}
+          saving={saving}
+        />
+      )}
     </div>
   );
 }
 
-function Hero() {
+function Hero({ onOpenJarList }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
@@ -995,9 +1249,18 @@ function Hero() {
       className="panel relative overflow-hidden"
     >
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-primary/10 via-transparent to-secondary/10" />
-      <div className="relative space-y-3">
-        <p className="kicker">Orchid Culture Manager</p>
-        <h1 className="title-lg">OrchiLab</h1>
+      <div className="relative flex flex-wrap items-start justify-between gap-3">
+        <div className="space-y-3">
+          <p className="kicker">Orchid Culture Manager</p>
+          <h1 className="title-lg">OrchiLab</h1>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenJarList}
+          className="btn-primary px-4 py-2 text-sm"
+        >
+          Jar list
+        </button>
       </div>
     </motion.div>
   );
@@ -1028,6 +1291,8 @@ function FormCard({
   isEditing,
   selectedEntry,
   entries,
+  onMarkRemoved,
+  onRestore,
   onSubmit,
   clearForm,
   status,
@@ -1037,11 +1302,25 @@ function FormCard({
   saving,
 }) {
   const previewMode = isEditing && !reculturePanelOpen;
+  const rackSelectOptions = useMemo(
+    () => uniqueSortedOptions([...(rackOptions || []), form.rackNo]),
+    [rackOptions, form.rackNo]
+  );
   const selectedParentEntry = useMemo(() => {
     const parentId = selectedEntry?.parentJarId;
     if (!parentId) return null;
     return (entries || []).find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(parentId)) || null;
   }, [entries, selectedEntry]);
+  const [detailRemovalReason, setDetailRemovalReason] = useState(REMOVAL_REASON_CONTAMINATION);
+
+  useEffect(() => {
+    if (!selectedEntry) return;
+    if (selectedEntry.isRemoved && selectedEntry.removedReason) {
+      setDetailRemovalReason(selectedEntry.removedReason);
+      return;
+    }
+    setDetailRemovalReason(REMOVAL_REASON_CONTAMINATION);
+  }, [selectedEntry]);
   return (
     <motion.form
       onSubmit={onSubmit}
@@ -1096,20 +1375,20 @@ function FormCard({
               />
               <p className="text-[11px] text-subtle mt-1">Entry date can differ from planting/culture date.</p>
             </Field>
-            <Field label="Rack number *">
-              <input
+            <Field label="Rack ID *">
+              <select
                 value={form.rackNo}
                 onChange={onFieldChange("rackNo")}
-                placeholder="Rack or shelf location"
-                list="rack-options"
                 disabled={previewMode}
-                className="input-shell"
-              />
-              <datalist id="rack-options">
-                {rackOptions.map((rack) => (
-                  <option key={rack} value={rack} />
+                className={`input-shell ${previewMode ? "bg-paper/60 text-subtle cursor-not-allowed" : ""}`}
+              >
+                <option value="">Select rack ID</option>
+                {rackSelectOptions.map((rack) => (
+                  <option key={rack} value={rack}>
+                    {rack}
+                  </option>
                 ))}
-              </datalist>
+              </select>
             </Field>
             <Field label="Orchid type *">
               <input
@@ -1208,6 +1487,7 @@ function FormCard({
           setRecultureSearch={setRecultureSearch}
           recultureSearchRows={recultureSearchRows}
           entries={entries}
+          rackOptions={rackOptions}
           selectedRecultureEntry={selectedRecultureEntry}
           selectRecultureSource={selectRecultureSource}
           recultureType={recultureType}
@@ -1262,6 +1542,40 @@ function FormCard({
               {selectedParentEntry.nutrition || "-"}
             </p>
           )}
+          <div className="mt-3 flex flex-wrap items-center justify-end gap-2 border-t border-border/35 pt-3">
+            {!selectedEntry.isRemoved && (
+              <select
+                value={detailRemovalReason}
+                onChange={(e) => setDetailRemovalReason(e.target.value)}
+                className="input-shell max-w-[230px] py-1.5 text-xs"
+              >
+                {REMOVAL_REASON_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedEntry.isRemoved ? (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onRestore(selectedEntry.jarId)}
+                className="rounded-lg border border-emerald-200/70 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 hover:border-emerald-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Restore jar
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => onMarkRemoved(selectedEntry.jarId, detailRemovalReason)}
+                className="rounded-lg border border-amber-200/70 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 hover:border-amber-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Mark as end of lab life
+              </button>
+            )}
+          </div>
         </div>
       )}
 
@@ -1302,9 +1616,10 @@ function FormCard({
   );
 }
 
-function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
+function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDelete, saving }) {
   const [query, setQuery] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
+  const [removeReasonByJar, setRemoveReasonByJar] = useState({});
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -1387,7 +1702,9 @@ function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
         filteredEntries.length ? (
           <div className="space-y-2 max-h-[24rem] overflow-auto pr-1">
             {filteredEntries.map((entry) => {
-              const nextReculture = entry.recultures.find((r) => new Date(r.date) >= new Date());
+              const nextReculture = entry.isRemoved
+                ? null
+                : entry.recultures.find((r) => new Date(r.date) >= new Date());
               const isSelected = selectedId && selectedId.toLowerCase() === entry.jarId.toLowerCase();
               const childCount = childCountByParent.get(normalizeOptionKey(entry.jarId)) || 0;
               return (
@@ -1406,6 +1723,8 @@ function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
                   className={`w-full text-left rounded-xl border px-4 py-3 transition shadow-sm cursor-pointer ${
                     isSelected
                       ? "border-primary/35 bg-primary/10 text-primary shadow-md"
+                      : entry.isRemoved
+                        ? "border-amber-300/55 bg-amber-50/60 text-dark hover:border-amber-400/70"
                       : "border-border/45 bg-paper/70 text-dark hover:border-primary/35 hover:bg-primary/5"
                   }`}
                 >
@@ -1420,24 +1739,69 @@ function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
                       </p>
                       <p className="text-[11px] text-subtle">Nutrition: {entry.nutrition || "Not noted"}</p>
                     </div>
-                    <span className="text-[11px] uppercase tracking-[0.16em] text-subtle">
-                      {entry.recultures.length} dates
-                    </span>
+                    {entry.isRemoved ? (
+                      <span className="text-[11px] uppercase tracking-[0.16em] text-amber-700">Removed</span>
+                    ) : (
+                      <span className="text-[11px] uppercase tracking-[0.16em] text-subtle">
+                        {entry.recultures.length} dates
+                      </span>
+                    )}
                   </div>
+                  {entry.isRemoved && (
+                    <p className="text-xs text-amber-700 mt-1">
+                      Removed: {getRemovalReasonLabel(entry.removedReason)}
+                      {entry.removedAt ? ` on ${normalizeDateValue(entry.removedAt) || entry.removedAt}` : ""}
+                    </p>
+                  )}
                   {nextReculture && (
                     <p className="text-xs text-primary mt-1">
                       Next re-culture: {nextReculture.date}
                       {nextReculture.note ? ` - ${nextReculture.note}` : ""}
                     </p>
                   )}
-                  <div className="mt-2 flex justify-end border-t border-border/35 pt-2">
+                  <div
+                    className="mt-2 flex flex-wrap items-center justify-end gap-2 border-t border-border/35 pt-2"
+                    onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                  >
+                    {!entry.isRemoved && (
+                      <select
+                        value={removeReasonByJar[entry.jarId] || REMOVAL_REASON_CONTAMINATION}
+                        onChange={(e) =>
+                          setRemoveReasonByJar((prev) => ({ ...prev, [entry.jarId]: e.target.value }))
+                        }
+                        className="input-shell max-w-[210px] py-1.5 text-xs"
+                      >
+                        {REMOVAL_REASON_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    )}
+                    {entry.isRemoved ? (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => onRestore(entry.jarId)}
+                        className="rounded-lg border border-emerald-200/70 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 hover:border-emerald-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Restore
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        disabled={saving}
+                        onClick={() => onMarkRemoved(entry.jarId, removeReasonByJar[entry.jarId] || REMOVAL_REASON_CONTAMINATION)}
+                        className="rounded-lg border border-amber-200/70 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 hover:border-amber-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      >
+                        Mark removed
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={saving}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onDelete(entry.jarId);
-                      }}
+                      onClick={() => onDelete(entry.jarId)}
                       className="rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-1.5 text-xs text-rose-700 hover:border-rose-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       Delete
@@ -1457,11 +1821,781 @@ function JarList({ entries, selectedId, onSelect, onDelete, saving }) {
   );
 }
 
+function JarLabelManager({ entries, onClose }) {
+  const qrCacheRef = useRef(new Map());
+  const selectionInitializedRef = useRef(false);
+  const [typeFilter, setTypeFilter] = useState(LABEL_TYPE_ALL);
+  const [fromDate, setFromDate] = useState("");
+  const [toDate, setToDate] = useState("");
+  const [jarQuery, setJarQuery] = useState("");
+  const [rackFilter, setRackFilter] = useState("");
+  const [orchidFilter, setOrchidFilter] = useState("");
+  const [printMode, setPrintMode] = useState(PRINT_MODE_JAR);
+  const [includeRackOrchid, setIncludeRackOrchid] = useState(true);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [removedIds, setRemovedIds] = useState([]);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [actionError, setActionError] = useState("");
+
+  const allRows = useMemo(() => buildJarLabelRows(entries), [entries]);
+  const removedSet = useMemo(() => new Set(removedIds), [removedIds]);
+
+  const availableRows = useMemo(
+    () => allRows.filter((row) => !removedSet.has(row.id)),
+    [allRows, removedSet]
+  );
+  const rackOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          availableRows
+            .map((row) => String(row.rackNo || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" })),
+    [availableRows]
+  );
+  const orchidOptions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          availableRows
+            .map((row) => String(row.orchidType || "").trim())
+            .filter(Boolean)
+        )
+      ).sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" })),
+    [availableRows]
+  );
+
+  const filteredRows = useMemo(() => {
+    const term = jarQuery.trim().toLowerCase();
+    const from = normalizeDateValue(fromDate);
+    const to = normalizeDateValue(toDate);
+    const rackKey = normalizeOptionKey(rackFilter);
+    const orchidKey = normalizeOptionKey(orchidFilter);
+
+    return availableRows.filter((row) => {
+      if (typeFilter !== LABEL_TYPE_ALL && row.type !== typeFilter) return false;
+      if (from && row.eventDate && row.eventDate < from) return false;
+      if (to && row.eventDate && row.eventDate > to) return false;
+      if (rackKey && normalizeOptionKey(row.rackNo) !== rackKey) return false;
+      if (orchidKey && normalizeOptionKey(row.orchidType) !== orchidKey) return false;
+      if (!term) return true;
+      const haystack = [row.jarId, row.orchidType, row.rackNo, row.eventDate]
+        .map((value) => String(value || "").toLowerCase())
+        .join(" ");
+      return haystack.includes(term);
+    });
+  }, [availableRows, fromDate, jarQuery, orchidFilter, rackFilter, toDate, typeFilter]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const selectedRows = useMemo(
+    () => availableRows.filter((row) => selectedSet.has(row.id)),
+    [availableRows, selectedSet]
+  );
+  const selectedRackRows = useMemo(() => {
+    const byRack = new Map();
+    selectedRows.forEach((row) => {
+      const rackNo = String(row.rackNo || "").trim() || "-";
+      const orchidType = String(row.orchidType || "").trim() || "-";
+      const key = `${normalizeOptionKey(rackNo)}|${normalizeOptionKey(orchidType)}`;
+      if (byRack.has(key)) return;
+      byRack.set(key, {
+        id: `rack:${key}`,
+        rackNo,
+        orchidType,
+      });
+    });
+    return Array.from(byRack.values());
+  }, [selectedRows]);
+  const printableRows = useMemo(
+    () => (printMode === PRINT_MODE_RACK ? selectedRackRows : selectedRows),
+    [printMode, selectedRackRows, selectedRows]
+  );
+  const allSelected = useMemo(
+    () => availableRows.length > 0 && selectedRows.length === availableRows.length,
+    [availableRows.length, selectedRows.length]
+  );
+  const allFilteredSelected = useMemo(
+    () => filteredRows.length > 0 && filteredRows.every((row) => selectedSet.has(row.id)),
+    [filteredRows, selectedSet]
+  );
+
+  useEffect(() => {
+    const validIds = new Set(availableRows.map((row) => row.id));
+    setSelectedIds((prev) => prev.filter((id) => validIds.has(id)));
+    if (!selectionInitializedRef.current && availableRows.length) {
+      setSelectedIds(availableRows.map((row) => row.id));
+      selectionInitializedRef.current = true;
+    }
+  }, [availableRows]);
+
+  const toggleSelected = (id) => {
+    setSelectedIds((prev) => {
+      if (prev.includes(id)) return prev.filter((item) => item !== id);
+      return [...prev, id];
+    });
+    setActionError("");
+  };
+
+  const selectAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const merged = new Set(prev);
+      filteredRows.forEach((row) => merged.add(row.id));
+      return Array.from(merged);
+    });
+    setActionError("");
+  };
+
+  const selectAll = () => {
+    setSelectedIds(availableRows.map((row) => row.id));
+    setActionError("");
+  };
+
+  const deselectAll = () => {
+    setSelectedIds([]);
+    setActionError("");
+  };
+
+  const toggleAllFiltered = (checked) => {
+    if (checked) {
+      setSelectedIds((prev) => {
+        const merged = new Set(prev);
+        filteredRows.forEach((row) => merged.add(row.id));
+        return Array.from(merged);
+      });
+    } else {
+      const filteredIdSet = new Set(filteredRows.map((row) => row.id));
+      setSelectedIds((prev) => prev.filter((id) => !filteredIdSet.has(id)));
+    }
+    setActionError("");
+  };
+
+  const keepOnlyFiltered = () => {
+    setSelectedIds(filteredRows.map((row) => row.id));
+    setActionError("");
+  };
+
+  const removeSelectedFromQueue = () => {
+    if (!selectedRows.length) {
+      setActionError("Select at least one label to remove from print queue.");
+      return;
+    }
+    setRemovedIds((prev) => {
+      const next = new Set(prev);
+      selectedRows.forEach((row) => next.add(row.id));
+      return Array.from(next);
+    });
+    setSelectedIds((prev) => {
+      const removeSet = new Set(selectedRows.map((row) => row.id));
+      return prev.filter((id) => !removeSet.has(id));
+    });
+    setActionError("");
+  };
+
+  const restoreRemoved = () => {
+    setRemovedIds([]);
+    setActionError("");
+  };
+
+  const escapeHtml = (value) =>
+    String(value || "")
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#39;");
+
+  const createPrintWindow = () => {
+    if (!printableRows.length) {
+      setActionError("Select at least one label before printing.");
+      return;
+    }
+    const win = window.open("", "_blank", "width=1200,height=900");
+    if (!win) {
+      setActionError("Popup blocked. Allow popups to print labels.");
+      return;
+    }
+
+    const labelHtml = printableRows
+      .map((row) => {
+        const isRackMode = printMode === PRINT_MODE_RACK;
+        if (isRackMode) {
+          return `
+            <div class="label rack-only">
+              <div class="meta">
+                <p class="jar">Rack: ${escapeHtml(row.rackNo || "-")}</p>
+                <p class="date">Orchid: ${escapeHtml(row.orchidType || "-")}</p>
+                <p class="type">Rack label</p>
+              </div>
+            </div>
+          `;
+        }
+
+        const qrSrc = buildQrImageUrl(row.jarId);
+        const rackLine = includeRackOrchid
+          ? `<p class="rack">Rack: ${escapeHtml(row.rackNo || "-")} | Orchid: ${escapeHtml(row.orchidType || "-")}</p>`
+          : "";
+        return `
+          <div class="label">
+            <div class="meta">
+              <p class="jar">${escapeHtml(row.jarId)}</p>
+              <p class="date">${escapeHtml(row.eventLabel)}: ${escapeHtml(row.eventDate || "-")}</p>
+              <p class="type">${row.type === LABEL_TYPE_CULTURE ? "Culture" : "Re-culture"}</p>
+              ${rackLine}
+            </div>
+            <img src="${qrSrc}" alt="QR ${escapeHtml(row.jarId)}" />
+          </div>
+        `;
+      })
+      .join("");
+
+    win.document.write(`
+      <!doctype html>
+      <html>
+      <head>
+        <meta charset="utf-8" />
+        <title>Jar Labels</title>
+        <style>
+          @page { size: A4; margin: 10mm; }
+          body { margin: 0; font-family: Arial, sans-serif; background: #fff; color: #111827; }
+          .sheet {
+            width: 210mm;
+            min-height: 297mm;
+            margin: 0 auto;
+            box-sizing: border-box;
+            padding: 12mm 10mm;
+            display: grid;
+            grid-template-columns: repeat(3, 2in);
+            justify-content: center;
+            gap: 4mm;
+          }
+          .label {
+            width: 2in;
+            height: 0.7in;
+            box-sizing: border-box;
+            border: 0.6px solid #111827;
+            border-radius: 2mm;
+            padding: 1.1mm 2mm;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 2mm;
+            overflow: hidden;
+          }
+          .label.rack-only {
+            justify-content: flex-start;
+          }
+          .label.rack-only .meta {
+            min-width: 100%;
+          }
+          .meta { min-width: 0; flex: 1; }
+          .jar {
+            margin: 0;
+            font-size: 9pt;
+            font-weight: 700;
+            line-height: 1.1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .date {
+            margin: 1mm 0 0;
+            font-size: 6.2pt;
+            line-height: 1.1;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          .type { margin: 0.6mm 0 0; font-size: 5.8pt; color: #374151; line-height: 1.05; }
+          .rack {
+            margin: 0.5mm 0 0;
+            font-size: 5.3pt;
+            color: #4b5563;
+            line-height: 1.05;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }
+          img { width: 0.52in; height: 0.52in; object-fit: contain; border: 0.3px solid #d1d5db; }
+        </style>
+      </head>
+      <body>
+        <div class="sheet">${labelHtml}</div>
+      </body>
+      </html>
+    `);
+    win.document.close();
+    win.focus();
+    win.onload = () => {
+      setTimeout(() => {
+        win.print();
+      }, 400);
+    };
+    setActionError("");
+  };
+
+  const getQrDataUrl = async (jarId) => {
+    const key = String(jarId || "").trim();
+    if (!key) return "";
+    if (qrCacheRef.current.has(key)) return qrCacheRef.current.get(key);
+    const dataUrl = await fetchQrDataUrlForJarId(key);
+    qrCacheRef.current.set(key, dataUrl);
+    return dataUrl;
+  };
+
+  const downloadPdf = async () => {
+    if (!printableRows.length) {
+      setActionError("Select at least one label before PDF download.");
+      return;
+    }
+
+    setPdfLoading(true);
+    setActionError("");
+    try {
+      const doc = new jsPDF({
+        orientation: "portrait",
+        unit: "mm",
+        format: "a4",
+      });
+      const labelWidthMm = LABEL_WIDTH_IN * IN_TO_MM;
+      const labelHeightMm = LABEL_HEIGHT_IN * IN_TO_MM;
+      const qrSizeMm = QR_SIZE_IN * IN_TO_MM;
+      const rowsPerPage = Math.floor((A4_HEIGHT_MM - LABEL_MARGIN_Y_MM * 2 + LABEL_Y_GAP_MM) / (labelHeightMm + LABEL_Y_GAP_MM));
+      const labelsPerPage = Math.max(1, rowsPerPage * LABEL_COLUMNS);
+      const marginX = Math.max(
+        8,
+        (A4_WIDTH_MM - (LABEL_COLUMNS * labelWidthMm + (LABEL_COLUMNS - 1) * LABEL_X_GAP_MM)) / 2
+      );
+
+      for (let idx = 0; idx < printableRows.length; idx += 1) {
+        const row = printableRows[idx];
+        const slot = idx % labelsPerPage;
+        if (idx > 0 && slot === 0) doc.addPage();
+
+        const col = slot % LABEL_COLUMNS;
+        const rowIndex = Math.floor(slot / LABEL_COLUMNS);
+        const x = marginX + col * (labelWidthMm + LABEL_X_GAP_MM);
+        const y = LABEL_MARGIN_Y_MM + rowIndex * (labelHeightMm + LABEL_Y_GAP_MM);
+
+        doc.setDrawColor(17, 24, 39);
+        doc.setLineWidth(0.2);
+        doc.roundedRect(x, y, labelWidthMm, labelHeightMm, 1.2, 1.2);
+
+        if (printMode === PRINT_MODE_RACK) {
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(9);
+          doc.text(`Rack: ${row.rackNo || "-"}`, x + 2.2, y + 6.6, { maxWidth: labelWidthMm - 4 });
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.6);
+          doc.text(`Orchid: ${row.orchidType || "-"}`, x + 2.2, y + 11.8, { maxWidth: labelWidthMm - 4 });
+          doc.setFontSize(5.8);
+          doc.text("Rack label", x + 2.2, y + 15.8, { maxWidth: labelWidthMm - 4 });
+        } else {
+          doc.setFont("helvetica", "bold");
+          doc.setFontSize(9);
+          doc.text(String(row.jarId || "-"), x + 2.2, y + 5.8, { maxWidth: labelWidthMm - qrSizeMm - 6 });
+
+          doc.setFont("helvetica", "normal");
+          doc.setFontSize(6.1);
+          doc.text(`${row.eventLabel}: ${row.eventDate || "-"}`, x + 2.2, y + 10.6, {
+            maxWidth: labelWidthMm - qrSizeMm - 6,
+          });
+          doc.text(row.type === LABEL_TYPE_CULTURE ? "Culture" : "Re-culture", x + 2.2, y + 13.9, {
+            maxWidth: labelWidthMm - qrSizeMm - 6,
+          });
+          if (includeRackOrchid) {
+            doc.setFontSize(5.3);
+            doc.text(`Rack: ${row.rackNo || "-"} | Orchid: ${row.orchidType || "-"}`, x + 2.2, y + 16.6, {
+              maxWidth: labelWidthMm - qrSizeMm - 6,
+            });
+          }
+
+          try {
+            const qrDataUrl = await getQrDataUrl(row.jarId);
+            if (qrDataUrl) {
+              doc.addImage(
+                qrDataUrl,
+                "PNG",
+                x + labelWidthMm - qrSizeMm - 1.8,
+                y + (labelHeightMm - qrSizeMm) / 2,
+                qrSizeMm,
+                qrSizeMm
+              );
+            }
+          } catch {
+            // Keep PDF generation running even if one QR image fails.
+          }
+        }
+      }
+
+      doc.save(`jar-labels-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+      setActionError(err?.message || "Failed to generate PDF labels.");
+    } finally {
+      setPdfLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 bg-black/45 backdrop-blur-sm p-3 sm:p-6 overflow-y-auto">
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+        className="mx-auto w-full max-w-[1200px] rounded-2xl border border-border/50 bg-paper shadow-2xl space-y-4 p-4 sm:p-6"
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="kicker">Jar list</p>
+            <h3 className="text-xl font-semibold text-dark">QR label preview and print</h3>
+            <p className="text-sm text-subtle">
+              Label size: {LABEL_WIDTH_IN}" x {LABEL_HEIGHT_IN}" | QR payload: Jar ID only
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="btn-soft px-3 py-2 text-sm">
+            Close
+          </button>
+        </div>
+
+        <div className="grid lg:grid-cols-7 gap-3">
+          <Field label="Label output">
+            <select
+              value={printMode}
+              onChange={(e) => setPrintMode(e.target.value)}
+              className="input-shell"
+            >
+              <option value={PRINT_MODE_JAR}>Jar labels</option>
+              <option value={PRINT_MODE_RACK}>Rack labels (rack + orchid)</option>
+            </select>
+          </Field>
+          <Field label="Type">
+            <select
+              value={typeFilter}
+              onChange={(e) => setTypeFilter(e.target.value)}
+              className="input-shell"
+            >
+              <option value={LABEL_TYPE_ALL}>Both types</option>
+              <option value={LABEL_TYPE_CULTURE}>Culture</option>
+              <option value={LABEL_TYPE_RECULTURE}>Re-culture</option>
+            </select>
+          </Field>
+          <Field label="From date">
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="input-shell"
+            />
+          </Field>
+          <Field label="To date">
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="input-shell"
+            />
+          </Field>
+          <Field label="Jar search">
+            <input
+              value={jarQuery}
+              onChange={(e) => setJarQuery(normalizeJarIdInput(e.target.value))}
+              placeholder="e.g. Jar-001"
+              className="input-shell"
+            />
+          </Field>
+          <Field label="Rack">
+            <select
+              value={rackFilter}
+              onChange={(e) => setRackFilter(e.target.value)}
+              className="input-shell"
+            >
+              <option value="">All racks</option>
+              {rackOptions.map((rack) => (
+                <option key={rack} value={rack}>
+                  {rack}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Orchid type">
+            <select
+              value={orchidFilter}
+              onChange={(e) => setOrchidFilter(e.target.value)}
+              className="input-shell"
+            >
+              <option value="">All orchid types</option>
+              {orchidOptions.map((orchid) => (
+                <option key={orchid} value={orchid}>
+                  {orchid}
+                </option>
+              ))}
+            </select>
+          </Field>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          <label className="inline-flex items-center gap-2 rounded-lg border border-border/55 bg-paper/70 px-3 py-1.5 text-dark">
+            <input
+              type="checkbox"
+              checked={includeRackOrchid}
+              onChange={(e) => setIncludeRackOrchid(Boolean(e.target.checked))}
+              disabled={printMode === PRINT_MODE_RACK}
+              className="accent-primary"
+            />
+            Show rack + orchid on label
+          </label>
+          <button type="button" onClick={selectAll} className="btn-soft px-3 py-1.5">
+            {allSelected ? "All selected" : "Select all"}
+          </button>
+          <button type="button" onClick={deselectAll} className="btn-soft px-3 py-1.5">
+            Deselect all
+          </button>
+          <button type="button" onClick={selectAllFiltered} className="btn-soft px-3 py-1.5">
+            Select filtered
+          </button>
+          <button type="button" onClick={keepOnlyFiltered} className="btn-soft px-3 py-1.5">
+            Keep only filtered
+          </button>
+          <button type="button" onClick={removeSelectedFromQueue} className="btn-soft px-3 py-1.5">
+            Remove selected
+          </button>
+          <button type="button" onClick={restoreRemoved} className="btn-soft px-3 py-1.5">
+            Restore removed
+          </button>
+          <button type="button" onClick={createPrintWindow} className="btn-primary px-3 py-1.5">
+            Print selected
+          </button>
+          <button
+            type="button"
+            onClick={downloadPdf}
+            disabled={pdfLoading}
+            className="btn-primary px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {pdfLoading ? "Building PDF..." : "Download PDF"}
+          </button>
+          <span className="text-subtle">
+            Filtered: {filteredRows.length} | Selected: {selectedRows.length} | Printable: {printableRows.length} | Removed: {removedIds.length}
+          </span>
+        </div>
+        {printMode === PRINT_MODE_RACK && (
+          <p className="text-[11px] text-subtle">
+            Rack label mode prints unique Rack + Orchid combinations from selected rows.
+          </p>
+        )}
+
+        {actionError && (
+          <p className="text-xs text-rose-700 rounded-lg border border-rose-200/60 bg-rose-500/10 px-3 py-2">
+            {actionError}
+          </p>
+        )}
+
+        <div className="grid xl:grid-cols-[minmax(0,0.95fr)_minmax(0,1.25fr)] gap-4">
+          <div className="rounded-xl border border-border/45 bg-paper/75 overflow-hidden">
+            <div className="px-3 py-2 border-b border-border/45 text-sm font-semibold text-dark">
+              Label rows
+            </div>
+            <div className="max-h-[24rem] overflow-auto">
+              {filteredRows.length ? (
+                <table className="w-full text-xs">
+                  <thead className="bg-paper/80 sticky top-0">
+                    <tr>
+                      <th className="px-2 py-2 text-left">
+                        <label className="inline-flex items-center gap-1 text-xs">
+                          <input
+                            type="checkbox"
+                            checked={allFilteredSelected}
+                            onChange={(e) => toggleAllFiltered(Boolean(e.target.checked))}
+                            className="accent-primary"
+                          />
+                          Pick
+                        </label>
+                      </th>
+                      <th className="px-2 py-2 text-left">Jar ID</th>
+                      <th className="px-2 py-2 text-left">Type</th>
+                      <th className="px-2 py-2 text-left">Date</th>
+                      <th className="px-2 py-2 text-left">Rack</th>
+                      <th className="px-2 py-2 text-left">Orchid</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredRows.map((row) => (
+                      <tr key={row.id} className="border-t border-border/35">
+                        <td className="px-2 py-2">
+                          <input
+                            type="checkbox"
+                            checked={selectedSet.has(row.id)}
+                            onChange={() => toggleSelected(row.id)}
+                            className="accent-primary"
+                          />
+                        </td>
+                        <td className="px-2 py-2 text-dark font-medium">{row.jarId}</td>
+                        <td className="px-2 py-2 text-subtle">
+                          {row.type === LABEL_TYPE_CULTURE ? "Culture" : "Re-culture"}
+                        </td>
+                        <td className="px-2 py-2 text-subtle">{row.eventDate || "-"}</td>
+                        <td className="px-2 py-2 text-subtle">{row.rackNo || "-"}</td>
+                        <td className="px-2 py-2 text-subtle">{row.orchidType || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <div className="px-3 py-4 text-xs text-subtle">No rows match current filters.</div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border/45 bg-paper/70 p-3 overflow-auto">
+            <p className="text-xs font-semibold text-dark mb-2">A4 preview (3 labels per row)</p>
+            <div className="overflow-auto rounded-lg border border-border/40 bg-slate-100 p-3">
+              <div
+                style={{
+                  width: "210mm",
+                  minHeight: "297mm",
+                  margin: "0 auto",
+                  background: "#ffffff",
+                  padding: "12mm 10mm",
+                  boxSizing: "border-box",
+                  display: "grid",
+                  gridTemplateColumns: "repeat(3, 2in)",
+                  justifyContent: "center",
+                  gap: "4mm",
+                }}
+              >
+                {printableRows.length ? (
+                  printableRows.map((row) => (
+                    <div
+                      key={`preview-${row.id}`}
+                      style={{
+                        width: "2in",
+                        height: "0.7in",
+                        border: "0.6px solid #111827",
+                        borderRadius: "2mm",
+                        padding: "1.1mm 2mm",
+                        boxSizing: "border-box",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "space-between",
+                        gap: "2mm",
+                        overflow: "hidden",
+                        color: "#111827",
+                      }}
+                    >
+                      <div style={{ minWidth: 0, flex: 1 }}>
+                        {printMode === PRINT_MODE_RACK ? (
+                          <>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: "9pt",
+                                fontWeight: 700,
+                                lineHeight: 1.1,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              Rack: {row.rackNo || "-"}
+                            </p>
+                            <p
+                              style={{
+                                margin: "1mm 0 0",
+                                fontSize: "6.4pt",
+                                lineHeight: 1.1,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              Orchid: {row.orchidType || "-"}
+                            </p>
+                            <p style={{ margin: "0.8mm 0 0", fontSize: "6pt", lineHeight: 1.1, color: "#374151" }}>
+                              Rack label
+                            </p>
+                          </>
+                        ) : (
+                          <>
+                            <p
+                              style={{
+                                margin: 0,
+                                fontSize: "9pt",
+                                fontWeight: 700,
+                                lineHeight: 1.1,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {row.jarId}
+                            </p>
+                            <p
+                              style={{
+                                margin: "1mm 0 0",
+                                fontSize: "6.2pt",
+                                lineHeight: 1.1,
+                                whiteSpace: "nowrap",
+                                overflow: "hidden",
+                                textOverflow: "ellipsis",
+                              }}
+                            >
+                              {row.eventLabel}: {row.eventDate || "-"}
+                            </p>
+                            <p style={{ margin: "0.8mm 0 0", fontSize: "6pt", lineHeight: 1.1, color: "#374151" }}>
+                              {row.type === LABEL_TYPE_CULTURE ? "Culture" : "Re-culture"}
+                            </p>
+                          </>
+                        )}
+                        {printMode !== PRINT_MODE_RACK && includeRackOrchid && (
+                          <p
+                            style={{
+                              margin: "0.5mm 0 0",
+                              fontSize: "5.3pt",
+                              lineHeight: 1.05,
+                              color: "#4b5563",
+                              whiteSpace: "nowrap",
+                              overflow: "hidden",
+                              textOverflow: "ellipsis",
+                            }}
+                          >
+                            Rack: {row.rackNo || "-"} | Orchid: {row.orchidType || "-"}
+                          </p>
+                        )}
+                      </div>
+                      {printMode !== PRINT_MODE_RACK && (
+                        <img
+                          src={buildQrImageUrl(row.jarId)}
+                          alt={`QR ${row.jarId}`}
+                          style={{
+                            width: "0.52in",
+                            height: "0.52in",
+                            objectFit: "contain",
+                            border: "0.3px solid #d1d5db",
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))
+                ) : (
+                  <p style={{ gridColumn: "1 / -1", fontSize: "10pt", color: "#6b7280", margin: 0 }}>
+                    Select labels from the table to preview and print.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function RecultureWorkspace({
   recultureSearch,
   setRecultureSearch,
   recultureSearchRows,
   entries,
+  rackOptions,
   selectedRecultureEntry,
   selectRecultureSource,
   recultureType,
@@ -1479,6 +2613,10 @@ function RecultureWorkspace({
     if (!parentId) return null;
     return (entries || []).find((entry) => normalizeOptionKey(entry.jarId) === normalizeOptionKey(parentId)) || null;
   }, [entries, selectedRecultureEntry]);
+  const splitRackOptions = useMemo(
+    () => uniqueSortedOptions([...(rackOptions || []), ...splitRows.map((row) => row.rackLocation)]),
+    [rackOptions, splitRows]
+  );
 
   return (
     <div className="space-y-4 rounded-2xl border border-primary/25 bg-primary/5 px-4 py-4">
@@ -1661,13 +2799,19 @@ function RecultureWorkspace({
                         className="input-shell"
                       />
                     </Field>
-                    <Field label="Rack location *">
-                      <input
+                    <Field label="Rack ID *">
+                      <select
                         value={row.rackLocation}
                         onChange={(e) => updateSplitRow(idx, "rackLocation", e.target.value)}
-                        placeholder="e.g. R-3B"
                         className="input-shell"
-                      />
+                      >
+                        <option value="">Select rack ID</option>
+                        {splitRackOptions.map((rack) => (
+                          <option key={rack} value={rack}>
+                            {rack}
+                          </option>
+                        ))}
+                      </select>
                     </Field>
                     <Field label="Plant count *">
                       <input
@@ -1712,7 +2856,7 @@ function RecultureWorkspace({
   );
 }
 
-function Timeline({ entry, entries }) {
+function Timeline({ entry, entries, onMarkRemoved, onRestore, saving }) {
   const entryById = useMemo(() => {
     const map = new Map();
     (entries || []).forEach((item) => {
@@ -1766,6 +2910,22 @@ function Timeline({ entry, entries }) {
     }
     return rows;
   }, [entry.jarId, parentChain, childJars]);
+  const historyRows = useMemo(
+    () =>
+      [...(Array.isArray(entry.recultures) ? entry.recultures : [])].sort(
+        (a, b) => new Date(a?.date || 0) - new Date(b?.date || 0)
+      ),
+    [entry.recultures]
+  );
+  const [timelineRemovalReason, setTimelineRemovalReason] = useState(REMOVAL_REASON_CONTAMINATION);
+
+  useEffect(() => {
+    if (entry.isRemoved && entry.removedReason) {
+      setTimelineRemovalReason(entry.removedReason);
+      return;
+    }
+    setTimelineRemovalReason(REMOVAL_REASON_CONTAMINATION);
+  }, [entry.isRemoved, entry.removedReason, entry.jarId]);
 
   return (
     <motion.div
@@ -1780,19 +2940,21 @@ function Timeline({ entry, entries }) {
           <h3 className="text-lg font-semibold text-dark">Re-culture trail for {entry.jarId}</h3>
         </div>
         <span className="text-xs text-primary px-3 py-1 rounded-full border border-primary/25 bg-primary/10">
-          {entry.recultures.length} planned
+          {historyRows.length} events
         </span>
       </div>
 
-      {entry.recultures.length === 0 ? (
+      {historyRows.length === 0 ? (
         <div className="panel-muted border-dashed px-4 py-3 text-sm text-subtle">
           No re-culture dates logged yet. Add them later without changing the jar ID.
         </div>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {entry.recultures.map((row, idx) => (
+          {historyRows.map((row, idx) => (
             <div key={`${entry.jarId}-${row.date}-${idx}`} className="panel-muted px-4 py-3">
-              <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">Re-culture {idx + 1}</p>
+              <p className="text-[11px] uppercase tracking-[0.2em] text-primary/85">
+                {row?.recultureType === "REMOVED" ? "End of lab life" : `Re-culture ${idx + 1}`}
+              </p>
               <p className="text-lg font-semibold text-dark mt-1">{row.date}</p>
               {row.note ? (
                 <p className="text-sm text-subtle mt-1">{row.note}</p>
@@ -1809,6 +2971,48 @@ function Timeline({ entry, entries }) {
       </div>
       <div className="panel-muted px-4 py-3 text-sm text-subtle">
         Parent jar: {entry.parentJarId || "Root jar"} - Child jars: {childJars.length ? childJars.join(", ") : "None"}
+      </div>
+      <div className="panel-muted px-4 py-3 text-sm text-subtle space-y-2">
+        <p className="font-semibold text-dark">Hierarchy last step</p>
+        <p>
+          {entry.isRemoved
+            ? `Removed from lab (${getRemovalReasonLabel(entry.removedReason)}${entry.removedAt ? ` on ${normalizeDateValue(entry.removedAt) || entry.removedAt}` : ""}).`
+            : "Jar is active in lab."}
+        </p>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          {!entry.isRemoved && (
+            <select
+              value={timelineRemovalReason}
+              onChange={(e) => setTimelineRemovalReason(e.target.value)}
+              className="input-shell max-w-[230px] py-1.5 text-xs"
+            >
+              {REMOVAL_REASON_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          )}
+          {entry.isRemoved ? (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onRestore(entry.jarId)}
+              className="rounded-lg border border-emerald-200/70 bg-emerald-500/10 px-3 py-1.5 text-xs text-emerald-700 hover:border-emerald-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Restore jar
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => onMarkRemoved(entry.jarId, timelineRemovalReason)}
+              className="rounded-lg border border-amber-200/70 bg-amber-500/10 px-3 py-1.5 text-xs text-amber-700 hover:border-amber-300 transition disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Mark as end of lab life
+            </button>
+          )}
+        </div>
       </div>
       <div className="rounded-xl border border-border/45 bg-paper/70 overflow-hidden">
         <p className="px-4 py-3 text-sm font-semibold text-dark border-b border-border/45">Jar relationship table</p>
