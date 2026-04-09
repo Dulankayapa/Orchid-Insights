@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Line } from "react-chartjs-2";
 import { useLocation, useNavigate } from "react-router-dom";
+import jsQR from "jsqr";
 import {
   Chart as ChartJS,
   LineElement,
@@ -1323,6 +1324,284 @@ function FormCard({
   cultureError,
   heightLogError,
 }) {
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanStatus, setScanStatus] = useState("");
+  const cameraVideoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const cameraLoopTimeoutRef = useRef(null);
+  const decodeCanvasRef = useRef(null);
+  const barcodeDetectorRef = useRef(null);
+  const uploadInputRef = useRef(null);
+
+  const stopCameraScan = () => {
+    if (cameraLoopTimeoutRef.current) {
+      clearTimeout(cameraLoopTimeoutRef.current);
+      cameraLoopTimeoutRef.current = null;
+    }
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.pause?.();
+      cameraVideoRef.current.srcObject = null;
+    }
+    setCameraOpen(false);
+  };
+
+  useEffect(() => () => stopCameraScan(), []);
+
+  useEffect(() => {
+    if (!cameraOpen || !cameraStreamRef.current || !cameraVideoRef.current) return;
+    const videoEl = cameraVideoRef.current;
+    if (videoEl.srcObject !== cameraStreamRef.current) {
+      videoEl.srcObject = cameraStreamRef.current;
+    }
+    videoEl.play?.().catch(() => {});
+  }, [cameraOpen]);
+
+  const getBarcodeDetector = async () => {
+    if (barcodeDetectorRef.current) return barcodeDetectorRef.current;
+    if (typeof window === "undefined" || !window.BarcodeDetector) return null;
+    try {
+      let detector = null;
+      if (typeof window.BarcodeDetector.getSupportedFormats === "function") {
+        const formats = await window.BarcodeDetector.getSupportedFormats();
+        if (Array.isArray(formats) && formats.includes("qr_code")) {
+          detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        }
+      }
+      if (!detector) detector = new window.BarcodeDetector();
+      barcodeDetectorRef.current = detector;
+      return detector;
+    } catch {
+      return null;
+    }
+  };
+
+  const detectWithJsQr = (source) => {
+    if (!source || typeof document === "undefined") return [];
+    const sourceWidth = Number(source.videoWidth || source.naturalWidth || source.width || 0);
+    const sourceHeight = Number(source.videoHeight || source.naturalHeight || source.height || 0);
+    if (!sourceWidth || !sourceHeight) return [];
+
+    const maxSide = 960;
+    const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+
+    if (!decodeCanvasRef.current) decodeCanvasRef.current = document.createElement("canvas");
+    const canvas = decodeCanvasRef.current;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return [];
+
+    try {
+      ctx.drawImage(source, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const result = jsQR(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+      return result?.data ? [{ rawValue: result.data }] : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const detectQrFromSource = async (source) => {
+    const detector = await getBarcodeDetector();
+    if (detector) {
+      try {
+        const detections = await detector.detect(source);
+        if (detections?.length) return detections;
+      } catch {
+        // Fallback to jsQR.
+      }
+    }
+    return detectWithJsQr(source);
+  };
+
+  const applyScannedQrResult = (rawValue, sourceLabel = "QR") => {
+    const parsed = parseJarIdFromQrPayload(rawValue);
+    if (!parsed) {
+      setScanStatus(`${sourceLabel} scan did not return a readable Jar/Plant ID.`);
+      return false;
+    }
+    setJarId(parsed);
+    setScanStatus(`Scanned ${parsed}.`);
+    return true;
+  };
+
+  const runCameraDetectionLoop = async () => {
+    if (!cameraStreamRef.current) return;
+    try {
+      const videoEl = cameraVideoRef.current;
+      if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        const detections = await detectQrFromSource(videoEl);
+        const rawValue = detections?.[0]?.rawValue;
+        if (rawValue) {
+          const parsed = applyScannedQrResult(rawValue, "Webcam QR");
+          if (parsed) {
+            stopCameraScan();
+            return;
+          }
+        }
+      }
+    } catch {
+      // keep scanner loop alive
+    }
+    cameraLoopTimeoutRef.current = window.setTimeout(runCameraDetectionLoop, 250);
+  };
+
+  const startCameraScan = async () => {
+    if (cameraOpen) {
+      stopCameraScan();
+      setScanStatus("Webcam scan stopped.");
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setScanStatus("Webcam is not available in this browser.");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.isSecureContext &&
+      !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || "")
+    ) {
+      setScanStatus("Webcam requires HTTPS (or localhost).");
+      return;
+    }
+
+    const waitForVideoFrame = async (videoEl, timeoutMs = 2200) => {
+      if (!videoEl) return false;
+      const hasFrame = () => videoEl.videoWidth > 0 && videoEl.videoHeight > 0;
+      if (hasFrame()) return true;
+      return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const timer = window.setInterval(() => {
+          if (hasFrame()) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+          if (Date.now() - startedAt > timeoutMs) {
+            clearInterval(timer);
+            resolve(false);
+          }
+        }, 100);
+      });
+    };
+
+    setScanBusy(true);
+    try {
+      const attempts = [
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        { video: { facingMode: "user" }, audio: false },
+        { video: true, audio: false },
+      ];
+      let stream = null;
+      for (const constraints of attempts) {
+        try {
+          const candidate = await navigator.mediaDevices.getUserMedia(constraints);
+          if (!candidate) continue;
+          if (cameraVideoRef.current) {
+            cameraVideoRef.current.srcObject = candidate;
+            try {
+              await cameraVideoRef.current.play();
+            } catch {
+              // continue to frame check
+            }
+            const ready = await waitForVideoFrame(cameraVideoRef.current);
+            if (!ready) {
+              candidate.getTracks().forEach((track) => track.stop());
+              continue;
+            }
+          }
+          stream = candidate;
+          break;
+        } catch {
+          // try next
+        }
+      }
+      if (!stream) throw new Error("Unable to start webcam stream.");
+
+      cameraStreamRef.current = stream;
+      setCameraOpen(true);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      if (cameraVideoRef.current) {
+        const videoEl = cameraVideoRef.current;
+        videoEl.srcObject = stream;
+        try {
+          await videoEl.play();
+        } catch {
+          // continue
+        }
+      }
+      setScanStatus("Webcam started. Show QR to fill Jar/Plant ID.");
+      runCameraDetectionLoop();
+    } catch (err) {
+      stopCameraScan();
+      const message =
+        err?.name === "NotAllowedError"
+          ? "Webcam permission denied. Allow camera access and retry."
+          : err?.name === "NotFoundError"
+            ? "No webcam device found."
+            : err?.message || "Unable to start webcam scan.";
+      setScanStatus(message);
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
+  const triggerUploadScan = () => {
+    uploadInputRef.current?.click();
+  };
+
+  const handleUploadScan = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    stopCameraScan();
+    setScanBusy(true);
+    try {
+      let detections = [];
+      if (typeof createImageBitmap === "function") {
+        const bitmap = await createImageBitmap(file);
+        try {
+          detections = await detectQrFromSource(bitmap);
+        } finally {
+          bitmap.close?.();
+        }
+      } else {
+        const imageUrl = URL.createObjectURL(file);
+        try {
+          const image = new Image();
+          await new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = reject;
+            image.src = imageUrl;
+          });
+          detections = await detectQrFromSource(image);
+        } finally {
+          URL.revokeObjectURL(imageUrl);
+        }
+      }
+
+      const rawValue = detections?.[0]?.rawValue;
+      if (!rawValue) {
+        setScanStatus("No QR code detected in uploaded image.");
+        return;
+      }
+      applyScannedQrResult(rawValue, "Uploaded QR");
+    } catch (err) {
+      setScanStatus(err?.message || "Failed to scan uploaded QR image.");
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
   return (
     <motion.form
       onSubmit={onSubmit}
@@ -1354,6 +1633,43 @@ function FormCard({
             placeholder={demoIds.length ? `e.g. ${demoIds[0]}` : "Enter Jar ID"}
             className="input-shell"
           />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={startCameraScan}
+              disabled={scanBusy}
+              className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {cameraOpen ? "Stop webcam" : "Scan QR (webcam)"}
+            </button>
+            <button
+              type="button"
+              onClick={triggerUploadScan}
+              disabled={scanBusy}
+              className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Scan QR (upload image)
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleUploadScan}
+              className="hidden"
+            />
+          </div>
+          {cameraOpen ? (
+            <div className="mt-2 rounded-xl border border-border/45 bg-paper/70 p-2">
+              <video
+                ref={cameraVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full rounded-lg border border-border/35 bg-slate-900/90 max-h-40 object-contain"
+              />
+            </div>
+          ) : null}
+          {scanStatus ? <p className="text-[11px] text-subtle mt-1">{scanStatus}</p> : null}
           <p className="text-[11px] text-subtle mt-1">
             QR scan/paste supported. Payload can be only Jar ID (recommended) or a tracker link.
           </p>
