@@ -9,7 +9,6 @@ import PlantDatabase from "./pages/PlantDatabase.jsx";
 import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
-import OrchidCompanion from "./pages/OrchidCompanion.jsx";
 import OrchidClassifier from "./pages/OrchidClassifier.jsx";
 import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
 import Footer from "./components/Footer.jsx";
@@ -26,7 +25,6 @@ const navItems = [
   { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
   { to: "/classifier", label: "Orchid Classifier", code: "\u{1F4F7}" },
   { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
-  { to: "/companion", label: "Orchid Companion", code: "\u{1F916}" },
 ];
 
 const TIME_ZONE = "Asia/Colombo";
@@ -155,7 +153,7 @@ export default function App() {
                 <ThemeToggle />
               </div>
 
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+              <div className="mt-4 flex flex-wrap gap-2 sm:flex-nowrap sm:overflow-x-auto sm:pb-1 sm:[&::-webkit-scrollbar]:hidden sm:[-ms-overflow-style:'none'] sm:[scrollbar-width:'none'] justify-start">
                 {navItems.map((item) => (
                   <NavLink
                     key={item.to}
@@ -168,7 +166,9 @@ export default function App() {
                       }`
                     }
                   >
-                    {item.label}
+                    <span className="mr-2">{item.code}</span>
+                    <span>{item.label}</span>
+                    <span className="ml-2 text-subtle">→</span>
                   </NavLink>
                 ))}
               </div>
@@ -191,7 +191,6 @@ export default function App() {
                   <Route path="/firebase" element={<FirebaseTable />} />
                   <Route path="/classifier" element={<OrchidClassifier />} />
                   <Route path="/monitor" element={<EnvMonitor />} />
-                  <Route path="/companion" element={<OrchidCompanion />} />
                 </Routes>
               </motion.div>
             </main>

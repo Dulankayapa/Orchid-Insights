@@ -1039,6 +1039,8 @@ export default function GrowthTracker() {
     e.preventDefault();
     clearAnalysisState();
 
+    const resolvedHeight = sanitizeHeightMm(currentHeight || fallbackHeight);
+
     if (!activeCanonicalId) {
       setError("Enter a Jar/Plant ID before analysis so the result can be saved to the plant database.");
       return;
@@ -1050,14 +1052,14 @@ export default function GrowthTracker() {
       return;
     }
 
-    if (!currentHeight) {
+    if (resolvedHeight === null) {
       setError("Current height must come from live sensor stream. Wait for a fresh reading for this Jar/Plant ID.");
       return;
     }
 
     const payload = {
       planting_date: normalizedPlanting,
-      current_height_mm: Number(currentHeight),
+      current_height_mm: resolvedHeight,
       age_days: derivedAgeDays ?? undefined,
     };
 
@@ -1065,10 +1067,10 @@ export default function GrowthTracker() {
     try {
       const resp = await api.post("/growth/analyze", payload);
       setResult(resp.data);
-      setAnalyzedHeight(Number(currentHeight));
+      setAnalyzedHeight(resolvedHeight);
       setAnalyzedJarId(activeCanonicalId);
 
-      const heightMm = sanitizeHeightMm(currentHeight);
+      const heightMm = resolvedHeight;
       const plantPayload = {
         id: activeCanonicalId,
         planting_date: normalizedPlanting,
@@ -1156,6 +1158,11 @@ export default function GrowthTracker() {
     return pts.slice(-120); // keep last 120 points
   }, [plantRecord, sensorHistory, liveSource]);
 
+  const fallbackHeight = useMemo(() => {
+    if (!heightPoints.length) return null;
+    return heightPoints[heightPoints.length - 1]?.y ?? null;
+  }, [heightPoints]);
+
   // Listen directly to Firebase plants/{id} for real-time planting date/height updates
   useEffect(() => {
     if (!activeCanonicalId) return undefined;
@@ -1184,6 +1191,12 @@ export default function GrowthTracker() {
       setCurrentHeight(String(liveHeight));
     }
   }, [liveHeight]);
+
+  useEffect(() => {
+    if (!currentHeight && fallbackHeight !== null) {
+      setCurrentHeight(String(fallbackHeight));
+    }
+  }, [currentHeight, fallbackHeight]);
 
   return (
     <div className="space-y-8">
