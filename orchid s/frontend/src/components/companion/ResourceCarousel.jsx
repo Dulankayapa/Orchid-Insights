@@ -22,17 +22,22 @@ export default function ResourceCarousel({ species, growthStage }) {
       <div className="border rounded p-3 bg-surface">
         <h4 className="font-semibold">{current.title}</h4>
         <p className="text-sm text-subtle mt-1">{current.description}</p>
-        <a href={current.link} target="_blank" rel="noreferrer" className="text-primary text-sm mt-2 inline-block font-semibold">
-          Read more ->
+        <a
+          href={current.link}
+          target="_blank"
+          rel="noreferrer"
+          className="text-primary text-sm mt-2 inline-block font-semibold"
+        >
+          Read more {"\u2192"}
         </a>
       </div>
       {resources.length > 1 && (
         <div className="flex justify-between mt-3 text-sm">
           <button type="button" onClick={prev} className="btn-soft px-3 py-1 rounded">
-            {"<- Prev"}
+            {"\u2190 Prev"}
           </button>
           <button type="button" onClick={next} className="btn-soft px-3 py-1 rounded">
-            {"Next ->"}
+            {"Next \u2192"}
           </button>
         </div>
       )}

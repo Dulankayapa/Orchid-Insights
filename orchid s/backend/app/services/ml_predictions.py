@@ -83,7 +83,7 @@ def predict_health_score(temperature: float, humidity: float, light: float, spec
     Simple heuristic-based health score.
     """
     score = 100
-    breakdown = {}
+    breakdown: dict[str, float] = {}
 
     # Temperature ideal: 18-28°C
     if temperature < 18:
@@ -120,8 +120,10 @@ def predict_health_score(temperature: float, humidity: float, light: float, spec
         score += 5
     breakdown["ml_factor"] = min(100, max(0, score))
 
-    final = min(100, max(0, int(score)))
-    return final, breakdown
+    # Normalize to integers for response models
+    final = min(100, max(0, int(round(score))))
+    breakdown_int = {k: int(round(v)) for k, v in breakdown.items()}
+    return final, breakdown_int
 
 
 def predict_next_watering(orchid_data: dict, sensor_history: List[dict]) -> Tuple[str, float, str]:
