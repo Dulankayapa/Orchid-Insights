@@ -128,6 +128,23 @@ class NextWateringResponse(BaseModel):
     reason: str
 
 
+# ---------- Device status ----------
+class DeviceStatus(BaseModel):
+    device_id: str
+    last_seen: datetime
+    payload: Dict[str, object] = Field(default_factory=dict)
+
+
+class DeviceStatusResponse(BaseModel):
+    status: str
+    last_seen: Optional[datetime] = None
+
+
+class OfflineResponse(BaseModel):
+    status: str
+    message: str
+
+
 # ---------- Firebase ----------
 class FirebasePlant(BaseModel):
     id: str

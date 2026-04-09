@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getOrchids } from "../lib/companionApi";
 import { useMonitorData } from "../hooks/useMonitorData";
+import useDeviceStatus from "../hooks/useDeviceStatus";
 import OrchidSelector from "../components/companion/OrchidSelector";
 import MLHealthForecast from "../components/companion/MLHealthForecast";
 import DynamicWateringAdvisor from "../components/companion/DynamicWateringAdvisor";
@@ -19,6 +20,8 @@ const luxToLevel = (lux) => {
 
 export default function OrchidCompanion() {
   const { latest, connectionStatus } = useMonitorData();
+  const deviceStatus = useDeviceStatus("orchid-node-1", 5000);
+  const offline = deviceStatus.state !== "online" && deviceStatus.state !== "loading";
   const [orchids, setOrchids] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
 
@@ -55,6 +58,12 @@ export default function OrchidCompanion() {
 
   return (
     <div className="orchid-companion-page space-y-5">
+      {offline && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
+          Device disconnected — showing last known values.
+        </div>
+      )}
       <section className="oc-hero">
         <div className="oc-hero-copy">
           <p className="kicker">Orchid Companion</p>
@@ -90,10 +99,10 @@ export default function OrchidCompanion() {
       {selectedId && sensorData ? (
         <>
           <section className="oc-grid oc-primary-grid">
-            <div className="oc-card">
+            <div className={`oc-card ${offline ? "opacity-60 pointer-events-none" : ""}`}>
               <MLHealthForecast orchidId={selectedId} sensorData={sensorData} />
             </div>
-            <div className="oc-card space-y-4">
+            <div className={`oc-card space-y-4 ${offline ? "opacity-60 pointer-events-none" : ""}`}>
               <DynamicWateringAdvisor orchidId={selectedId} sensorData={sensorData} />
               <SmartReminderList orchidId={selectedId} />
             </div>

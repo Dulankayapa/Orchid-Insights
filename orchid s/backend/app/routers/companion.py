@@ -19,6 +19,7 @@ from app.models.schemas import (
 from app.services import companion as companion_service
 from app.services import ml_predictions
 from app.services import mock_db
+from app.services.device_status import require_online
 
 router = APIRouter(prefix="/companion", tags=["companion"])
 
@@ -53,8 +54,11 @@ async def get_orchids(user_id: str = "default"):
     return mock_db.get_orchids(user_id)
 
 
-@router.get("/health-score/{orchid_id}", response_model=HealthScoreResponse)
-async def health_score(orchid_id: str, temp: float, humidity: float, light: float):
+@router.get("/health-score/{orchid_id}", response_model=HealthScoreResponse | dict)
+async def health_score(orchid_id: str, temp: float, humidity: float, light: float, device_id: str = "orchid-node-1"):
+    ok, status = require_online(device_id)
+    if not ok:
+        return status
     orchid = next((o for o in mock_db.get_orchids() if o.orchid_id == orchid_id), None)
     if not orchid:
         raise HTTPException(status_code=404, detail="Orchid not found")
@@ -64,8 +68,11 @@ async def health_score(orchid_id: str, temp: float, humidity: float, light: floa
     return HealthScoreResponse(score=score, breakdown=breakdown, forecast=forecast, anomaly_detected=anomaly)
 
 
-@router.get("/next-watering/{orchid_id}", response_model=NextWateringResponse)
-async def next_watering(orchid_id: str, temp: float, humidity: float, light_level: str):
+@router.get("/next-watering/{orchid_id}", response_model=NextWateringResponse | dict)
+async def next_watering(orchid_id: str, temp: float, humidity: float, light_level: str, device_id: str = "orchid-node-1"):
+    ok, status = require_online(device_id)
+    if not ok:
+        return status
     orchid = next((o for o in mock_db.get_orchids() if o.orchid_id == orchid_id), None)
     if not orchid:
         raise HTTPException(status_code=404, detail="Orchid not found")
