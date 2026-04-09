@@ -931,7 +931,7 @@ export const useMonitorData = (settingsOverride = null) => {
       const normalized = normalizeSensor(candidate ?? value);
       if (!normalized) return;
       setLatest(normalized);
-      setLastUpdate(normalized.hasExplicitTimestamp ? normalized.ts : null);
+      setLastUpdate(normalized.ts ?? Date.now());
       setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
     });
 
@@ -1019,7 +1019,7 @@ export const useMonitorData = (settingsOverride = null) => {
             const prevTs = toTimestampMs(prev?.ts ?? prev?.timestamp) ?? 0;
             return normalized.ts >= prevTs ? normalized : prev;
           });
-          setLastUpdate(normalized.hasExplicitTimestamp ? normalized.ts : null);
+          setLastUpdate(normalized.ts ?? Date.now());
           setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
           break;
         }
@@ -1045,15 +1045,13 @@ export const useMonitorData = (settingsOverride = null) => {
         return;
       }
 
-      const hasSensorTimestamp = Boolean(
-        latestSnapshot?.hasExplicitTimestamp && Number.isFinite(latestSnapshot?.ts)
-      );
-      if (!hasSensorTimestamp) {
+      const lastSeen = toTimestampMs(latestSnapshot?.ts ?? latestSnapshot?.timestamp ?? lastUpdate);
+      if (!lastSeen) {
         setConnectionStatus('offline');
         return;
       }
 
-      const ageSec = (Date.now() - latestSnapshot.ts) / 1000;
+      const ageSec = (Date.now() - lastSeen) / 1000;
       if (ageSec <= staleSec) {
         setConnectionStatus('connected');
       } else if (ageSec <= offlineSec) {
@@ -1067,7 +1065,7 @@ export const useMonitorData = (settingsOverride = null) => {
     const timer = setInterval(updateStatus, 1000);
 
     return () => clearInterval(timer);
-  }, [thresholds.staleSeconds, thresholds.offlineSeconds, latestSnapshot, firebaseConnected]);
+  }, [thresholds.staleSeconds, thresholds.offlineSeconds, latestSnapshot, firebaseConnected, lastUpdate]);
 
   useEffect(() => {
     if (!alerts.length) return;
