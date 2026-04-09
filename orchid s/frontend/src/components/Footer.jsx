@@ -2,12 +2,13 @@ import { NavLink } from "react-router-dom";
 
 const quickLinks = [
   { to: "/", label: "Dashboard" },
+  { to: "/monitor", label: "Env Monitor" },
   { to: "/reculture", label: "Culture Details" },
   { to: "/growth", label: "Growth Tracker" },
   { to: "/history", label: "Growth History" },
   { to: "/plants", label: "Plant Database" },
   { to: "/firebase", label: "Firebase Table" },
-  { to: "/monitor", label: "Env Monitor" },
+  { to: "/companion", label: "Orchid Companion" },
 ];
 
 export default function Footer() {
@@ -44,7 +45,7 @@ export default function Footer() {
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/70 opacity-70" />
               <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-primary" />
             </span>
-            Real-time data tools for your orchid lab.
+            Real-time data companion for your orchid lab.
           </p>
           <p className="text-[12px] uppercase tracking-[0.18em] text-subtle/90">
             (c) {currentYear} Orchid Insights Lab

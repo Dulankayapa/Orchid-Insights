@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
 import { useMonitorData } from "../hooks/useMonitorData";
+import useDeviceStatus from "../hooks/useDeviceStatus";
 
 const FEEDBACK_STORAGE_KEY = "orchid-insights-dashboard-feedback";
 
@@ -14,6 +15,14 @@ const cards = [
     icon: "\u{1F4C8}",
     meta: "Predictive",
     desc: "Model-backed growth classification and expected ranges.",
+  },
+  {
+    title: "Env Monitor",
+    to: "/monitor",
+    tone: "from-sky-400/35 to-primary/30",
+    icon: "\u{1F321}\uFE0F",
+    meta: "Sensors",
+    desc: "Real-time environment status with alerts and charts.",
   },
   {
     title: "Growth History",
@@ -56,12 +65,12 @@ const cards = [
     desc: "Upload an orchid photo to predict class and OOD score.",
   },
   {
-    title: "Env Monitor",
-    to: "/monitor",
-    tone: "from-sky-400/35 to-primary/30",
-    icon: "\u{1F321}\uFE0F",
-    meta: "Sensors",
-    desc: "Real-time environment status with alerts and charts.",
+    title: "Orchid Companion",
+    to: "/companion",
+    tone: "from-fuchsia-400/35 to-secondary/30",
+    icon: "\u{1F916}",
+    meta: "Assistant",
+    desc: "Ask the assistant for orchid care and growth guidance using live monitor context.",
   },
 ];
 const ORCHID_FRAME_DURATION_MS = 5000;
@@ -140,6 +149,8 @@ const buildDashboardGrowthWarnings = (records) =>
 
 export default function Dashboard() {
   const { latest: liveMonitorLatest, connectionStatus: monitorConnectionStatus } = useMonitorData();
+  const deviceStatus = useDeviceStatus("orchid-node-1", 5000);
+  const offline = deviceStatus.state !== "online";
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [showStats, setShowStats] = useState(true);
@@ -334,6 +345,7 @@ export default function Dashboard() {
       ["Plant Database", "Browse and search stored orchid plant records synced from backend and Firebase."],
       ["Firebase Table", "Inspect live sensor payloads and merged values from Firebase in tabular form."],
       ["Env Monitor", "Track real-time temperature, humidity, light, air quality, alerts, and AI tips."],
+      ["Orchid Companion", "Get context-aware orchid care guidance using live monitor sensor data."],
     ];
 
     doc.setFontSize(20);
@@ -390,6 +402,12 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      {offline && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 flex items-center gap-2">
+          <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
+          Device disconnected — showing last known values.
+        </div>
+      )}
       <section className="hero-glass modern-hero relative overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-white/35 via-transparent to-primary/10 dark:from-white/5" />
         <div className="relative grid gap-6 lg:grid-cols-[minmax(0,1.15fr)_minmax(280px,0.85fr)] lg:items-stretch">
