@@ -91,14 +91,24 @@ const pickMetricValue = (row, aliases = []) => {
 const normalizeSensor = (payload, fallback = {}) => {
   if (!isObject(payload)) return null;
 
-  const explicitTimestamp = extractExplicitTimestampMs(payload);
-  const timestamp = explicitTimestamp ?? Date.now();
+  const carriedTimestamp = toTimestampMs(payload.timestamp ?? payload.ts);
+  const carriedExplicitTimestamp = typeof payload.hasExplicitTimestamp === 'boolean'
+    ? payload.hasExplicitTimestamp
+    : null;
+  const explicitTimestamp = carriedExplicitTimestamp === false
+    ? null
+    : extractExplicitTimestampMs(payload) ?? (carriedExplicitTimestamp ? carriedTimestamp : null);
+  const timestamp = explicitTimestamp ?? carriedTimestamp ?? fallback.receivedAt ?? Date.now();
+  const receivedAt = toTimestampMs(payload.receivedAt ?? payload.received_at)
+    ?? fallback.receivedAt
+    ?? timestamp;
 
   const normalized = {
     ...payload,
     timestamp,
     ts: timestamp,
-    hasExplicitTimestamp: explicitTimestamp !== null,
+    receivedAt,
+    hasExplicitTimestamp: carriedExplicitTimestamp ?? explicitTimestamp !== null,
     nodeId: String(
       payload.nodeId
       ?? payload.node
@@ -386,6 +396,7 @@ export const useMonitorData = (settingsOverride = null) => {
 
   const publishedAlertIdsRef = useRef(new Set());
   const persistedReportRef = useRef('');
+  const latestReadingRef = useRef(null);
 
   const normalizedSettingsOverride = useMemo(
     () => (isObject(settingsOverride) ? settingsOverride : EMPTY_SETTINGS_OVERRIDE),
@@ -426,7 +437,7 @@ export const useMonitorData = (settingsOverride = null) => {
   );
 
   const latestSnapshot = useMemo(() => {
-    if (latest) return normalizeSensor(latest) ?? latest;
+    if (latest) return latest;
     return normalizedHistory[normalizedHistory.length - 1] ?? null;
   }, [latest, normalizedHistory]);
 
@@ -928,10 +939,12 @@ export const useMonitorData = (settingsOverride = null) => {
     const unLatest = onValue(latestRef, (snapshot) => {
       const value = snapshot.val();
       const candidate = getPreferredLatest(value);
-      const normalized = normalizeSensor(candidate ?? value);
+      const receivedAt = Date.now();
+      const normalized = normalizeSensor(candidate ?? value, { receivedAt });
       if (!normalized) return;
+      latestReadingRef.current = normalized;
       setLatest(normalized);
-      setLastUpdate(normalized.hasExplicitTimestamp ? normalized.ts : null);
+      setLastUpdate(receivedAt);
       setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
     });
 
@@ -939,7 +952,11 @@ export const useMonitorData = (settingsOverride = null) => {
     const unHistory = onValue(historyRef, (snapshot) => {
       const rows = normalizeHistoryRows(snapshot.val())
         .filter((row) => (row.ts ?? 0) > 1704067200000);
-      setHistory(rows);
+      setHistory(
+        latestReadingRef.current
+          ? mergeLiveIntoHistory(rows, latestReadingRef.current, 3000)
+          : rows,
+      );
     });
 
     const growthRef = query(ref(db, 'growthLogs'), orderByKey(), limitToLast(200));
@@ -1012,14 +1029,16 @@ export const useMonitorData = (settingsOverride = null) => {
 
           const json = await response.json();
           const candidate = getPreferredLatest(json);
-          const normalized = normalizeSensor(candidate);
+          const receivedAt = Date.now();
+          const normalized = normalizeSensor(candidate ?? json, { receivedAt });
           if (!normalized) continue;
 
+          latestReadingRef.current = normalized;
           setLatest((prev) => {
             const prevTs = toTimestampMs(prev?.ts ?? prev?.timestamp) ?? 0;
             return normalized.ts >= prevTs ? normalized : prev;
           });
-          setLastUpdate(normalized.hasExplicitTimestamp ? normalized.ts : null);
+          setLastUpdate(receivedAt);
           setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
           break;
         }
@@ -1045,15 +1064,15 @@ export const useMonitorData = (settingsOverride = null) => {
         return;
       }
 
-      const hasSensorTimestamp = Boolean(
-        latestSnapshot?.hasExplicitTimestamp && Number.isFinite(latestSnapshot?.ts)
-      );
-      if (!hasSensorTimestamp) {
+      const lastSeen = toTimestampMs(lastUpdate)
+        ?? toTimestampMs(latestSnapshot?.receivedAt)
+        ?? toTimestampMs(latestSnapshot?.ts ?? latestSnapshot?.timestamp);
+      if (!lastSeen) {
         setConnectionStatus('offline');
         return;
       }
 
-      const ageSec = (Date.now() - latestSnapshot.ts) / 1000;
+      const ageSec = (Date.now() - lastSeen) / 1000;
       if (ageSec <= staleSec) {
         setConnectionStatus('connected');
       } else if (ageSec <= offlineSec) {
@@ -1067,7 +1086,7 @@ export const useMonitorData = (settingsOverride = null) => {
     const timer = setInterval(updateStatus, 1000);
 
     return () => clearInterval(timer);
-  }, [thresholds.staleSeconds, thresholds.offlineSeconds, latestSnapshot, firebaseConnected]);
+  }, [thresholds.staleSeconds, thresholds.offlineSeconds, latestSnapshot, firebaseConnected, lastUpdate]);
 
   useEffect(() => {
     if (!alerts.length) return;
@@ -1273,10 +1292,7 @@ export const useMonitorData = (settingsOverride = null) => {
     return { suggested, confidence };
   }, [latestSnapshot, thresholds, predictions, healthScore]);
 
-  const liveLatestSnapshot = useMemo(
-    () => (connectionStatus === 'connected' ? latestSnapshot : null),
-    [connectionStatus, latestSnapshot],
-  );
+  const liveLatestSnapshot = useMemo(() => latestSnapshot, [latestSnapshot]);
 
   return {
     latest: liveLatestSnapshot,
