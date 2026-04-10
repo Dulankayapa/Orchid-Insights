@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { onValue, push, ref, remove, set, update } from "firebase/database";
 import { jsPDF } from "jspdf";
+import jsQR from "jsqr";
 import { db } from "../lib/firebase";
 import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 // Components
@@ -33,12 +34,13 @@ const REMOVAL_REASON_OPTIONS = [
 const OPTIONS_PATH = "recultureOptions";
 const LABEL_TYPE_ALL = "all";
 const LABEL_TYPE_CULTURE = "culture";
-const LABEL_TYPE_RECULTURE = "reculture";
+const LABEL_TYPE_RECULTURE = "reculture"; // subcultural
 const PRINT_MODE_JAR = "jar";
 const PRINT_MODE_RACK = "rack";
-const LABEL_WIDTH_IN = 2;
-const LABEL_HEIGHT_IN = 0.7;
-const QR_SIZE_IN = 0.52;
+const LABEL_WIDTH_IN = 2.35; // 2.35 inches is the typical width of a 3x1 label on A4 paper, allowing for some margin
+const LABEL_HEIGHT_IN = 1.1;
+const QR_SIZE_IN = 1;
+const LABEL_TEXT_BOX_IN = 1.1;
 const IN_TO_MM = 25.4;
 const A4_WIDTH_MM = 210;
 const A4_HEIGHT_MM = 297;
@@ -59,7 +61,7 @@ const normalizeDateValue = (value) => {
 const buildQrImageUrl = (jarId) => {
   const payload = String(jarId || "").trim();
   if (!payload) return "";
-  return `https://quickchart.io/qr?text=${encodeURIComponent(payload)}&margin=1&size=300&dark=111827&light=ffffff`;
+  return `https://quickchart.io/qr?text=${encodeURIComponent(payload)}&margin=1&size=420&dark=111827&light=ffffff`;
 };
 
 const fetchQrDataUrlForJarId = async (jarId) => {
@@ -174,6 +176,40 @@ const normalizeJarIdInput = (value) => {
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 const normalizeLinkedJarId = (value) => normalizeJarIdInput(value || "").trim();
+const extractJarIdFromQrText = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  const normalizeCandidate = (candidate) => {
+    const compact = String(candidate || "")
+      .trim()
+      .replace(/\s+/g, "")
+      .replace(/[;,\])}]+$/, "");
+    return normalizeJarIdInput(compact);
+  };
+
+  const direct = normalizeCandidate(raw);
+  if (/^(jar|j)[-_]?[a-z0-9.]+$/i.test(direct)) return direct;
+
+  const embeddedMatch = raw.match(/\b(?:jar|j)[-_ ]*[a-z0-9.]+\b/i);
+  if (embeddedMatch?.[0]) return normalizeCandidate(embeddedMatch[0]);
+
+  try {
+    const url = new URL(raw);
+    const jarParam =
+      url.searchParams.get("jarId") ||
+      url.searchParams.get("jar_id") ||
+      url.searchParams.get("jar") ||
+      url.searchParams.get("id");
+    if (jarParam) return normalizeCandidate(jarParam);
+    const pathMatch = url.pathname.match(/\b(?:jar|j)[-_ ]*[a-z0-9.]+\b/i);
+    if (pathMatch?.[0]) return normalizeCandidate(pathMatch[0]);
+  } catch {
+    // Ignore URL parse failure and keep fallback behavior.
+  }
+
+  return direct;
+};
 const readDirectParentJarId = (entry) =>
   normalizeLinkedJarId(
     entry?.directParentJarId ||
@@ -1620,6 +1656,14 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
   const [query, setQuery] = useState("");
   const [searchMessage, setSearchMessage] = useState("");
   const [removeReasonByJar, setRemoveReasonByJar] = useState({});
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [scanBusy, setScanBusy] = useState(false);
+  const barcodeDetectorRef = useRef(null);
+  const decodeCanvasRef = useRef(null);
+  const cameraVideoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const cameraLoopTimeoutRef = useRef(null);
+  const uploadInputRef = useRef(null);
 
   const normalizedQuery = query.trim().toLowerCase();
 
@@ -1640,6 +1684,285 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
   useEffect(() => {
     if (!query.trim()) setSearchMessage("");
   }, [query]);
+
+  const stopCameraScan = () => {
+    if (cameraLoopTimeoutRef.current) {
+      clearTimeout(cameraLoopTimeoutRef.current);
+      cameraLoopTimeoutRef.current = null;
+    }
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.pause?.();
+      cameraVideoRef.current.srcObject = null;
+    }
+    setCameraOpen(false);
+  };
+
+  useEffect(() => () => stopCameraScan(), []);
+
+  useEffect(() => {
+    if (!cameraOpen || !cameraStreamRef.current || !cameraVideoRef.current) return;
+    const videoEl = cameraVideoRef.current;
+    if (videoEl.srcObject !== cameraStreamRef.current) {
+      videoEl.srcObject = cameraStreamRef.current;
+    }
+    videoEl.play?.().catch(() => {});
+  }, [cameraOpen]);
+
+  const getBarcodeDetector = async () => {
+    if (barcodeDetectorRef.current) return barcodeDetectorRef.current;
+    if (typeof window === "undefined" || !window.BarcodeDetector) return null;
+    try {
+      let detector = null;
+      if (typeof window.BarcodeDetector.getSupportedFormats === "function") {
+        const formats = await window.BarcodeDetector.getSupportedFormats();
+        if (Array.isArray(formats) && formats.includes("qr_code")) {
+          detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        }
+      }
+      if (!detector) {
+        detector = new window.BarcodeDetector();
+      }
+      barcodeDetectorRef.current = detector;
+      return detector;
+    } catch {
+      return null;
+    }
+  };
+
+  const detectWithJsQr = (source) => {
+    if (!source || typeof document === "undefined") return [];
+    const sourceWidth = Number(source.videoWidth || source.naturalWidth || source.width || 0);
+    const sourceHeight = Number(source.videoHeight || source.naturalHeight || source.height || 0);
+    if (!sourceWidth || !sourceHeight) return [];
+
+    const maxSide = 960;
+    const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+
+    if (!decodeCanvasRef.current) {
+      decodeCanvasRef.current = document.createElement("canvas");
+    }
+    const canvas = decodeCanvasRef.current;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return [];
+
+    try {
+      ctx.drawImage(source, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const result = jsQR(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+      return result?.data ? [{ rawValue: result.data }] : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const detectQrFromSource = async (source) => {
+    const detector = await getBarcodeDetector();
+    if (detector) {
+      try {
+        const detections = await detector.detect(source);
+        if (detections?.length) return detections;
+      } catch {
+        // Fall back to jsQR below.
+      }
+    }
+    return detectWithJsQr(source);
+  };
+
+  const applyScannedQrResult = (rawValue, sourceLabel = "QR") => {
+    const jarId = extractJarIdFromQrText(rawValue);
+    if (!jarId) {
+      setSearchMessage(`${sourceLabel} scan did not return a readable Jar ID.`);
+      return false;
+    }
+    setQuery(jarId);
+    const exact = entries.find((entry) => entry.jarId.toLowerCase() === jarId.toLowerCase());
+    if (exact) {
+      onSelect(exact);
+      setSearchMessage(`Scanned ${jarId}. Loaded ${exact.jarId}.`);
+    } else {
+      setSearchMessage(`Scanned ${jarId}. Filtered records by scanned Jar ID.`);
+    }
+    return true;
+  };
+
+  const runCameraDetectionLoop = async () => {
+    if (!cameraStreamRef.current) return;
+    try {
+      const videoEl = cameraVideoRef.current;
+      if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        const detections = await detectQrFromSource(videoEl);
+        const rawValue = detections?.[0]?.rawValue;
+        if (rawValue) {
+          const parsed = applyScannedQrResult(rawValue, "Webcam QR");
+          if (parsed) {
+            stopCameraScan();
+            return;
+          }
+        }
+      }
+    } catch {
+      // Keep loop alive for transient camera frame errors.
+    }
+    cameraLoopTimeoutRef.current = window.setTimeout(runCameraDetectionLoop, 250);
+  };
+
+  const startCameraScan = async () => {
+    if (cameraOpen) {
+      stopCameraScan();
+      setSearchMessage("Webcam scan stopped.");
+      return;
+    }
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setSearchMessage("Webcam is not available in this browser.");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.isSecureContext &&
+      !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || "")
+    ) {
+      setSearchMessage("Webcam requires HTTPS (or localhost). Open this app in a secure URL.");
+      return;
+    }
+
+    const waitForVideoFrame = async (videoEl, timeoutMs = 2200) => {
+      if (!videoEl) return false;
+      const hasFrame = () => videoEl.videoWidth > 0 && videoEl.videoHeight > 0;
+      if (hasFrame()) return true;
+      return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const timer = window.setInterval(() => {
+          if (hasFrame()) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+          if (Date.now() - startedAt > timeoutMs) {
+            clearInterval(timer);
+            resolve(false);
+          }
+        }, 100);
+      });
+    };
+
+    setScanBusy(true);
+    try {
+      const attempts = [
+        { video: { facingMode: { ideal: "environment" } }, audio: false },
+        { video: { facingMode: "user" }, audio: false },
+        { video: true, audio: false },
+      ];
+      let stream = null;
+      for (const constraints of attempts) {
+        try {
+          const candidate = await navigator.mediaDevices.getUserMedia(constraints);
+          if (!candidate) continue;
+          if (cameraVideoRef.current) {
+            cameraVideoRef.current.srcObject = candidate;
+            try {
+              await cameraVideoRef.current.play();
+            } catch {
+              // Continue to frame check.
+            }
+            const ready = await waitForVideoFrame(cameraVideoRef.current);
+            if (!ready) {
+              candidate.getTracks().forEach((track) => track.stop());
+              continue;
+            }
+          }
+          stream = candidate;
+          break;
+        } catch {
+          // Try next constraints.
+        }
+      }
+      if (!stream) throw new Error("Unable to start webcam stream.");
+
+      cameraStreamRef.current = stream;
+      setCameraOpen(true);
+      // Attach stream after video element renders.
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      if (cameraVideoRef.current) {
+        const videoEl = cameraVideoRef.current;
+        videoEl.srcObject = stream;
+        try {
+          await videoEl.play();
+        } catch {
+          // Continue; some browsers delay autoplay.
+        }
+      }
+      setSearchMessage("Webcam started. Show the QR label to auto-search Jar ID.");
+      runCameraDetectionLoop();
+    } catch (err) {
+      stopCameraScan();
+      const message =
+        err?.name === "NotAllowedError"
+          ? "Webcam permission denied. Allow camera access and retry."
+          : err?.name === "NotFoundError"
+            ? "No webcam device found."
+            : err?.message || "Unable to start webcam scan.";
+      setSearchMessage(message);
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
+  const triggerUploadScan = () => {
+    uploadInputRef.current?.click();
+  };
+
+  const handleUploadScan = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    stopCameraScan();
+    setScanBusy(true);
+    try {
+      let detections = [];
+      if (typeof createImageBitmap === "function") {
+        const bitmap = await createImageBitmap(file);
+        try {
+          detections = await detectQrFromSource(bitmap);
+        } finally {
+          bitmap.close?.();
+        }
+      } else {
+        const imageUrl = URL.createObjectURL(file);
+        try {
+          const image = new Image();
+          await new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = reject;
+            image.src = imageUrl;
+          });
+          detections = await detectQrFromSource(image);
+        } finally {
+          URL.revokeObjectURL(imageUrl);
+        }
+      }
+
+      const rawValue = detections?.[0]?.rawValue;
+      if (!rawValue) {
+        setSearchMessage("No QR code detected in uploaded image.");
+        return;
+      }
+      applyScannedQrResult(rawValue, "Uploaded QR");
+    } catch (err) {
+      setSearchMessage(err?.message || "Failed to scan uploaded QR image.");
+    } finally {
+      setScanBusy(false);
+    }
+  };
 
   const handleSearch = (e) => {
     e.preventDefault();
@@ -1695,6 +2018,42 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
             Search
           </button>
         </div>
+        <div className="flex flex-wrap items-center gap-2 px-1">
+          <button
+            type="button"
+            onClick={startCameraScan}
+            disabled={scanBusy}
+            className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            {cameraOpen ? "Stop webcam" : "Scan QR (webcam)"}
+          </button>
+          <button
+            type="button"
+            onClick={triggerUploadScan}
+            disabled={scanBusy}
+            className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+          >
+            Scan QR (upload image)
+          </button>
+          <input
+            ref={uploadInputRef}
+            type="file"
+            accept="image/*"
+            onChange={handleUploadScan}
+            className="hidden"
+          />
+        </div>
+        {cameraOpen ? (
+          <div className="rounded-xl border border-border/45 bg-paper/70 p-2">
+            <video
+              ref={cameraVideoRef}
+              autoPlay
+              muted
+              playsInline
+              className="w-full rounded-lg border border-border/35 bg-slate-900/90 max-h-44 object-contain"
+            />
+          </div>
+        ) : null}
         {searchMessage && <p className="text-[11px] text-subtle px-1">{searchMessage}</p>}
       </form>
 
@@ -2049,7 +2408,7 @@ function JarLabelManager({ entries, onClose }) {
         `;
       })
       .join("");
-
+// Write the complete HTML document to the new window.
     win.document.write(`
       <!doctype html>
       <html>
@@ -2066,17 +2425,17 @@ function JarLabelManager({ entries, onClose }) {
             box-sizing: border-box;
             padding: 12mm 10mm;
             display: grid;
-            grid-template-columns: repeat(3, 2in);
+            grid-template-columns: repeat(3, ${LABEL_WIDTH_IN}in);
             justify-content: center;
             gap: 4mm;
           }
           .label {
-            width: 2in;
-            height: 0.7in;
+            width: ${LABEL_WIDTH_IN}in;
+            height: ${LABEL_HEIGHT_IN}in;
             box-sizing: border-box;
             border: 0.6px solid #111827;
             border-radius: 2mm;
-            padding: 1.1mm 2mm;
+            padding: 1.5mm 2mm;
             display: flex;
             align-items: center;
             justify-content: space-between;
@@ -2089,7 +2448,11 @@ function JarLabelManager({ entries, onClose }) {
           .label.rack-only .meta {
             min-width: 100%;
           }
-          .meta { min-width: 0; flex: 1; }
+          .meta {
+            min-width: 0;
+            flex: 0 0 ${LABEL_TEXT_BOX_IN}in;
+            max-width: ${LABEL_TEXT_BOX_IN}in;
+          }
           .jar {
             margin: 0;
             font-size: 9pt;
@@ -2117,7 +2480,7 @@ function JarLabelManager({ entries, onClose }) {
             overflow: hidden;
             text-overflow: ellipsis;
           }
-          img { width: 0.52in; height: 0.52in; object-fit: contain; border: 0.3px solid #d1d5db; }
+          img { width: ${QR_SIZE_IN}in; height: ${QR_SIZE_IN}in; object-fit: contain; border: 0.3px solid #d1d5db; }
         </style>
       </head>
       <body>
@@ -2161,6 +2524,7 @@ function JarLabelManager({ entries, onClose }) {
       const labelWidthMm = LABEL_WIDTH_IN * IN_TO_MM;
       const labelHeightMm = LABEL_HEIGHT_IN * IN_TO_MM;
       const qrSizeMm = QR_SIZE_IN * IN_TO_MM;
+      const textBoxMaxWidthMm = Math.max(12, Math.min(LABEL_TEXT_BOX_IN * IN_TO_MM, labelWidthMm - qrSizeMm - 5));
       const rowsPerPage = Math.floor((A4_HEIGHT_MM - LABEL_MARGIN_Y_MM * 2 + LABEL_Y_GAP_MM) / (labelHeightMm + LABEL_Y_GAP_MM));
       const labelsPerPage = Math.max(1, rowsPerPage * LABEL_COLUMNS);
       const marginX = Math.max(
@@ -2181,7 +2545,7 @@ function JarLabelManager({ entries, onClose }) {
         doc.setDrawColor(17, 24, 39);
         doc.setLineWidth(0.2);
         doc.roundedRect(x, y, labelWidthMm, labelHeightMm, 1.2, 1.2);
-
+// For debugging label boundaries
         if (printMode === PRINT_MODE_RACK) {
           doc.setFont("helvetica", "bold");
           doc.setFontSize(9);
@@ -2194,20 +2558,20 @@ function JarLabelManager({ entries, onClose }) {
         } else {
           doc.setFont("helvetica", "bold");
           doc.setFontSize(9);
-          doc.text(String(row.jarId || "-"), x + 2.2, y + 5.8, { maxWidth: labelWidthMm - qrSizeMm - 6 });
+          doc.text(String(row.jarId || "-"), x + 2.2, y + 6.1, { maxWidth: textBoxMaxWidthMm });
 
           doc.setFont("helvetica", "normal");
           doc.setFontSize(6.1);
-          doc.text(`${row.eventLabel}: ${row.eventDate || "-"}`, x + 2.2, y + 10.6, {
-            maxWidth: labelWidthMm - qrSizeMm - 6,
+          doc.text(`${row.eventLabel}: ${row.eventDate || "-"}`, x + 2.2, y + 11.0, {
+            maxWidth: textBoxMaxWidthMm,
           });
-          doc.text(row.type === LABEL_TYPE_CULTURE ? "Culture" : "Re-culture", x + 2.2, y + 13.9, {
-            maxWidth: labelWidthMm - qrSizeMm - 6,
+          doc.text(row.type === LABEL_TYPE_CULTURE ? "Culture" : "Re-culture", x + 2.2, y + 14.5, {
+            maxWidth: textBoxMaxWidthMm,
           });
           if (includeRackOrchid) {
             doc.setFontSize(5.3);
-            doc.text(`Rack: ${row.rackNo || "-"} | Orchid: ${row.orchidType || "-"}`, x + 2.2, y + 16.6, {
-              maxWidth: labelWidthMm - qrSizeMm - 6,
+            doc.text(`Rack: ${row.rackNo || "-"} | Orchid: ${row.orchidType || "-"}`, x + 2.2, y + 18.0, {
+              maxWidth: textBoxMaxWidthMm,
             });
           }
 
@@ -2445,8 +2809,9 @@ function JarLabelManager({ entries, onClose }) {
               )}
             </div>
           </div>
+              
 
-          <div className="rounded-xl border border-border/45 bg-paper/70 p-3 overflow-auto">
+          <div className="rounded-xl border border-border/45 bg-paper/70 p-3 overflow-auto"> 
             <p className="text-xs font-semibold text-dark mb-2">A4 preview (3 labels per row)</p>
             <div className="overflow-auto rounded-lg border border-border/40 bg-slate-100 p-3">
               <div
@@ -2458,7 +2823,7 @@ function JarLabelManager({ entries, onClose }) {
                   padding: "12mm 10mm",
                   boxSizing: "border-box",
                   display: "grid",
-                  gridTemplateColumns: "repeat(3, 2in)",
+                  gridTemplateColumns: `repeat(3, ${LABEL_WIDTH_IN}in)`, // 3 labels per row
                   justifyContent: "center",
                   gap: "4mm",
                 }}
@@ -2468,11 +2833,11 @@ function JarLabelManager({ entries, onClose }) {
                     <div
                       key={`preview-${row.id}`}
                       style={{
-                        width: "2in",
-                        height: "0.7in",
+                        width: `${LABEL_WIDTH_IN}in`,
+                        height: `${LABEL_HEIGHT_IN}in`,
                         border: "0.6px solid #111827",
                         borderRadius: "2mm",
-                        padding: "1.1mm 2mm",
+                        padding: "1.5mm 2mm",
                         boxSizing: "border-box",
                         display: "flex",
                         alignItems: "center",
@@ -2482,7 +2847,13 @@ function JarLabelManager({ entries, onClose }) {
                         color: "#111827",
                       }}
                     >
-                      <div style={{ minWidth: 0, flex: 1 }}>
+                      <div
+                        style={
+                          printMode === PRINT_MODE_RACK
+                            ? { minWidth: 0, flex: 1 }
+                            : { minWidth: 0, flex: `0 0 ${LABEL_TEXT_BOX_IN}in`, maxWidth: `${LABEL_TEXT_BOX_IN}in` }
+                        }
+                      >
                         {printMode === PRINT_MODE_RACK ? (
                           <>
                             <p
@@ -2567,8 +2938,8 @@ function JarLabelManager({ entries, onClose }) {
                           src={buildQrImageUrl(row.jarId)}
                           alt={`QR ${row.jarId}`}
                           style={{
-                            width: "0.52in",
-                            height: "0.52in",
+                            width: `${QR_SIZE_IN}in`,
+                            height: `${QR_SIZE_IN}in`,
                             objectFit: "contain",
                             border: "0.3px solid #d1d5db",
                           }}
