@@ -1029,6 +1029,10 @@ const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
       rate: stats.rate,
       delta: stats.delta,
       avg: stats.avg,
+      first: stats.first,
+      last: stats.last,
+      firstTs: sorted[0]?.x ?? null,
+      lastTs: sorted[sorted.length - 1]?.x ?? null,
       count: stats.count,
       ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), sorted[sorted.length - 1]?.x),
     });
@@ -1046,9 +1050,16 @@ const buildRackStats = (rackPlants) => {
       .sort((a, b) => a.x - b.x);
     const summary = computeSeriesStats(points);
     const latestTs = points.length ? points[points.length - 1].x : null;
+    const firstTs = points.length ? points[0].x : null;
     return {
       id: plant.id,
       avg: summary?.avg ?? null,
+      rate: summary?.rate ?? null,
+      delta: summary?.delta ?? null,
+      latest: summary?.last ?? null,
+      days: summary?.days ?? null,
+      firstTs,
+      lastTs: latestTs,
       count: summary?.count ?? 0,
       ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs),
     };
@@ -1783,6 +1794,17 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
   if (!stats || !history.length) return "No measurement data is available yet.";
 
   const q = question.toLowerCase();
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "weak", "slow", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong", "well");
+  const asksGrowth = hasAny("growth", "growing", "rate", "trend", "change", "delta", "progress", "improv", "better", "worse");
+  const asksHeight = hasAny("height", "tall");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const sortedHistory = [...history].sort((a, b) => Number(a.ts) - Number(b.ts));
+  const subject = record?.id ? `Jar ${record.id}` : "This jar";
+
   const qualityVerdict = (() => {
     if (!stats || history.length < 2 || stats.days === null || stats.rate === null || !Number.isFinite(stats.rate)) {
       return {
@@ -1824,6 +1846,39 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
       detail: `Growth is strong (${rate.toFixed(2)} mm/day) with an increasing trend. Confidence ${confidence}.`,
     };
   })();
+  const badVerdict = qualityVerdict.label === "Bad" || qualityVerdict.label === "Weak";
+  const goodVerdict = qualityVerdict.label === "Good" || qualityVerdict.label === "Moderate";
+
+  if (asksBinary && (asksBad || asksGood) && (asksGrowth || asksHeight || asksGood || asksBad)) {
+    if (qualityVerdict.label === "Insufficient trend confidence") {
+      return "Cannot answer yes/no yet. Need more time-based measurements for this jar.";
+    }
+    if (asksBad && !asksGood) {
+      return badVerdict
+        ? `Yes. ${subject} shows weak/bad growth. ${qualityVerdict.detail}`
+        : `No. ${subject} is not in a bad-growth state. ${qualityVerdict.detail}`;
+    }
+    if (asksGood && !asksBad) {
+      return goodVerdict
+        ? `Yes. ${subject} growth is acceptable/good. ${qualityVerdict.detail}`
+        : `No. ${subject} is not in a good-growth state. ${qualityVerdict.detail}`;
+    }
+    return `${subject} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+  }
+
+  if (asksHistory) {
+    const first = sortedHistory[0];
+    const last = sortedHistory[sortedHistory.length - 1];
+    const firstHeight = Number(first?.height_mm);
+    const lastHeight = Number(last?.height_mm);
+    return `${subject} history spans ${formatDate(first?.ts)} to ${formatDate(last?.ts)} (${sortedHistory.length} measurements). First ${
+      Number.isFinite(firstHeight) ? `${firstHeight.toFixed(1)} mm` : "n/a"
+    }, latest ${Number.isFinite(lastHeight) ? `${lastHeight.toFixed(1)} mm` : "n/a"}.`;
+  }
+
+  if (asksCount) {
+    return `${subject} has ${history.length} tracked measurements in history.`;
+  }
 
   if (
     q.includes("good") ||
@@ -1837,7 +1892,7 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
     q.includes("better") ||
     q.includes("progress")
   ) {
-    return `${record?.id ? `Jar ${record.id}` : "This jar"} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+    return `${subject} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
   }
 
   if (q.includes("why")) {
@@ -1849,7 +1904,11 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
   }
 
   if (q.includes("rate") || q.includes("growth")) {
-    return stats.rate !== null ? `Growth rate is ${stats.rate.toFixed(2)} mm/day.` : "Growth rate is not available yet.";
+    return stats.rate !== null
+      ? `Growth rate is ${stats.rate.toFixed(2)} mm/day with total change ${
+          Number.isFinite(stats.delta) ? `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm` : "n/a"
+        }.`
+      : "Growth rate is not available yet.";
   }
   if (q.includes("average") || q.includes("avg")) {
     return Number.isFinite(stats.avg) ? `Average height is ${stats.avg.toFixed(1)} mm.` : "Average height is not available yet.";
@@ -1874,8 +1933,63 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
   if (!question?.trim()) return insight;
   if (!metrics.length) return "No comparison data yet.";
   const q = question.toLowerCase();
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "weak", "slow", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong", "well");
+  const asksGrowth = hasAny("growth", "growing", "rate", "trend", "change", "delta");
+  const asksHeight = hasAny("height", "tall");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const asksPerJar = hasAny("jar", "jars", "each", "per jar", "all jars", "all jar", "line");
   const windowLabel = compareWindow === "all" ? "all time" : compareWindow;
   const valid = metrics.filter((m) => m.rate !== null);
+
+  if (asksBinary && (asksBad || asksGood) && (asksGrowth || asksHeight || asksGood || asksBad)) {
+    if (!valid.length) return "Cannot answer yes/no yet. No growth-rate data is available for the selected jars.";
+    const weakOrBad = valid.filter((m) => Number(m.rate) < 0.2);
+    if (asksBad && !asksGood) {
+      if (weakOrBad.length) {
+        const ids = weakOrBad.map((item) => item.id).join(", ");
+        return `Yes. Weak/bad growth exists in ${windowLabel}: ${ids}.`;
+      }
+      return `No. None of the compared jars show weak/bad growth in ${windowLabel}.`;
+    }
+    if (asksGood && !asksBad) {
+      if (!weakOrBad.length) return `Yes. All compared jars show acceptable growth in ${windowLabel}.`;
+      const ids = weakOrBad.map((item) => item.id).join(", ");
+      return `No. Some jars are weak/slow in ${windowLabel}: ${ids}.`;
+    }
+  }
+
+  if (asksHistory) {
+    const rows = metrics.map((m) => {
+      const firstText = m.firstTs ? formatDate(m.firstTs) : "n/a";
+      const lastText = m.lastTs ? formatDate(m.lastTs) : "n/a";
+      const firstHeight = Number.isFinite(m.first) ? `${m.first.toFixed(1)} mm` : "n/a";
+      const lastHeight = Number.isFinite(m.last) ? `${m.last.toFixed(1)} mm` : "n/a";
+      return `${m.id}: ${firstText} (${firstHeight}) -> ${lastText} (${lastHeight}), ${m.count} pts`;
+    });
+    return `Comparison history (${windowLabel}): ${rows.join("; ")}.`;
+  }
+
+  if (asksCount) {
+    const total = metrics.reduce((sum, m) => sum + (Number.isFinite(m.count) ? m.count : 0), 0);
+    const rows = metrics.map((m) => `${m.id}: ${m.count} pts`).join(", ");
+    return `Tracked measurements (${windowLabel}) total ${total}: ${rows}.`;
+  }
+
+  if ((asksGrowth || asksHeight) && asksPerJar) {
+    const rows = metrics
+      .map(
+        (m) =>
+          `${m.id}: rate ${Number.isFinite(m.rate) ? `${m.rate.toFixed(2)} mm/day` : "n/a"}, change ${
+            Number.isFinite(m.delta) ? `${m.delta >= 0 ? "+" : ""}${m.delta.toFixed(1)} mm` : "n/a"
+          }, avg ${Number.isFinite(m.avg) ? `${m.avg.toFixed(1)} mm` : "n/a"}`
+      )
+      .join("; ");
+    return `Per-jar growth (${windowLabel}): ${rows}.`;
+  }
 
   if (q.includes("best") || q.includes("fastest")) {
     if (!valid.length) return "No growth rates available yet.";
@@ -1898,6 +2012,12 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
       .map((m) => `${m.id}: ${Number.isFinite(m.delta) ? m.delta.toFixed(1) : "n/a"} mm`)
       .join(", ");
     return `Total change (${windowLabel}): ${rows}.`;
+  }
+  if (q.includes("rate") || q.includes("growth")) {
+    const rows = metrics
+      .map((m) => `${m.id}: ${Number.isFinite(m.rate) ? `${m.rate.toFixed(2)} mm/day` : "n/a"}`)
+      .join(", ");
+    return `Growth rates (${windowLabel}): ${rows}.`;
   }
   return insight;
 };
@@ -1929,25 +2049,89 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = []
   if (!activeRackStats.length) return "No rack data yet.";
 
   const valid = activeRackStats.filter((item) => item.avg !== null);
+  const validRateRows = valid.filter((item) => Number.isFinite(item.rate));
   const validCategories = (activeCategoryStats || []).filter((item) => Number.isFinite(item.avgRate));
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksCategory = hasAny("category", "type", "cultivar");
+  const asksSuggestion = hasAny("suggest", "recommend", "improve");
+  const asksAverage = hasAny("average", "avg");
+  const asksBest = hasAny("best", "highest", "tallest");
+  const asksWorst = hasAny("worst", "lowest", "shortest");
+  const asksFastest = hasAny("fastest", "quickest");
+  const asksSlowest = hasAny("slowest");
+  const asksGrowth = hasAny("growth", "growing", "rate", "change", "delta", "trend");
+  const asksHeight = hasAny("height", "tall");
+  const asksPerJar = hasAny("jar", "jars", "each", "per jar", "all jars", "all jar", "line");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "slow", "weak", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong");
   const simpleRackAsk =
     Boolean(mentionedRack) &&
     !(
-      q.includes("best") ||
-      q.includes("worst") ||
-      q.includes("lowest") ||
-      q.includes("average") ||
-      q.includes("avg") ||
-      q.includes("category") ||
-      q.includes("type") ||
-      q.includes("cultivar") ||
-      q.includes("suggest") ||
-      q.includes("recommend") ||
-      q.includes("improve")
+      asksBest ||
+      asksWorst ||
+      asksAverage ||
+      asksCategory ||
+      asksSuggestion ||
+      asksGrowth ||
+      asksHeight ||
+      asksPerJar ||
+      asksFastest ||
+      asksSlowest
     );
   if (simpleRackAsk) return activeInsight;
 
-  if ((q.includes("category") || q.includes("type") || q.includes("cultivar")) && validCategories.length) {
+  if (asksBinary && (asksGrowth || asksHeight || asksPerJar || asksBest || asksWorst || asksAverage) && (asksBad || asksGood)) {
+    if (!validRateRows.length) {
+      return "Cannot answer yes/no yet. Need at least two dated measurements per jar to calculate growth trends.";
+    }
+    const avgRate = validRateRows.reduce((sum, item) => sum + item.rate, 0) / validRateRows.length;
+    const slowCategories = validCategories.filter((item) => item.growthLabel === "slow");
+    const hasBadGrowth = avgRate < 0.2 || slowCategories.length > 0;
+    const hasGoodGrowth = avgRate >= 0.2 && slowCategories.length === 0;
+
+    if (asksBad && !asksGood) {
+      if (hasBadGrowth) {
+        const reason = slowCategories.length
+          ? `Slow category detected: ${slowCategories.map((item) => item.category).join(", ")}.`
+          : `Average rack growth rate is low (${avgRate.toFixed(2)} mm/day).`;
+        return `Yes. ${reason}`;
+      }
+      return `No. Rack ${activeRackCode} is not in a bad-growth state (average ${avgRate.toFixed(2)} mm/day).`;
+    }
+
+    if (asksGood && !asksBad) {
+      if (hasGoodGrowth) {
+        return `Yes. Rack ${activeRackCode} shows acceptable growth overall (average ${avgRate.toFixed(2)} mm/day).`;
+      }
+      const reason = slowCategories.length
+        ? `Slow category detected: ${slowCategories.map((item) => item.category).join(", ")}.`
+        : `Average growth is weak (${avgRate.toFixed(2)} mm/day).`;
+      return `No. ${reason}`;
+    }
+  }
+
+  if (asksHistory) {
+    const rows = valid.map((item) => {
+      const firstText = item.firstTs ? formatDate(item.firstTs) : "n/a";
+      const lastText = item.lastTs ? formatDate(item.lastTs) : "n/a";
+      const latestText = Number.isFinite(item.latest) ? `${item.latest.toFixed(1)} mm` : "n/a";
+      return `${item.id}: ${firstText} -> ${lastText}, latest ${latestText}, ${item.count} pts`;
+    });
+    if (!rows.length) return `No measurement history found for rack ${activeRackCode}.`;
+    const limited = rows.slice(0, 8).join("; ");
+    const suffix = rows.length > 8 ? ` Showing first 8 of ${rows.length} jars.` : "";
+    return `Rack ${activeRackCode} history by jar: ${limited}.${suffix}`;
+  }
+
+  if (asksCount) {
+    const total = valid.reduce((sum, item) => sum + (Number.isFinite(item.count) ? item.count : 0), 0);
+    return `Rack ${activeRackCode} has ${total} tracked measurements across ${valid.length} jars.`;
+  }
+
+  if (asksCategory && validCategories.length) {
     const rows = validCategories
       .map(
         (item) =>
@@ -1956,20 +2140,53 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = []
       .join(", ");
     return `Category growth change on ${activeRackCode}: ${rows}.`;
   }
-  if (q.includes("suggest") || q.includes("recommend") || q.includes("improve")) {
+  if (asksSuggestion) {
     if (!validCategories.length) return "Need category-level growth data before suggesting interventions.";
     const focus = validCategories[validCategories.length - 1];
     return `Recommended focus for ${focus.category}: ${focus.suggestion}`;
   }
-  if (q.includes("best")) {
+  if ((asksFastest || (asksBest && asksGrowth)) && validRateRows.length) {
+    const fastest = validRateRows.reduce((a, b) => (a.rate > b.rate ? a : b));
+    return `Fastest growth on ${activeRackCode}: ${fastest.id} at ${fastest.rate.toFixed(2)} mm/day (change ${
+      Number.isFinite(fastest.delta) ? `${fastest.delta >= 0 ? "+" : ""}${fastest.delta.toFixed(1)} mm` : "n/a"
+    }).`;
+  }
+  if ((asksSlowest || (asksWorst && asksGrowth)) && validRateRows.length) {
+    const slowest = validRateRows.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `Slowest growth on ${activeRackCode}: ${slowest.id} at ${slowest.rate.toFixed(2)} mm/day (change ${
+      Number.isFinite(slowest.delta) ? `${slowest.delta >= 0 ? "+" : ""}${slowest.delta.toFixed(1)} mm` : "n/a"
+    }).`;
+  }
+  if ((asksGrowth || asksHeight) && asksPerJar) {
+    const rows = valid.map((item) => {
+      const avg = Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a";
+      const rate = Number.isFinite(item.rate) ? `${item.rate.toFixed(2)} mm/day` : "n/a";
+      const delta = Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a";
+      return `${item.id}: avg ${avg}, rate ${rate}, change ${delta}`;
+    });
+    if (!rows.length) return "Not enough per-jar measurements to summarize growth.";
+    const limited = rows.slice(0, 8).join("; ");
+    const suffix = rows.length > 8 ? ` Showing first 8 of ${rows.length} jars.` : "";
+    return `Per-jar height and growth on ${activeRackCode}: ${limited}.${suffix}`;
+  }
+  if (asksGrowth) {
+    if (!validRateRows.length) return "Need at least two dated measurements per jar to calculate growth rate.";
+    const avgRate = validRateRows.reduce((sum, item) => sum + item.rate, 0) / validRateRows.length;
+    const fastest = validRateRows.reduce((a, b) => (a.rate > b.rate ? a : b));
+    const slowest = validRateRows.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `Rack ${activeRackCode} average growth rate is ${avgRate.toFixed(2)} mm/day. Fastest jar: ${fastest.id} (${fastest.rate.toFixed(
+      2
+    )} mm/day). Slowest jar: ${slowest.id} (${slowest.rate.toFixed(2)} mm/day).`;
+  }
+  if (asksBest) {
     const best = valid.find((item) => item.rank === "Best");
     return best ? `Best average height on ${activeRackCode}: ${best.id} at ${best.avg.toFixed(1)} mm.` : activeInsight;
   }
-  if (q.includes("worst") || q.includes("lowest")) {
+  if (asksWorst) {
     const worst = valid.find((item) => item.rank === "Worst");
     return worst ? `Lowest average height on ${activeRackCode}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : activeInsight;
   }
-  if (q.includes("average") || q.includes("avg")) {
+  if (asksAverage || (asksHeight && asksPerJar)) {
     const rows = valid.map((item) => `${item.id}: ${item.avg.toFixed(1)} mm`).join(", ");
     return rows ? `Average height per jar on ${activeRackCode}: ${rows}.` : activeInsight;
   }
@@ -3170,7 +3387,7 @@ export default function GrowthHistory() {
             summaryText={growthInsight}
             includeInsight={includeInsightInReport}
             setIncludeInsight={setIncludeInsightInReport}
-            placeholder="Ask: is this good or bad, why, rate, change, average, latest..."
+            placeholder="Ask about growth history: yes/no quality, timeline, rate, change, average, latest..."
             onReportTextChange={setGrowthReportInsight}
             onAsk={(question) =>
               answerGrowthQuestion({
@@ -3215,7 +3432,6 @@ export default function GrowthHistory() {
             reportInsightText={rackReportInsight || rackBrief}
             includeInsight={includeRackInsight}
           />
-          <RackPairComparison combinedRecords={combinedRecords} />
           <InsightAssistant
             kicker="Rack assistant"
             title="Rack summary"
@@ -3223,7 +3439,7 @@ export default function GrowthHistory() {
             summaryText={rackInsight}
             includeInsight={includeRackInsight}
             setIncludeInsight={setIncludeRackInsight}
-            placeholder="Ask about category growth, best/worst, or suggestions..."
+            placeholder="Ask rack history: yes/no growth quality, per-jar timeline, best/worst, categories, suggestions..."
             onReportTextChange={setRackReportInsight}
             onAsk={(question) =>
               answerRackQuestion({
@@ -3236,6 +3452,7 @@ export default function GrowthHistory() {
               })
             }
           />
+          <RackPairComparison combinedRecords={combinedRecords} />
           <GrowthClusterPanel clusterResult={rackClusterResult} />
           </SectionCard>
         ) : null}
@@ -3272,7 +3489,7 @@ export default function GrowthHistory() {
             summaryText={compareInsight}
             includeInsight={includeCompareInsight}
             setIncludeInsight={setIncludeCompareInsight}
-            placeholder="Ask about best, worst, change, or average..."
+            placeholder="Ask comparison history: yes/no quality, best/worst, per-jar trend, change, average..."
             onReportTextChange={setCompareReportInsight}
             onAsk={(question) =>
               answerCompareQuestion({
@@ -4290,11 +4507,11 @@ function InsightAssistant({
   onAsk,
   onReportTextChange,
 }) {
-  const [messages, setMessages] = useState(() => [{ role: "assistant", text: insightText }]);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 
   useEffect(() => {
-    setMessages([{ role: "assistant", text: insightText }]);
+    setMessages([]);
   }, [insightText, title]);
 
   const handleAsk = (e) => {
@@ -4337,7 +4554,7 @@ function InsightAssistant({
           <div>
             <p className="kicker">{kicker}</p>
             <h3 className="text-lg font-semibold text-dark">{title}</h3>
-            <p className="text-xs text-subtle">Mini scientist assistant</p>
+            <p className="text-xs text-subtle">Growth tracker & history assistant</p>
           </div>
         </div>
         <label className="flex items-center gap-2 text-xs text-subtle shrink-0">
