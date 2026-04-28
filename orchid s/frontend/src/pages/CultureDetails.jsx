@@ -1658,14 +1658,60 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
   const [removeReasonByJar, setRemoveReasonByJar] = useState({});
   const [cameraOpen, setCameraOpen] = useState(false);
   const [scanBusy, setScanBusy] = useState(false);
+  const [cameraDevices, setCameraDevices] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
   const barcodeDetectorRef = useRef(null);
   const decodeCanvasRef = useRef(null);
   const cameraVideoRef = useRef(null);
   const cameraStreamRef = useRef(null);
   const cameraLoopTimeoutRef = useRef(null);
   const uploadInputRef = useRef(null);
+  const selectedCameraIdRef = useRef("");
 
   const normalizedQuery = query.trim().toLowerCase();
+
+  useEffect(() => {
+    selectedCameraIdRef.current = selectedCameraId;
+  }, [selectedCameraId]);
+
+  const getCameraLabel = (device, index) => {
+    const label = String(device?.label || "").trim();
+    return label || `Camera ${index + 1}`;
+  };
+
+  const refreshCameraDevices = async (preferredDeviceId = "") => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return [];
+    try {
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = allDevices.filter((device) => device.kind === "videoinput");
+      setCameraDevices(videoInputs);
+
+      if (!videoInputs.length) {
+        setSelectedCameraId("");
+        return videoInputs;
+      }
+
+      const requestedDeviceId = preferredDeviceId || selectedCameraIdRef.current;
+      const hasRequestedDevice =
+        requestedDeviceId && videoInputs.some((device) => device.deviceId === requestedDeviceId);
+
+      if (hasRequestedDevice) {
+        if (selectedCameraIdRef.current !== requestedDeviceId) {
+          setSelectedCameraId(requestedDeviceId);
+        }
+      } else {
+        const rearCamera = videoInputs.find((device) => /back|rear|environment/i.test(device.label || ""));
+        const fallbackDeviceId = rearCamera?.deviceId || videoInputs[0]?.deviceId || "";
+        if (fallbackDeviceId && selectedCameraIdRef.current !== fallbackDeviceId) {
+          setSelectedCameraId(fallbackDeviceId);
+        }
+      }
+
+      return videoInputs;
+    } catch {
+      return [];
+    }
+  };
 
   const filteredEntries = useMemo(() => {
     if (!normalizedQuery) return entries;
@@ -1703,6 +1749,19 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
   };
 
   useEffect(() => () => stopCameraScan(), []);
+
+  useEffect(() => {
+    refreshCameraDevices();
+  }, []);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.addEventListener) return undefined;
+    const handleDeviceChange = () => {
+      refreshCameraDevices();
+    };
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+  }, []);
 
   useEffect(() => {
     if (!cameraOpen || !cameraStreamRef.current || !cameraVideoRef.current) return;
@@ -1802,7 +1861,7 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
         const detections = await detectQrFromSource(videoEl);
         const rawValue = detections?.[0]?.rawValue;
         if (rawValue) {
-          const parsed = applyScannedQrResult(rawValue, "Webcam QR");
+          const parsed = applyScannedQrResult(rawValue, "Camera QR");
           if (parsed) {
             stopCameraScan();
             return;
@@ -1815,14 +1874,19 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
     cameraLoopTimeoutRef.current = window.setTimeout(runCameraDetectionLoop, 250);
   };
 
-  const startCameraScan = async () => {
-    if (cameraOpen) {
+  const startCameraScan = async (requestedDeviceId = "", forceRestart = false) => {
+    if (scanBusy) return;
+
+    if (cameraOpen && !forceRestart) {
       stopCameraScan();
-      setSearchMessage("Webcam scan stopped.");
+      setSearchMessage("Camera scan stopped.");
       return;
     }
+    if (cameraOpen && forceRestart) {
+      stopCameraScan();
+    }
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
-      setSearchMessage("Webcam is not available in this browser.");
+      setSearchMessage("Camera is not available in this browser.");
       return;
     }
     if (
@@ -1830,7 +1894,7 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
       !window.isSecureContext &&
       !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || "")
     ) {
-      setSearchMessage("Webcam requires HTTPS (or localhost). Open this app in a secure URL.");
+      setSearchMessage("Camera access requires HTTPS (or localhost). Open this app in a secure URL.");
       return;
     }
 
@@ -1856,12 +1920,20 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
 
     setScanBusy(true);
     try {
-      const attempts = [
-        { video: { facingMode: { ideal: "environment" } }, audio: false },
-        { video: { facingMode: "user" }, audio: false },
-        { video: true, audio: false },
-      ];
+      const preferredDeviceId = requestedDeviceId || selectedCameraIdRef.current;
+      const attempts = preferredDeviceId
+        ? [
+            { video: { deviceId: { exact: preferredDeviceId } }, audio: false },
+            { video: { facingMode: { ideal: "environment" } }, audio: false },
+            { video: true, audio: false },
+          ]
+        : [
+            { video: { facingMode: { ideal: "environment" } }, audio: false },
+            { video: { facingMode: "user" }, audio: false },
+            { video: true, audio: false },
+          ];
       let stream = null;
+      let usedDeviceId = "";
       for (const constraints of attempts) {
         try {
           const candidate = await navigator.mediaDevices.getUserMedia(constraints);
@@ -1879,15 +1951,20 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
               continue;
             }
           }
+          usedDeviceId = candidate.getVideoTracks?.()[0]?.getSettings?.().deviceId || "";
           stream = candidate;
           break;
         } catch {
           // Try next constraints.
         }
       }
-      if (!stream) throw new Error("Unable to start webcam stream.");
+      if (!stream) throw new Error("Unable to start camera stream.");
 
       cameraStreamRef.current = stream;
+      if (usedDeviceId && usedDeviceId !== selectedCameraIdRef.current) {
+        setSelectedCameraId(usedDeviceId);
+      }
+      await refreshCameraDevices(usedDeviceId);
       setCameraOpen(true);
       // Attach stream after video element renders.
       await new Promise((resolve) => window.setTimeout(resolve, 0));
@@ -1900,20 +1977,27 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
           // Continue; some browsers delay autoplay.
         }
       }
-      setSearchMessage("Webcam started. Show the QR label to auto-search Jar ID.");
+      setSearchMessage("Camera started. Show the QR label to auto-search Jar ID.");
       runCameraDetectionLoop();
     } catch (err) {
       stopCameraScan();
       const message =
         err?.name === "NotAllowedError"
-          ? "Webcam permission denied. Allow camera access and retry."
+          ? "Camera permission denied. Allow camera access and retry."
           : err?.name === "NotFoundError"
-            ? "No webcam device found."
-            : err?.message || "Unable to start webcam scan.";
+            ? "No camera device found."
+            : err?.message || "Unable to start camera scan.";
       setSearchMessage(message);
     } finally {
       setScanBusy(false);
     }
+  };
+
+  const handleCameraSelectionChange = async (e) => {
+    const nextDeviceId = e.target.value || "";
+    setSelectedCameraId(nextDeviceId);
+    if (!cameraOpen) return;
+    await startCameraScan(nextDeviceId, true);
   };
 
   const triggerUploadScan = () => {
@@ -2021,11 +2105,11 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
         <div className="flex flex-wrap items-center gap-2 px-1">
           <button
             type="button"
-            onClick={startCameraScan}
+            onClick={() => startCameraScan()}
             disabled={scanBusy}
             className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
           >
-            {cameraOpen ? "Stop webcam" : "Scan QR (webcam)"}
+            {cameraOpen ? "Stop camera" : "Scan QR (camera)"}
           </button>
           <button
             type="button"
@@ -2043,6 +2127,26 @@ function JarList({ entries, selectedId, onSelect, onMarkRemoved, onRestore, onDe
             className="hidden"
           />
         </div>
+        {cameraDevices.length > 1 ? (
+          <div className="flex items-center gap-2 px-1">
+            <label htmlFor="culture-details-camera-select" className="text-[11px] text-subtle whitespace-nowrap">
+              Camera
+            </label>
+            <select
+              id="culture-details-camera-select"
+              value={selectedCameraId}
+              onChange={handleCameraSelectionChange}
+              disabled={scanBusy}
+              className="input-shell py-1.5 text-xs"
+            >
+              {cameraDevices.map((device, index) => (
+                <option key={device.deviceId || `camera-${index}`} value={device.deviceId}>
+                  {getCameraLabel(device, index)}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : null}
         {cameraOpen ? (
           <div className="rounded-xl border border-border/45 bg-paper/70 p-2">
             <video
