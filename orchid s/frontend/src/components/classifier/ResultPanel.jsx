@@ -3,13 +3,7 @@ import ConfidenceBar from "./ConfidenceBar";
 import OodMeter from "./OodMeter";
 import FertilizerPage from "./FertilizerPage";
 
-const KNOWN_LABELS = [
-  "vanda",
-  "oncidium",
-  "phalaenopsis",
-  "cattleya",
-  "dendrobium",
-];
+const KNOWN_LABELS = ["vanda", "oncidium", "phalaenopsis", "cattleya", "dendrobium"];
 
 export default function ResultPanel({ result }) {
   const {
@@ -25,34 +19,21 @@ export default function ResultPanel({ result }) {
   const isLowConf = status === "LOW_CONFIDENCE";
   const [showFertilizer, setShowFertilizer] = useState(false);
 
-  const bannerStyle = is_ood
-    ? "bg-orchid-950/40 border-orchid-700/30 orchid-glow"
-    : isLowConf
-      ? "bg-yellow-950/40 border-yellow-700/30"
-      : "bg-green-950/50 border-green-700/30 forest-glow";
+  const bannerStyle = isLowConf
+    ? "bg-yellow-950/40 border-yellow-700/30"
+    : "bg-green-950/50 border-green-700/30 forest-glow";
 
-  const canShowFertilizer = KNOWN_LABELS.includes(topPred.label.toLowerCase().split("_")[0]);
+  const canShowFertilizer =
+    !is_ood && KNOWN_LABELS.includes(topPred.label.toLowerCase().split("_")[0]);
 
   return (
     <div className="animate-fade-up space-y-4">
       <div className={`rounded-2xl border p-5 text-center ${bannerStyle}`}>
-        {is_ood ? (
+        {isLowConf ? (
           <>
-            <div className="mb-2 text-3xl">⚠️</div>
-            <p className="font-display text-2xl font-light text-orchid-300">
-              Out-of-Distribution
-            </p>
-            <p className="font-body mt-1 text-sm text-orchid-500">
-              This image does not match any known orchid species
-            </p>
-          </>
-        ) : isLowConf ? (
-          <>
-            <div className="mb-2 text-3xl">🔍</div>
-            <p className="font-display text-2xl font-light text-yellow-300">
-              Low Confidence
-            </p>
-            <p className="font-display mt-1 text-xl font-light text-yellow-200/70">
+            <div className="mb-2 text-3xl">?</div>
+            <p className="font-display text-2xl font-light text-yellow-300">Low Confidence</p>
+            <p className="mt-1 font-display text-xl font-light text-yellow-200/70">
               {topPred.label.replace(/_/g, " ")}
             </p>
             <div className="mt-2 flex items-center justify-center gap-2">
@@ -66,13 +47,13 @@ export default function ResultPanel({ result }) {
                 {Math.round(topPred.confidence * 100)}% below 75% threshold
               </span>
             </div>
-            <p className="font-body mt-2 text-xs text-yellow-700">
-              Result may be unreliable. Try a clearer image.
+            <p className="mt-2 font-body text-xs text-yellow-700">
+              Result may be unreliable. Try a clearer orchid image.
             </p>
           </>
         ) : (
           <>
-            <p className="font-body mb-1 text-xs uppercase tracking-widest text-green-600">
+            <p className="mb-1 font-body text-xs uppercase tracking-widest text-green-600">
               Identified Species
             </p>
             <p className="font-display text-3xl font-light leading-tight text-green-200">
@@ -109,22 +90,19 @@ export default function ResultPanel({ result }) {
                 className="flex h-9 w-9 items-center justify-center rounded-xl text-lg"
                 style={{ background: "rgba(134,239,172,0.15)" }}
               >
-                🌿
+                F
               </div>
               <div className="text-left">
                 <p className="font-body text-sm font-semibold leading-tight text-green-300">
                   {showFertilizer ? "Hide Fertilizer Guide" : "Show Fertilizer Guide"}
                 </p>
-                <p className="font-body mt-0.5 text-xs text-green-700">
-                  {is_ood ? "Based on top prediction: " : "Fertilizers for "}
-                  <span className="capitalize text-green-500">
-                    {topPred.label.replace(/_/g, " ")}
-                  </span>
+                <p className="mt-0.5 font-body text-xs text-green-700">
+                  Fertilizers for <span className="capitalize text-green-500">{topPred.label.replace(/_/g, " ")}</span>
                 </p>
               </div>
             </div>
             <span className="text-lg text-green-600 transition-transform duration-200 group-hover:translate-x-1">
-              {showFertilizer ? "↑" : "→"}
+              {showFertilizer ? "^" : ">"}
             </span>
           </button>
 
@@ -140,14 +118,10 @@ export default function ResultPanel({ result }) {
         </div>
       ) : null}
 
-      <OodMeter
-        distance={mahalanobis_distance}
-        threshold={threshold}
-        isOod={is_ood}
-      />
+      <OodMeter distance={mahalanobis_distance} threshold={threshold} isOod={is_ood} />
 
       <div className="space-y-2">
-        <p className="font-body px-1 text-xs uppercase tracking-widest text-green-700">
+        <p className="px-1 font-body text-xs uppercase tracking-widest text-green-700">
           Top Predictions
         </p>
         {top_predictions.map((pred, index) => (
@@ -161,9 +135,9 @@ export default function ResultPanel({ result }) {
         ))}
       </div>
 
-      <div className="font-body flex items-center justify-between px-1 text-xs text-green-800">
+      <div className="flex items-center justify-between px-1 font-body text-xs text-green-800">
         <span>EfficientNetB0 · ONNX Runtime</span>
-        <span className="tabular-nums">⚡ {inference_ms} ms</span>
+        <span className="tabular-nums">inference {inference_ms} ms</span>
       </div>
     </div>
   );
