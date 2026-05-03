@@ -3956,6 +3956,73 @@ function ChartCard({ record, history, combinedRecords, isLight, reportInsightTex
     const latest = actualAgeSeries[actualAgeSeries.length - 1];
     return classifyGrowthLevel(predictionBands.points, latest.x, latest.y);
   }, [actualAgeSeries, predictionBands]);
+  const expectedVsActualComment = useMemo(() => {
+    if (!predictionBands.points.length) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Prediction bands are not ready yet. Add more dataset points to build expected levels.",
+        toneClass: "border-slate-300/40 bg-slate-500/10 text-slate-700 dark:text-slate-300",
+      };
+    }
+    if (!actualAgeSeries.length) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Expected chart is ready. Select a jar to overlay real growth and get an automatic comparison comment.",
+        toneClass: "border-sky-300/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+      };
+    }
+
+    const latest = actualAgeSeries[actualAgeSeries.length - 1];
+    const q25 = interpolateBandAtAge(predictionBands.points, latest.x, "q25");
+    const q50 = interpolateBandAtAge(predictionBands.points, latest.x, "q50");
+    const q75 = interpolateBandAtAge(predictionBands.points, latest.x, "q75");
+    if (![q25, q50, q75].every(Number.isFinite)) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Real growth is available, but expected band interpolation is incomplete at the latest age.",
+        toneClass: "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
+
+    const deltaMm = latest.y - q50;
+    const latestLevel = classifyGrowthLevel(predictionBands.points, latest.x, latest.y).label;
+
+    const tail = actualAgeSeries.slice(-Math.min(6, actualAgeSeries.length));
+    let trendText = "Trend comparison is limited.";
+    if (tail.length >= 2) {
+      const first = tail[0];
+      const last = tail[tail.length - 1];
+      const days = Math.max(0.01, last.x - first.x);
+      const actualRate = (last.y - first.y) / days;
+      const expStart = interpolateBandAtAge(predictionBands.points, first.x, "q50");
+      const expEnd = interpolateBandAtAge(predictionBands.points, last.x, "q50");
+      if (Number.isFinite(expStart) && Number.isFinite(expEnd)) {
+        const expectedRate = (expEnd - expStart) / days;
+        const rateDelta = actualRate - expectedRate;
+        trendText = `Recent real trend is ${rateDelta >= 0 ? "faster" : "slower"} than expected by ${Math.abs(rateDelta).toFixed(2)} mm/day.`;
+      }
+    }
+
+    if (latest.y < q25) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: `Real growth is below expected at current age (${latestLevel}). It is ${Math.abs(deltaMm).toFixed(1)} mm under the expected median. ${trendText}`,
+        toneClass: "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
+    if (latest.y > q75) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: `Real growth is above expected at current age (${latestLevel}). It is +${Math.abs(deltaMm).toFixed(1)} mm over the expected median. ${trendText}`,
+        toneClass: "border-emerald-300/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+      };
+    }
+    return {
+      title: "Expected vs Actual Comment",
+      text: `Real growth is within the expected band (${latestLevel}) and is ${deltaMm >= 0 ? "+" : ""}${deltaMm.toFixed(1)} mm vs expected median. ${trendText}`,
+      toneClass: "border-sky-300/40 bg-sky-500/10 text-sky-800 dark:text-sky-200",
+    };
+  }, [actualAgeSeries, predictionBands]);
   const nutritionEvents = useMemo(() => {
     if (!record) return [];
 
@@ -4698,27 +4765,6 @@ function ChartCard({ record, history, combinedRecords, isLight, reportInsightTex
           </button>
         </div>
       </div>
-      <div className="panel-muted px-4 py-3 space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div>
-            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Predicted growth levels</p>
-            <p className="text-sm font-semibold text-dark">Expected bands vs actual jar growth</p>
-          </div>
-          <div className="text-right">
-            <p className="text-[11px] text-subtle">
-              Model: {predictionBands.sourceJarCount} jars, {predictionBands.totalPoints} points, {predictionBands.bucketDays}-day bins
-            </p>
-            <p className={`text-xs font-semibold ${latestPredictedLevel.tone}`}>Latest level: {latestPredictedLevel.label}</p>
-          </div>
-        </div>
-        <div className="h-72">
-          {predictionBands.points.length ? (
-            <canvas ref={predictionCanvasRef} />
-          ) : (
-            <EmptyState message="Prediction bands need more age-aligned points across jars." />
-          )}
-        </div>
-      </div>
       {seriesStats && (
         <div className="grid sm:grid-cols-5 gap-2">
           <div className="panel-muted px-3 py-2">
@@ -4761,6 +4807,49 @@ function ChartCard({ record, history, combinedRecords, isLight, reportInsightTex
           ))}
         </div>
       ) : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Predicted growth levels</p>
+              <p className="text-sm font-semibold text-dark">Expected bands (from collected dataset)</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] text-subtle">
+                Model: {predictionBands.sourceJarCount} jars, {predictionBands.totalPoints} points, {predictionBands.bucketDays}-day bins
+              </p>
+              <p className={`text-xs font-semibold ${latestPredictedLevel.tone}`}>Latest level: {latestPredictedLevel.label}</p>
+            </div>
+          </div>
+          <div className="h-72">
+            {predictionBands.points.length ? (
+              <canvas ref={predictionCanvasRef} />
+            ) : (
+              <EmptyState message="Prediction bands need more age-aligned points across jars." />
+            )}
+          </div>
+        </div>
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Actual growth curve</p>
+              <p className="text-sm font-semibold text-dark">Real jar growth over time</p>
+            </div>
+            <span className="text-[11px] text-subtle">{cleanedPoints.length} points</span>
+          </div>
+          <div className="h-72">
+            {cleanedPoints.length ? (
+              <canvas ref={canvasRef} />
+            ) : (
+              <EmptyState message="No measurements yet. Choose a Jar ID to see the real growth line." />
+            )}
+          </div>
+        </div>
+      </div>
+      <div className={`rounded-xl border px-4 py-3 text-sm ${expectedVsActualComment.toneClass}`}>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] mb-1">{expectedVsActualComment.title}</p>
+        <p>{expectedVsActualComment.text}</p>
+      </div>
       {nutritionImpactRows.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -4805,24 +4894,17 @@ function ChartCard({ record, history, combinedRecords, isLight, reportInsightTex
           </div>
         </div>
       ) : null}
-      <div className={`grid gap-4 ${impactPieData ? "lg:grid-cols-[2fr_1fr]" : ""}`}>
-        <div className="h-80">
-          {cleanedPoints.length ? (
-            <canvas ref={canvasRef} />
-          ) : (
-            <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
-          )}
-        </div>
-        {impactPieData ? (
-          <div className="panel-muted px-4 py-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
-              <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
-            </div>
+      {impactPieData ? (
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
+            <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
             <div className="h-56">
               <canvas ref={pieCanvasRef} />
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="grid grid-cols-2 gap-2 text-[11px] content-start">
               <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
                 Improved: <span className="font-semibold text-emerald-700 dark:text-emerald-300">{impactPieData.values[0]}</span>
               </div>
@@ -4837,8 +4919,8 @@ function ChartCard({ record, history, combinedRecords, isLight, reportInsightTex
               </div>
             </div>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </motion.div>
   );
 }
