@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
 import { useMonitorData } from "../hooks/useMonitorData";
+import PublicMonitorQrCard from "../components/monitor/PublicMonitorQrCard.jsx";
 
 const FEEDBACK_STORAGE_KEY = "orchid-insights-dashboard-feedback";
 
@@ -56,12 +57,12 @@ const cards = [
     desc: "Live jar sensor values in a compact data table.",
   },
   {
-    title: "Orchid Classifier",
-    to: "/classifier",
-    tone: "from-indigo-300/35 to-primary/30",
-    icon: "\u{1F4F7}",
-    meta: "Vision",
-    desc: "Upload an orchid photo to predict class and OOD score.",
+    title: "Orchid Care Companion",
+    to: "/companion",
+    tone: "from-fuchsia-400/35 to-secondary/30",
+    icon: "\u{1FABC}",
+    meta: "Care",
+    desc: "Open the ZIP-based orchid care chat and planner, enhanced with live monitor context.",
   },
 ];
 const ORCHID_FRAME_DURATION_MS = 5000;
@@ -165,7 +166,11 @@ const buildDashboardGrowthWarnings = (records) =>
     .sort((a, b) => String(a.jarId).localeCompare(String(b.jarId), undefined, { numeric: true, sensitivity: "base" }));
 
 export default function Dashboard() {
-  const { latest: liveMonitorLatest, connectionStatus: monitorConnectionStatus } = useMonitorData();
+  const {
+    latest: liveMonitorLatest,
+    connectionStatus: monitorConnectionStatus,
+    lastUpdate: liveMonitorLastUpdate,
+  } = useMonitorData();
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [showStats, setShowStats] = useState(true);
@@ -393,6 +398,7 @@ export default function Dashboard() {
       ["Plant Database", "Browse and search stored orchid plant records synced from backend and Firebase."],
       ["Firebase Table", "Inspect live sensor payloads and merged values from Firebase in tabular form."],
       ["Env Monitor", "Track real-time temperature, humidity, light, air quality, alerts, and AI tips."],
+      ["Orchid Care Companion", "Use the orchid care chat and monthly task planner with live environment context."],
     ];
 
     doc.setFontSize(20);
@@ -595,6 +601,8 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      <PublicMonitorQrCard latest={liveMonitorLatest} lastUpdate={liveMonitorLastUpdate} />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card) => {
