@@ -167,7 +167,7 @@ export default function ReminderTile() {
   };
 
   return (
-    <section className="flex h-[700px] flex-col overflow-y-auto rounded-2xl border border-border/60 bg-paper/95 p-4 text-dark shadow-lg dark:shadow-[0_18px_40px_-24px_rgba(2,6,23,0.8)]">
+    <section className="flex h-fit flex-col self-start rounded-2xl border border-border/60 bg-paper/95 p-4 text-dark shadow-lg dark:shadow-[0_18px_40px_-24px_rgba(2,6,23,0.8)]">
       <header className="mb-4 min-h-[84px]">
         <h2 className="text-xl font-bold text-dark">Reminder Planner</h2>
         <p className="text-sm text-subtle">
@@ -213,10 +213,10 @@ export default function ReminderTile() {
         </button>
       </form>
 
-      <div className="flex-1">
+      <div>
         <h3 className="mb-2 font-semibold text-dark">Upcoming Reminders</h3>
         {reminders.length === 0 ? (
-          <div className="flex h-full items-start rounded-lg border border-dashed border-border/50 bg-paper/40 p-3">
+          <div className="rounded-lg border border-dashed border-border/50 bg-paper/40 p-3">
             <p className="text-sm text-subtle">No reminders yet.</p>
           </div>
         ) : (
