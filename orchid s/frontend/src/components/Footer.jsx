@@ -8,6 +8,7 @@ const quickLinks = [
   { to: "/history", label: "Growth History" },
   { to: "/plants", label: "Plant Database" },
   { to: "/firebase", label: "Firebase Table" },
+  { to: "/classifier", label: "Orchid Classifier" },
   { to: "/companion", label: "Orchid Care Companion" },
 ];
 

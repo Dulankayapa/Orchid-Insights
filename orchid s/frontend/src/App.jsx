@@ -10,6 +10,7 @@ import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
 import OrchidCompanion from "./pages/OrchidCompanion.jsx";
+import OrchidClassifier from "./pages/OrchidClassifier.jsx";
 import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
 import Footer from "./components/Footer.jsx";
 
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/history", label: "Growth History", code: "\u{1F552}" },
   { to: "/plants", label: "Plant Database", code: "\u{1F33F}" },
   { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
+  { to: "/classifier", label: "Orchid Classifier", code: "\u{1F4F7}" },
   { to: "/companion", label: "Orchid Care Companion", code: "\u{1FABC}" },
 ];
 
@@ -209,6 +211,7 @@ export default function App() {
                   <Route path="/history" element={<GrowthHistory />} />
                   <Route path="/plants" element={<PlantDatabase />} />
                   <Route path="/firebase" element={<FirebaseTable />} />
+                  <Route path="/classifier" element={<OrchidClassifier />} />
                   <Route path="/monitor" element={<EnvMonitor />} />
                   <Route path="/companion" element={<OrchidCompanion />} />
                 </Routes>

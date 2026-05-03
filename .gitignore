@@ -7,3 +7,13 @@ dist/
 *.log
 New folder/backend/.DS_Store
 New folder/backend/app/core/config.py
+
+# Generated / local classifier artifacts
+orchid s/backend/models/_classifier_zip_extract/
+orchid s/backend/models/classifier/*.onnx
+orchid s/backend/models/classifier/ood_config*.json
+orchid s/backend/models/classifier/*_config*.json
+
+# Extracted demo/classifier frontend junk
+orchid s/backend/models/_classifier_zip_extract/**/.vite/
+orchid s/backend/models/_classifier_zip_extract/**/node_modules/

@@ -1,4 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { auth } from "../../lib/firebase";
+
+const API_BASE_URL = (
+  import.meta.env.VITE_API_BASE_URL ||
+  import.meta.env.VITE_API_URL ||
+  "http://localhost:8000"
+).replace(/\/$/, "");
 
 const quickPrompts = [
   "When should I water a phalaenopsis?",
@@ -45,10 +52,16 @@ function buildReply(input) {
   return match ? match.text : defaultReply;
 }
 
+async function buildAuthHeaders() {
+  const token = await auth.currentUser?.getIdToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 export default function CompanionChatTile() {
   const [messages, setMessages] = useState(initialMessages);
   const [draft, setDraft] = useState("");
   const [isTyping, setIsTyping] = useState(false);
+  const [usesRemoteChat, setUsesRemoteChat] = useState(false);
   const listRef = useRef(null);
 
   useEffect(() => {
@@ -57,7 +70,7 @@ export default function CompanionChatTile() {
     }
   }, [messages, isTyping]);
 
-  const sendMessage = (text) => {
+  const sendMessage = async (text) => {
     const trimmed = text.trim();
     if (!trimmed || isTyping) return;
 
@@ -67,11 +80,49 @@ export default function CompanionChatTile() {
       text: trimmed,
     };
 
-    setMessages((current) => [...current, userMessage]);
+    const nextMessages = [...messages, userMessage];
+    setMessages(nextMessages);
     setDraft("");
     setIsTyping(true);
 
-    window.setTimeout(() => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/companion/chat`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(await buildAuthHeaders()),
+        },
+        body: JSON.stringify({
+          messages: nextMessages.map((message) => ({
+            role: message.role,
+            text: message.text,
+          })),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Companion chat request failed with ${response.status}.`);
+      }
+
+      const data = await response.json();
+      const replyText = data?.reply?.trim();
+      if (!replyText) {
+        throw new Error("Companion chat payload was empty.");
+      }
+
+      setUsesRemoteChat(true);
+      setMessages((current) => [
+        ...current,
+        {
+          id: Date.now() + 1,
+          role: "assistant",
+          text: replyText,
+        },
+      ]);
+    } catch (error) {
+      console.warn("Falling back to local orchid chat suggestions:", error);
+      setUsesRemoteChat(false);
+      await new Promise((resolve) => window.setTimeout(resolve, 500));
       setMessages((current) => [
         ...current,
         {
@@ -80,8 +131,9 @@ export default function CompanionChatTile() {
           text: buildReply(trimmed),
         },
       ]);
+    } finally {
       setIsTyping(false);
-    }, 700);
+    }
   };
 
   const handleSubmit = (event) => {
@@ -90,15 +142,17 @@ export default function CompanionChatTile() {
   };
 
   return (
-    <section className="bg-white rounded-2xl shadow-lg p-4 flex flex-col h-[700px]">
-      <header className="mb-4">
+    <section className="flex h-[700px] flex-col rounded-2xl border border-border/60 bg-paper/95 p-4 text-dark shadow-lg dark:shadow-[0_18px_40px_-24px_rgba(2,6,23,0.8)]">
+      <header className="mb-4 min-h-[84px]">
         <h2 className="text-xl font-bold text-gray-900">Orchid Care Chat</h2>
         <p className="text-sm text-gray-500">
-          A lightweight care assistant for quick orchid questions.
+          {usesRemoteChat
+            ? "ChatGPT-backed orchid suggestions are active through the backend."
+            : "A lightweight care assistant for quick orchid questions."}
         </p>
       </header>
 
-      <div className="flex gap-2 flex-wrap mb-4">
+      <div className="mb-4 flex min-h-[112px] flex-wrap content-start gap-2">
         {quickPrompts.map((prompt) => (
           <button
             key={prompt}
@@ -154,7 +208,7 @@ export default function CompanionChatTile() {
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder="Ask about watering, leaves, roots, or light"
-          className="flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
+          className="min-w-0 flex-1 border border-gray-300 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-green-500"
         />
         <button
           type="submit"

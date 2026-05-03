@@ -42,6 +42,7 @@ def _model_search_dirs() -> List[Path]:
     env_dir = os.getenv("ORCHID_CLS_MODEL_DIR")
     return [
         Path(env_dir) if env_dir else None,
+        Path(__file__).resolve().parents[2] / "models" / "classifier",
         Path(__file__).resolve().parent.parent / "models" / "classifier",
         Path.home() / "Desktop" / "orchid classifier" / "orchid classifier" / "backend",
     ]

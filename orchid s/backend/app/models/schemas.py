@@ -72,3 +72,53 @@ class DiseasePrediction(BaseModel):
     confidence: float
     confidence_percent: float
     class_index: int
+
+
+# ---------- Quiz ----------
+class QuizQuestion(BaseModel):
+    id: str
+    question: str
+    options: List[str] = Field(default_factory=list)
+    correct: int
+    explanation: Optional[str] = None
+
+
+class QuizSubmission(BaseModel):
+    score: int
+    total: int
+    answers: List[object] = Field(default_factory=list)
+
+
+class QuizAttempt(BaseModel):
+    id: str
+    score: int
+    total: int
+    completed_at: datetime
+
+
+# ---------- Companion chat ----------
+class CompanionChatMessage(BaseModel):
+    role: str
+    text: str
+
+
+class CompanionChatRequest(BaseModel):
+    messages: List[CompanionChatMessage] = Field(default_factory=list)
+
+
+class CompanionChatResponse(BaseModel):
+    reply: str
+
+
+# ---------- Reminders ----------
+class ReminderItem(BaseModel):
+    id: str
+    title: str
+    type: str
+    reminder_time: datetime
+
+
+class ReminderCreateRequest(BaseModel):
+    title: str
+    type: str
+    reminderTime: str

@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import get_settings
-from app.routers import disease, env, growth, health, classifier, devices
+from app.routers import companion, disease, env, growth, health, classifier, devices, quiz, reminders
 
 settings = get_settings()
 
@@ -28,6 +28,9 @@ app.include_router(disease.router, prefix=api_prefix)
 app.include_router(env.router, prefix=api_prefix)
 app.include_router(classifier.router, prefix=api_prefix)
 app.include_router(devices.router, prefix=api_prefix)
+app.include_router(quiz.router, prefix=api_prefix)
+app.include_router(companion.router, prefix=api_prefix)
+app.include_router(reminders.router, prefix=api_prefix)
 
 
 @app.get("/")
