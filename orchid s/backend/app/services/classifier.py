@@ -225,9 +225,8 @@ def predict_image(img_bytes: bytes) -> dict:
             ood_reasons.append("low_confidence")
         if top_margin < TOP_MARGIN_THRESHOLD:
             ood_reasons.append("low_margin")
-        ood_reasons.append("ood_disabled_missing_config")
 
-    is_ood = bool(ood_reasons) if state["ood_enabled"] else False
+    is_ood = bool(ood_reasons)
 
     inf_ms = (time.perf_counter() - t0) * 1000
 
@@ -246,6 +245,11 @@ def predict_image(img_bytes: bytes) -> dict:
         "ood_reasons": ood_reasons,
         "is_ood": is_ood,
         "ood_enabled": state["ood_enabled"],
+        "warning": (
+            "OOD config missing: predictions use classifier probabilities only."
+            if not state["ood_enabled"]
+            else None
+        ),
         "inference_ms": round(inf_ms, 1),
     }
 
