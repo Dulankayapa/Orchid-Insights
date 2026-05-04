@@ -31,7 +31,10 @@ OOD_CONFIG_CANDIDATES = ["ood_config.json", "ood_config1.json"]
 
 IMG_SIZE = (224, 224)
 TOP_K = 3
-CONFIDENCE_THRESHOLD = 0.70
+CONFIDENCE_THRESHOLD = 0.82
+TOP_MARGIN_THRESHOLD = 0.15
+DISTANCE_SAFETY_FACTOR = 0.92
+HIGH_CONFIDENCE_DISTANCE_THRESHOLD = 0.90
 
 
 class ModelNotReady(Exception):
@@ -164,7 +167,6 @@ def predict_image(img_bytes: bytes) -> dict:
     t0 = time.perf_counter()
     features = state["extractor"].run(None, {state["ext_input"]: tensor})[0]
     distance, closest_idx = _mahalanobis(features, state["class_stats"])
-    is_ood = distance > state["threshold"]
 
     probs = state["classifier"].run(None, {state["cls_input"]: tensor})[0][0]
     prob_sum = float(np.sum(probs))
@@ -178,21 +180,48 @@ def predict_image(img_bytes: bytes) -> dict:
         for i in top_idx
     ]
 
-    if top and top[0]["score"] < CONFIDENCE_THRESHOLD:
-        is_ood = True
+    top_confidence = float(top[0]["score"]) if top else 0.0
+    second_confidence = float(top[1]["score"]) if len(top) > 1 else 0.0
+    top_margin = max(0.0, top_confidence - second_confidence)
+    predicted_label = top[0]["label"] if top else "unknown"
+    closest_label = state["class_names"][closest_idx]
+    distance_threshold = state["threshold"]
+
+    ood_reasons = []
+
+    if not top:
+        ood_reasons.append("no_prediction")
+    if distance > distance_threshold:
+        ood_reasons.append("distance_above_threshold")
+    if top_confidence < CONFIDENCE_THRESHOLD:
+        ood_reasons.append("low_confidence")
+    if top_margin < TOP_MARGIN_THRESHOLD:
+        ood_reasons.append("low_margin")
+    if predicted_label != closest_label:
+        ood_reasons.append("feature_classifier_mismatch")
+    if (
+        distance > distance_threshold * DISTANCE_SAFETY_FACTOR
+        and top_confidence < HIGH_CONFIDENCE_DISTANCE_THRESHOLD
+    ):
+        ood_reasons.append("near_threshold_without_high_confidence")
+
+    is_ood = bool(ood_reasons)
 
     inf_ms = (time.perf_counter() - t0) * 1000
 
-    ood_score = distance / max(1e-6, state["threshold"])
+    ood_score = distance / max(1e-6, distance_threshold)
     ood_score = max(0.0, min(1.5, ood_score))  # cap for display
 
     return {
-        "label": top[0]["label"] if top else "unknown",
-        "confidence": round(top[0]["score"], 6) if top else 0.0,
+        "label": predicted_label,
+        "confidence": round(top_confidence, 6),
         "top_k": top,
         "ood": round(ood_score, 4),
-        "threshold": state["threshold"],
+        "threshold": distance_threshold,
         "mahalanobis_distance": distance,
+        "confidence_margin": round(top_margin, 6),
+        "closest_label": closest_label,
+        "ood_reasons": ood_reasons,
         "is_ood": is_ood,
         "inference_ms": round(inf_ms, 1),
     }

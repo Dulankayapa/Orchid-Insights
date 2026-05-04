@@ -140,6 +140,9 @@ export default function OrchidClassifier() {
         <p className="max-w-xs mx-auto mt-2 text-sm font-light text-green-600 font-body">
           EfficientNetB0 species classifier with out-of-distribution detection
         </p>
+        <p className="max-w-md mx-auto mt-2 text-xs text-green-700 font-body">
+          Supported species only: cattleya, dendrobium, oncidium, phalaenopsis, and vanda.
+        </p>
       </header>
 
       <main className="flex items-start justify-center flex-1 px-4 pb-16">
@@ -218,7 +221,7 @@ export default function OrchidClassifier() {
                   </div>
                 </div>
                 <p className="mt-4 text-xs text-green-800 font-body">
-                  Make sure the backend is running and the classifier model files are available.
+                  Use a clear photo of a supported orchid species. Non-orchid flowers and unsupported plants are rejected.
                 </p>
               </div>
             )}

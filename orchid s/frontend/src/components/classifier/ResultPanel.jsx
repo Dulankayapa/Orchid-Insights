@@ -31,7 +31,8 @@ export default function ResultPanel({ result }) {
       ? "bg-yellow-950/40 border-yellow-700/30"
       : "bg-green-950/50 border-green-700/30 forest-glow";
 
-  const canShowFertilizer = KNOWN_LABELS.includes(topPred.label.toLowerCase().split("_")[0]);
+  const canShowFertilizer =
+    !is_ood && KNOWN_LABELS.includes(topPred.label.toLowerCase().split("_")[0]);
 
   return (
     <div className="animate-fade-up space-y-4">
@@ -43,7 +44,10 @@ export default function ResultPanel({ result }) {
               Out-of-Distribution
             </p>
             <p className="font-body mt-1 text-sm text-orchid-500">
-              This image does not match any known orchid species
+              This image does not match the trained orchid species set
+            </p>
+            <p className="font-body mt-2 text-xs text-orchid-600">
+              Supported species: cattleya, dendrobium, oncidium, phalaenopsis, and vanda.
             </p>
           </>
         ) : isLowConf ? (
@@ -146,20 +150,22 @@ export default function ResultPanel({ result }) {
         isOod={is_ood}
       />
 
-      <div className="space-y-2">
-        <p className="font-body px-1 text-xs uppercase tracking-widest text-green-700">
-          Top Predictions
-        </p>
-        {top_predictions.map((pred, index) => (
-          <ConfidenceBar
-            key={pred.label}
-            label={pred.label}
-            confidence={pred.confidence}
-            rank={index}
-            isOod={is_ood}
-          />
-        ))}
-      </div>
+      {!is_ood ? (
+        <div className="space-y-2">
+          <p className="font-body px-1 text-xs uppercase tracking-widest text-green-700">
+            Top Predictions
+          </p>
+          {top_predictions.map((pred, index) => (
+            <ConfidenceBar
+              key={pred.label}
+              label={pred.label}
+              confidence={pred.confidence}
+              rank={index}
+              isOod={is_ood}
+            />
+          ))}
+        </div>
+      ) : null}
 
       <div className="font-body flex items-center justify-between px-1 text-xs text-green-800">
         <span>EfficientNetB0 · ONNX Runtime</span>
