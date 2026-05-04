@@ -56,9 +56,7 @@ export default function OrchidClassifier() {
     try {
       const form = new FormData();
       form.append("file", file);
-      const { data } = await fileApi().post("/orchid-classifier/predict", form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
+      const { data } = await fileApi().post("/orchid-classifier/predict", form);
       setResult(normalizeResult(data));
     } catch (err) {
       const message = err.response?.data?.detail ?? err.message ?? "Unknown error";
