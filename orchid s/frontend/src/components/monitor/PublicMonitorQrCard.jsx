@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { METRIC_DEFINITIONS } from "../../lib/monitorConfig";
 
-const DEFAULT_PUBLIC_MONITOR_URL = "https://orchid-insights.web.app/monitor";
+const DEFAULT_PUBLIC_MONITOR_URL = "https://orchid-insights.web.app/";
 
 const toNumber = (value) => {
   const parsed = Number(value);
@@ -127,7 +127,7 @@ export default function PublicMonitorQrCard({ latest, lastUpdate, className = "p
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="kicker">QR label</p>
-          <p className="text-sm text-subtle">Scan to open the public Env Monitor page.</p>
+          <p className="text-sm text-subtle">Scan to open the Orchid Insights web app.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
