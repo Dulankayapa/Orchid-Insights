@@ -1,4 +1,0 @@
-User-agent: *
-Allow: /
-
-Sitemap: https://orchid-insights.web.app/sitemap.xml
