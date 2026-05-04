@@ -1,60 +1,45 @@
-import React from "react";
-
-function humanizeLabel(label) {
-  return String(label || "unknown").replace(/_/g, " ");
-}
+import React from 'react'
 
 export default function ConfidenceBar({ label, confidence, rank, isOod }) {
-  const pct = Math.round((confidence || 0) * 100);
-  const isTop = rank === 0;
+  const pct = Math.round(confidence * 100)
+  const isTop = rank === 0
 
   const barColor = isOod
-    ? "bg-gradient-to-r from-fuchsia-500 to-pink-400"
+    ? 'bg-orchid-500'
     : isTop
-      ? "bg-gradient-to-r from-emerald-500 via-green-400 to-green-200"
-      : "bg-gradient-to-r from-emerald-900 via-green-700 to-green-500";
+      ? 'bg-gradient-to-r from-green-500 to-green-400'
+      : 'bg-gradient-to-r from-green-800 to-green-700'
 
   return (
     <div
-      className={`rounded-[22px] border p-4 transition-all duration-200 ${
-        isTop
-          ? "glass border-green-500/20 shadow-[0_18px_42px_-30px_rgba(22,163,74,0.82)]"
-          : "border-green-900/40 bg-[linear-gradient(180deg,rgba(5,18,10,0.88),rgba(8,24,13,0.78))]"
-      }`}
+      className={`
+        rounded-xl p-3 transition-all duration-200
+        ${isTop ? 'glass border border-green-700/30' : 'bg-leaf-light/30'}
+      `}
       style={{ animationDelay: `${rank * 0.12}s` }}
     >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div className="flex items-center gap-3">
-          <span
-            className={`inline-flex min-w-[2.2rem] items-center justify-center rounded-xl border px-2 py-1 text-xs font-semibold ${
-              isTop
-                ? "border-green-500/20 bg-green-400/10 text-green-200"
-                : "border-green-900/60 bg-black/10 text-green-500"
-            }`}
-          >
-            #{rank + 1}
+      <div className="flex justify-between items-center mb-2">
+        <div className="flex items-center gap-2">
+          {isTop && (
+            <span className="text-xs font-body font-medium px-1.5 py-0.5 rounded bg-green-900 text-green-400 border border-green-700/50">
+              #1
+            </span>
+          )}
+          <span className={`font-body text-sm ${isTop ? 'text-green-200 font-medium' : 'text-green-500'}`}>
+            {label.replace(/_/g, ' ')}
           </span>
-          <div>
-            <p className={`font-body text-base capitalize ${isTop ? "font-semibold text-green-100" : "text-green-300"}`}>
-              {humanizeLabel(label)}
-            </p>
-            <p className="mt-0.5 font-body text-xs text-green-100/45">
-              {isTop ? "Best current match" : "Alternative class"}
-            </p>
-          </div>
         </div>
-        <div className={`text-right font-body ${isTop ? "text-green-100" : "text-green-400"}`}>
-          <p className="text-xl font-semibold tabular-nums">{pct}%</p>
-          <p className="text-[11px] uppercase tracking-[0.18em] text-green-100/40">confidence</p>
-        </div>
+        <span className={`font-body text-sm tabular-nums ${isTop ? 'text-green-300 font-semibold' : 'text-green-600'}`}>
+          {pct}%
+        </span>
       </div>
 
-      <div className="h-2.5 w-full overflow-hidden rounded-full bg-black/30">
+      <div className="w-full h-1.5 rounded-full bg-green-950/60 overflow-hidden">
         <div
           className={`h-full rounded-full ${barColor} animate-bar-grow`}
-          style={{ "--bar-width": `${pct}%`, width: `${pct}%` }}
+          style={{ '--bar-width': `${pct}%`, width: `${pct}%` }}
         />
       </div>
     </div>
-  );
+  )
 }

@@ -32,15 +32,6 @@ async def predict(file: UploadFile = File(...)):
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}") from exc
 
-    if result.get("is_ood"):
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                "This classifier only supports orchid species. "
-                "Please upload a clear image of a supported orchid."
-            ),
-        )
-
     # Shape response for the frontend normalizer (top_k, ood, label, confidence)
     return {
         **result,

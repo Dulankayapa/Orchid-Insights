@@ -32,12 +32,6 @@ OOD_CONFIG_CANDIDATES = ["ood_config.json", "ood_config1.json"]
 IMG_SIZE = (224, 224)
 TOP_K = 3
 CONFIDENCE_THRESHOLD = 0.70
-GRAY_ZONE_THRESHOLD_FACTOR = 0.85
-GRAY_ZONE_CONFIDENCE_THRESHOLD = 0.60
-SOFT_OOD_THRESHOLD_FACTOR = 1.28
-SOFT_OOD_CONFIDENCE_THRESHOLD = 0.70
-TOP_MARGIN_THRESHOLD = 0.18
-HIGH_CONFIDENCE_OVERRIDE = 0.94
 
 
 class ModelNotReady(Exception):
@@ -170,8 +164,7 @@ def predict_image(img_bytes: bytes) -> dict:
     t0 = time.perf_counter()
     features = state["extractor"].run(None, {state["ext_input"]: tensor})[0]
     distance, closest_idx = _mahalanobis(features, state["class_stats"])
-    raw_threshold = state["threshold"]
-    gray_zone_threshold = raw_threshold * GRAY_ZONE_THRESHOLD_FACTOR
+    is_ood = distance > state["threshold"]
 
     probs = state["classifier"].run(None, {state["cls_input"]: tensor})[0][0]
     prob_sum = float(np.sum(probs))
@@ -185,47 +178,21 @@ def predict_image(img_bytes: bytes) -> dict:
         for i in top_idx
     ]
 
-    top_confidence = float(top[0]["score"]) if top else 0.0
-    second_confidence = float(top[1]["score"]) if len(top) > 1 else 0.0
-    top_margin = max(0.0, top_confidence - second_confidence)
-    soft_ood_threshold = raw_threshold * SOFT_OOD_THRESHOLD_FACTOR
-
-    is_ood = distance > soft_ood_threshold
-
-    # Use a soft-vs-hard OOD band so supported orchid species are not rejected
-    # solely because they sit slightly outside the raw Mahalanobis threshold.
-    if not is_ood:
-        if distance > raw_threshold:
-            is_ood = (
-                top_confidence < SOFT_OOD_CONFIDENCE_THRESHOLD
-                or top_margin < TOP_MARGIN_THRESHOLD
-            )
-        elif distance > gray_zone_threshold:
-            is_ood = (
-                top_confidence < GRAY_ZONE_CONFIDENCE_THRESHOLD
-                or top_margin < TOP_MARGIN_THRESHOLD
-            )
-        else:
-            is_ood = top_confidence < CONFIDENCE_THRESHOLD
-
-    if top_confidence >= HIGH_CONFIDENCE_OVERRIDE and distance <= soft_ood_threshold:
-        is_ood = False
+    if top and top[0]["score"] < CONFIDENCE_THRESHOLD:
+        is_ood = True
 
     inf_ms = (time.perf_counter() - t0) * 1000
 
-    ood_score = distance / max(1e-6, gray_zone_threshold)
+    ood_score = distance / max(1e-6, state["threshold"])
     ood_score = max(0.0, min(1.5, ood_score))  # cap for display
 
     return {
         "label": top[0]["label"] if top else "unknown",
-        "confidence": round(top_confidence, 6),
+        "confidence": round(top[0]["score"], 6) if top else 0.0,
         "top_k": top,
         "ood": round(ood_score, 4),
-        "threshold": gray_zone_threshold,
-        "raw_threshold": raw_threshold,
-        "soft_ood_threshold": soft_ood_threshold,
+        "threshold": state["threshold"],
         "mahalanobis_distance": distance,
-        "confidence_margin": round(top_margin, 6),
         "is_ood": is_ood,
         "inference_ms": round(inf_ms, 1),
     }
@@ -237,9 +204,7 @@ def health() -> dict:
         return {
             "status": "ok",
             "classes": state["class_names"],
-            "threshold": state["threshold"] * GRAY_ZONE_THRESHOLD_FACTOR,
-            "raw_threshold": state["threshold"],
-            "soft_ood_threshold": state["threshold"] * SOFT_OOD_THRESHOLD_FACTOR,
+            "threshold": state["threshold"],
             "providers": state["classifier"].get_providers(),
         }
     except Exception as exc:  # pragma: no cover - simple status
