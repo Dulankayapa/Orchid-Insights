@@ -1,23 +1,23 @@
 from app.services import (
+    companion,
     disease,
     env,
     growth,
     classifier,
-    companion,
-    mock_db,
     ml_predictions,
+    reminders,
     device_registry,
     device_status,
 )
 
 __all__ = [
+    "companion",
     "growth",
     "disease",
     "env",
     "classifier",
-    "companion",
-    "mock_db",
     "ml_predictions",
+    "reminders",
     "device_registry",
     "device_status",
 ]

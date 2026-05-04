@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { jsPDF } from "jspdf";
 import { api } from "../lib/api";
 import { useMonitorData } from "../hooks/useMonitorData";
+import PublicMonitorQrCard from "../components/monitor/PublicMonitorQrCard.jsx";
 
 const FEEDBACK_STORAGE_KEY = "orchid-insights-dashboard-feedback";
 
@@ -61,15 +62,15 @@ const cards = [
     tone: "from-indigo-300/35 to-primary/30",
     icon: "\u{1F4F7}",
     meta: "Vision",
-    desc: "Upload an orchid photo to predict class and OOD score.",
+    desc: "Open the exact ZIP-based OrchidAI classifier with OOD detection and fertilizer guide.",
   },
   {
-    title: "Orchid Companion",
+    title: "Orchid Care Companion",
     to: "/companion",
     tone: "from-fuchsia-400/35 to-secondary/30",
-    icon: "\u{1F916}",
-    meta: "Assistant",
-    desc: "Ask the assistant for orchid care and growth guidance using live monitor context.",
+    icon: "\u{1FABC}",
+    meta: "Care",
+    desc: "Open the ZIP-based orchid care chat and planner, enhanced with live monitor context.",
   },
 ];
 const ORCHID_FRAME_DURATION_MS = 5000;
@@ -173,7 +174,11 @@ const buildDashboardGrowthWarnings = (records) =>
     .sort((a, b) => String(a.jarId).localeCompare(String(b.jarId), undefined, { numeric: true, sensitivity: "base" }));
 
 export default function Dashboard() {
-  const { latest: liveMonitorLatest, connectionStatus: monitorConnectionStatus } = useMonitorData();
+  const {
+    latest: liveMonitorLatest,
+    connectionStatus: monitorConnectionStatus,
+    lastUpdate: liveMonitorLastUpdate,
+  } = useMonitorData();
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
   const [showStats, setShowStats] = useState(true);
@@ -368,23 +373,6 @@ export default function Dashboard() {
           : "text-emerald-600 dark:text-emerald-400",
     },
   ];
-  const heroHighlights = [
-    {
-      label: "Sensors",
-      value: `${activeSensorCount}/${totalSensors}`,
-      detail: hasLiveSensorStream ? "Live feed" : "Awaiting data",
-    },
-    {
-      label: "Connection",
-      value: liveSensorTrend,
-      detail: monitorConnectionStatus === "connected" ? "Realtime" : "Sync watch",
-    },
-    {
-      label: "Alerts",
-      value: String(totalAlerts),
-      detail: growthWarningCount ? "Needs review" : "Stable",
-    },
-  ];
   const handleExportDashboardReport = () => {
     const doc = new jsPDF();
     const generatedAt = new Date().toLocaleString();
@@ -400,8 +388,9 @@ export default function Dashboard() {
       ["Growth History", "View jar-wise historical height trends with comparison and rack-based analysis."],
       ["Plant Database", "Browse and search stored orchid plant records synced from backend and Firebase."],
       ["Firebase Table", "Inspect live sensor payloads and merged values from Firebase in tabular form."],
+      ["Orchid Classifier", "Classify orchid species from an image with confidence, OOD detection, and fertilizer guidance."],
       ["Env Monitor", "Track real-time temperature, humidity, light, air quality, alerts, and AI tips."],
-      ["Orchid Companion", "Get context-aware orchid care guidance using live monitor sensor data."],
+      ["Orchid Care Companion", "Use the orchid care chat and monthly task planner with live environment context."],
     ];
 
     doc.setFontSize(20);
@@ -476,12 +465,6 @@ export default function Dashboard() {
               <p className="page-description mx-auto max-w-3xl sm:mx-0">
                 Growth analytics, plant database operations, and real-time environmental monitoring in one modern workspace.
               </p>
-              <div className="flex flex-wrap justify-center gap-2 sm:justify-start">
-                <span className="chip-subtle">{cards.length} active modules</span>
-                <span className="chip-subtle">Live telemetry</span>
-                <span className="chip-subtle">Team-ready workspace</span>
-              </div>
-
               {health && (
                 <div className="grid gap-3 sm:grid-cols-3">
                   <StatusPill label="Growth model" ok={health.model_loaded} />
@@ -495,19 +478,6 @@ export default function Dashboard() {
                   Health check failed: {error}
                 </p>
               )}
-            </div>
-
-            <div className="grid grid-cols-3 gap-2 text-left">
-              {heroHighlights.map((item) => (
-                <div
-                  key={item.label}
-                  className="rounded-[18px] border border-white/45 bg-white/72 px-3 py-3 shadow-[0_14px_28px_-22px_rgba(15,23,42,0.25)] backdrop-blur-md dark:border-white/10 dark:bg-white/6"
-                >
-                  <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-subtle">{item.label}</p>
-                  <p className="mt-2 text-sm font-semibold text-dark sm:text-base">{item.value}</p>
-                  <p className="mt-1 text-[11px] text-subtle">{item.detail}</p>
-                </div>
-              ))}
             </div>
           </div>
 
@@ -604,6 +574,8 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
+      <PublicMonitorQrCard latest={liveMonitorLatest} lastUpdate={liveMonitorLastUpdate} />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {cards.map((card) => {

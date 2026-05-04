@@ -1,282 +1,278 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { motion } from 'framer-motion';
-import { fileApi } from '../lib/api';
+import React, { useState, useCallback, useRef } from 'react'
+import DropZone from '../components/classifier/DropZone'
+import Loader from '../components/classifier/Loader'
+import ResultPanel from '../components/classifier/ResultPanel'
+import { fileApi } from '../lib/api'
 
-const readableScore = (value) => {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return '--';
-  return `${Math.round(num * 100)}%`;
-};
+function normalizeResult(data) {
+  const rawPredictions = Array.isArray(data?.top_predictions)
+    ? data.top_predictions
+    : Array.isArray(data?.predictions)
+      ? data.predictions
+      : Array.isArray(data?.top_k)
+        ? data.top_k
+        : []
 
-const DropZone = ({ onFile }) => {
-  const [isDragging, setDragging] = useState(false);
+  const top_predictions = rawPredictions.map((pred) => ({
+    label: pred.label,
+    confidence: pred.confidence ?? pred.score ?? 0,
+  }))
 
-  const handleFiles = (files) => {
-    if (!files?.length) return;
-    const file = files[0];
-    if (!file.type.startsWith('image/')) return;
-    onFile(file);
-  };
-
-  const handleDrop = (event) => {
-    event.preventDefault();
-    setDragging(false);
-    handleFiles(event.dataTransfer.files);
-  };
-
-  return (
-    <div
-      className={`panel-soft rounded-2xl border-2 border-dashed ${isDragging ? 'border-primary bg-primary/5' : 'border-border/60'} transition-colors`}
-      onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={handleDrop}
-      role="button"
-      tabIndex={0}
-      onKeyDown={() => {}}
-    >
-      <label className="flex cursor-pointer flex-col items-center gap-3 px-6 py-8 text-center">
-        <span className="text-3xl">📸</span>
-        <p className="text-lg font-semibold text-dark">Drop an orchid photo</p>
-        <p className="text-sm text-subtle">PNG or JPG · max 10MB</p>
-        <input
-          type="file"
-          accept="image/*"
-          className="sr-only"
-          onChange={(e) => handleFiles(e.target.files)}
-        />
-      </label>
-    </div>
-  );
-};
-
-const ConfidenceBar = ({ label, value }) => {
-  const pct = Math.min(100, Math.max(0, Math.round((Number(value) || 0) * 100)));
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between text-sm text-subtle">
-        <span>{label}</span>
-        <span className="font-semibold text-dark">{pct}%</span>
-      </div>
-      <div className="h-2.5 rounded-full bg-border/60">
-        <div
-          className="h-full rounded-full bg-primary"
-          style={{ width: `${pct}%`, boxShadow: '0 6px 18px -10px rgba(0,180,150,0.8)' }}
-        />
-      </div>
-    </div>
-  );
-};
-
-const OodMeter = ({ value }) => {
-  const pct = Math.min(100, Math.max(0, Math.round((Number(value) || 0) * 100)));
-  const status = pct < 30 ? 'In-distribution' : pct < 65 ? 'Borderline' : 'Possibly OOD';
-  const tone = pct < 30 ? 'text-emerald-600' : pct < 65 ? 'text-amber-500' : 'text-rose-600';
-
-  return (
-    <div className="panel-soft rounded-2xl border border-border/60 px-4 py-3">
-      <p className="text-sm font-semibold text-dark">OOD Score</p>
-      <p className={`text-xl font-semibold ${tone}`}>{pct}%</p>
-      <p className="text-xs text-subtle">{status}</p>
-      <div className="mt-2 h-2 rounded-full bg-border/60">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-emerald-400 via-amber-400 to-rose-500"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-    </div>
-  );
-};
-
-const ResultPanel = ({ result }) => {
-  if (!result) {
-    return (
-      <div className="panel-soft rounded-2xl border border-border/60 px-4 py-5 text-subtle">
-        Upload an image to see predictions.
-      </div>
-    );
+  const bestPrediction = top_predictions[0] ?? {
+    label: data?.label ?? 'unknown',
+    confidence: data?.confidence ?? 0,
   }
 
-  const { label, confidence, topK, fertilizer, notes } = result;
+  const is_ood = Boolean(data?.is_ood)
+  const isLowConfidence = !is_ood && bestPrediction.confidence < 0.75
+
+  return {
+    ...data,
+    is_ood,
+    status: is_ood ? 'OOD' : isLowConfidence ? 'LOW_CONFIDENCE' : 'OK',
+    top_predictions: top_predictions.length ? top_predictions : [bestPrediction],
+    mahalanobis_distance: data?.mahalanobis_distance ?? data?.ood ?? 0,
+    threshold: data?.threshold ?? 1,
+    inference_ms: data?.inference_ms ?? 0,
+  }
+}
+
+export default function OrchidClassifier() {
+  const [preview, setPreview] = useState(null)
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+  const [selectedFile, setSelectedFile] = useState(null)
+  const fileInputRef = useRef(null)
+  const resultPanelRef = useRef(null)
+
+  const analyzeFile = useCallback(async (file) => {
+    if (!file) return
+
+    setResult(null)
+    setError(null)
+    setLoading(true)
+
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const { data } = await fileApi().post('/orchid-classifier/predict', form, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setResult(normalizeResult(data))
+    } catch (err) {
+      const msg = err.response?.data?.detail ?? err.message ?? 'Unknown error'
+      setError(msg)
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  const setPreviewFromFile = useCallback((file) => {
+    if (!file) return
+
+    const reader = new FileReader()
+    reader.onload = (e) => setPreview(e.target.result)
+    reader.readAsDataURL(file)
+  }, [])
+
+  const handleFile = useCallback((file) => {
+    if (!file) return
+
+    setSelectedFile(file)
+    setPreviewFromFile(file)
+    analyzeFile(file)
+  }, [analyzeFile, setPreviewFromFile])
+
+  const openFilePicker = useCallback(() => {
+    if (loading) return
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+      fileInputRef.current.click()
+    }
+  }, [loading])
+
+  const handleUploadCardClick = useCallback(() => {
+    openFilePicker()
+  }, [openFilePicker])
+
+  const handleAnalyseCardClick = useCallback(() => {
+    if (loading) return
+
+    if (selectedFile) {
+      analyzeFile(selectedFile)
+      return
+    }
+
+    openFilePicker()
+  }, [analyzeFile, loading, openFilePicker, selectedFile])
+
+  const handleIdentifyCardClick = useCallback(() => {
+    if (result && resultPanelRef.current) {
+      resultPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+
+    if (selectedFile && !loading) {
+      analyzeFile(selectedFile)
+      return
+    }
+
+    openFilePicker()
+  }, [analyzeFile, loading, openFilePicker, result, selectedFile])
+
+  const reset = () => {
+    setPreview(null)
+    setResult(null)
+    setError(null)
+    setLoading(false)
+    setSelectedFile(null)
+  }
 
   return (
-    <div className="panel-soft space-y-3 rounded-2xl border border-border/60 px-4 py-4">
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <p className="text-xs uppercase tracking-[0.18em] text-subtle">Predicted</p>
-          <p className="text-xl font-semibold text-dark">{label || 'Unknown'}</p>
-        </div>
-        <span className="rounded-full bg-primary/10 px-3 py-1 text-sm font-semibold text-primary">
-          {readableScore(confidence)}
-        </span>
-      </div>
+    <div className="classifier-scope flex flex-col min-h-screen">
+      <header className="relative px-6 py-8 text-center">
+        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-green-800/50 to-transparent" />
+        <h1 className="text-5xl font-light leading-tight shimmer-text font-display md:text-6xl">
+          Orchid Classifier
+        </h1>
+        <p className="max-w-xs mx-auto mt-2 text-sm font-light text-green-600 font-body">
+          EfficientNetB0 species classifier with out-of-distribution detection
+        </p>
+        <p className="max-w-md mx-auto mt-2 text-xs text-green-700 font-body">
+          Supported species only: cattleya, dendrobium, oncidium, phalaenopsis, and vanda.
+        </p>
+      </header>
 
-      {Array.isArray(topK) && topK.length ? (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-subtle">Top classes</p>
-          <div className="space-y-1">
-            {topK.map((item) => (
-              <div key={`${item.label}-${item.score}`} className="flex items-center justify-between rounded-xl bg-paper/70 px-3 py-2">
-                <span className="text-sm text-dark">{item.label}</span>
-                <span className="text-sm font-semibold text-subtle">{readableScore(item.score)}</span>
+      <main className="flex items-start justify-center flex-1 px-4 pb-16">
+        <div className="w-full max-w-5xl">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(e) => handleFile(e.target.files?.[0])}
+          />
+
+          <div className={`grid gap-6 ${preview ? 'md:grid-cols-2' : 'md:grid-cols-1 max-w-xl mx-auto'}`}>
+            <div className="space-y-4">
+              {!preview ? (
+                <DropZone onFile={handleFile} loading={loading} />
+              ) : (
+                <div
+                  className="relative overflow-hidden border rounded-2xl glass border-green-800/30"
+                  style={{ aspectRatio: '4/3' }}
+                >
+                  <img
+                    src={preview}
+                    alt="Uploaded orchid"
+                    className="object-cover w-full h-full"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-leaf-dark/60 via-transparent to-transparent" />
+
+                  <button
+                    onClick={reset}
+                    className="absolute flex items-center justify-center w-8 h-8 text-green-400 transition-all duration-200 border rounded-full top-3 right-3 glass border-green-800/50 hover:text-green-200 hover:border-green-600"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth={2}
+                        d="M6 18L18 6M6 6l12 12"
+                      />
+                    </svg>
+                  </button>
+
+                  {loading && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-leaf-dark/70">
+                      <Loader />
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {preview && !loading && (
+                <button
+                  onClick={reset}
+                  className="w-full py-2.5 rounded-xl border border-green-800/40 text-green-600
+                    hover:text-green-400 hover:border-green-700 text-sm font-body
+                    transition-all duration-200 glass"
+                >
+                  ↺ Try another image
+                </button>
+              )}
+            </div>
+
+            {loading && !preview && (
+              <div className="p-8 glass rounded-2xl">
+                <Loader />
               </div>
+            )}
+
+            {error && (
+              <div className="p-6 border glass rounded-2xl border-red-900/40 animate-fade-up">
+                <div className="flex items-start gap-3">
+                  <span className="text-xl text-red-400">✕</span>
+                  <div>
+                    <p className="text-sm font-medium text-red-300 font-body">Prediction failed</p>
+                    <p className="mt-1 text-xs text-red-600 font-body">{error}</p>
+                  </div>
+                </div>
+                <p className="mt-4 text-xs text-green-800 font-body">
+                  Use a clear photo of a supported orchid species. Non-orchid flowers and unsupported plants are rejected.
+                </p>
+              </div>
+            )}
+
+            {result && !loading && (
+              <div ref={resultPanelRef}>
+                <ResultPanel result={result} />
+              </div>
+            )}
+          </div>
+
+          <div className="grid max-w-xl grid-cols-3 gap-4 mx-auto mt-10">
+            {[
+              {
+                icon: '📤',
+                title: 'Upload',
+                body: 'Drag & drop or click to browse your orchid photo',
+                onClick: handleUploadCardClick,
+              },
+              {
+                icon: '🔬',
+                title: 'Analyse',
+                body: 'EfficientNetB0 extracts deep features for classification',
+                onClick: handleAnalyseCardClick,
+              },
+              {
+                icon: '🌸',
+                title: 'Identify',
+                body: 'Get species name, confidence, and OOD detection result',
+                onClick: handleIdentifyCardClick,
+              },
+            ].map(({ icon, title, body, onClick }) => (
+              <button
+                key={title}
+                type="button"
+                onClick={onClick}
+                disabled={loading}
+                className="p-4 text-center rounded-xl glass-dark transition-all duration-200 hover:scale-[1.02] hover:border-green-700/40 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <div className="mb-2 text-2xl">{icon}</div>
+                <p className="text-sm font-light text-green-300 font-display">{title}</p>
+                <p className="mt-1 text-xs leading-relaxed text-green-700 font-body">{body}</p>
+              </button>
             ))}
           </div>
         </div>
-      ) : null}
+      </main>
 
-      {fertilizer ? (
-        <div className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
-          🌱 Fertilizer tip: {fertilizer}
-        </div>
-      ) : null}
-
-      {notes ? (
-        <div className="rounded-xl bg-primary/5 px-3 py-2 text-sm text-dark">
-          💡 Care note: {notes}
-        </div>
-      ) : null}
+      <footer className="py-5 text-center">
+        <div className="h-px mb-5 bg-gradient-to-r from-transparent via-green-900/50 to-transparent" />
+      </footer>
     </div>
-  );
-};
-
-const Loader = () => (
-  <div className="flex items-center gap-2 text-primary">
-    <div className="h-2.5 w-2.5 animate-ping rounded-full bg-primary" />
-    <div className="h-2.5 w-2.5 animate-ping rounded-full bg-primary" style={{ animationDelay: '120ms' }} />
-    <div className="h-2.5 w-2.5 animate-ping rounded-full bg-primary" style={{ animationDelay: '240ms' }} />
-    <span className="text-sm font-medium">Running model…</span>
-  </div>
-);
-
-const normalizeResult = (payload) => {
-  if (!payload) return null;
-  const topK =
-    payload.top_k
-    || payload.topK
-    || payload.predictions
-    || payload.results
-    || [];
-  const first = payload.primary || payload.top1 || payload.best || topK[0] || {};
-
-  return {
-    label: payload.label || payload.class || first.label || first.name,
-    confidence: payload.confidence ?? payload.score ?? first.score ?? first.confidence,
-    ood: payload.ood ?? payload.ood_score ?? payload.oodScore ?? payload.oodScorePct,
-    topK: Array.isArray(topK)
-      ? topK.map((item) => ({
-        label: item.label || item.class || item.name,
-        score: item.score ?? item.confidence ?? item.probability,
-      }))
-      : [],
-    fertilizer: payload.fertilizer || payload.recommendation,
-    notes: payload.notes || payload.insight || payload.message,
-  };
-};
-
-const OrchidClassifier = () => {
-  const [file, setFile] = useState(null);
-  const [preview, setPreview] = useState('');
-  const [result, setResult] = useState(null);
-  const [error, setError] = useState('');
-  const [isLoading, setLoading] = useState(false);
-
-  useEffect(() => () => {
-    if (preview) URL.revokeObjectURL(preview);
-  }, [preview]);
-
-  const hasResult = Boolean(result);
-
-  const handleFile = (nextFile) => {
-    if (!nextFile) return;
-    setFile(nextFile);
-    setError('');
-    setResult(null);
-    const url = URL.createObjectURL(nextFile);
-    setPreview(url);
-  };
-
-  const classify = async () => {
-    if (!file) {
-      setError('Please add an orchid image first.');
-      return;
-    }
-    setError('');
-    setLoading(true);
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-      const { data } = await fileApi().post('/orchid-classifier/predict', formData);
-      setResult(normalizeResult(data));
-    } catch (err) {
-      const detail = err?.response?.data?.detail
-        || err?.response?.data?.message
-        || err?.message
-        || 'Classification failed. Check the backend /orchid-classifier/predict endpoint.';
-      setError(String(detail));
-      // helpful for debugging
-      console.error('Classifier error', err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const confidence = useMemo(() => result?.confidence ?? 0, [result]);
-
-  return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <p className="kicker">Orchid Classifier</p>
-          <h1 className="title-lg">Classify an orchid image</h1>
-          <p className="text-subtle">
-            Upload a photo to run the ONNX-based orchid classifier. You&apos;ll see confidence, out-of-distribution score, and care tips.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={classify}
-          className="btn-primary h-fit px-4 py-2 text-sm font-semibold disabled:opacity-50"
-          disabled={isLoading}
-        >
-          {isLoading ? 'Classifying…' : 'Run classifier'}
-        </button>
-      </div>
-
-      <div className="grid gap-5 lg:grid-cols-5">
-        <div className="space-y-4 lg:col-span-3">
-          <DropZone onFile={handleFile} />
-          {preview ? (
-            <motion.div
-              initial={{ opacity: 0, scale: 0.97 }}
-              animate={{ opacity: 1, scale: 1 }}
-              className="overflow-hidden rounded-2xl border border-border/60"
-            >
-              <img src={preview} alt="Preview" className="max-h-[380px] w-full object-cover" />
-            </motion.div>
-          ) : (
-            <div className="rounded-2xl border border-border/60 bg-paper/70 px-4 py-12 text-center text-subtle">
-              Add an image to preview it here.
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-4 lg:col-span-2">
-          {isLoading ? <Loader /> : null}
-          {error ? (
-            <div className="rounded-2xl border border-rose-300 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-              {error}
-            </div>
-          ) : null}
-
-          <ResultPanel result={result} />
-
-          <ConfidenceBar label="Model confidence" value={confidence} />
-          <OodMeter value={result?.ood} />
-        </div>
-      </div>
-
-    </div>
-  );
-};
-
-export default OrchidClassifier;
+  )
+}
