@@ -200,7 +200,7 @@ export default function FirebaseTable() {
         {!error && loading && <p className="text-sm text-subtle">Waiting for realtime data...</p>}
 
         <div className="overflow-auto rounded-2xl border border-primary/15">
-          <table className="min-w-full text-left text-sm text-slate-800">
+          <table className="min-w-full text-left text-sm text-dark">
             <thead className="bg-primary/8 text-xs uppercase tracking-[0.2em] text-subtle">
               <tr>
                 <th className="px-4 py-3">Jar ID</th>
@@ -215,11 +215,11 @@ export default function FirebaseTable() {
               {filtered.map((row) => (
                 <tr key={row.id} className="border-t border-primary/10 hover:bg-primary/5 transition">
                   <td className="px-4 py-3 font-semibold text-primary">{row.id}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.temperature ?? "--"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.humidity ?? "--"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.lux ?? "--"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.mq135 ?? "--"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.height ?? "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.temperature ?? "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.humidity ?? "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.lux ?? "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.mq135 ?? "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.height ?? "--"}</td>
                 </tr>
               ))}
               {!filtered.length && (

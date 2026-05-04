@@ -523,7 +523,7 @@
   }
 
   .page-description {
-    color: #6b7280;
+    color: rgb(var(--subtle) / 0.95);
     font-size: 15px;
     line-height: 1.55;
   }

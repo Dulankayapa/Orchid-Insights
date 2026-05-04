@@ -941,6 +941,112 @@ const toValidPoint = (x, y) => {
   return { x: xn, y: yn };
 };
 
+const quantileSorted = (sorted, q) => {
+  if (!sorted?.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  const left = sorted[base];
+  const right = sorted[Math.min(base + 1, sorted.length - 1)];
+  return left + (right - left) * rest;
+};
+
+const buildPredictedGrowthBands = (records, { bucketDays = 7, minSamplesPerBucket = 4, maxAgeDays = 365 } = {}) => {
+  const buckets = new Map();
+  const jarIds = new Set();
+  let totalPoints = 0;
+
+  (records || []).forEach((plant, idx) => {
+    const plantingTs = toPlantingTimestamp(plant?.planting_date);
+    if (!Number.isFinite(plantingTs)) return;
+
+    const jarId = firstText(plant?.id, `jar-${idx + 1}`);
+    if (jarId) jarIds.add(jarId);
+
+    const heights = Array.isArray(plant?.heights) ? plant.heights : [];
+    heights.forEach((row) => {
+      const ts = resolveHeightTimestamp(row || {});
+      const mm = toNumber(row?.height_mm ?? row?.height ?? row?.heightMm ?? row?.current_height);
+      const point = toValidPoint(ts, mm);
+      if (!point) return;
+
+      const ageDays = computeAgeDaysAt(plantingTs, point.x);
+      if (ageDays === null || ageDays < 0 || ageDays > maxAgeDays) return;
+
+      const ageBucket = Math.round(ageDays / bucketDays) * bucketDays;
+      if (!buckets.has(ageBucket)) buckets.set(ageBucket, []);
+      buckets.get(ageBucket).push(point.y);
+      totalPoints += 1;
+    });
+  });
+
+  const points = Array.from(buckets.entries())
+    .filter(([, values]) => Array.isArray(values) && values.length >= minSamplesPerBucket)
+    .sort((a, b) => a[0] - b[0])
+    .map(([ageDays, values]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const q10 = quantileSorted(sorted, 0.1);
+      const q25 = quantileSorted(sorted, 0.25);
+      const q50 = quantileSorted(sorted, 0.5);
+      const q75 = quantileSorted(sorted, 0.75);
+      const q90 = quantileSorted(sorted, 0.9);
+      return {
+        x: ageDays,
+        q10: Number(q10.toFixed(2)),
+        q25: Number(q25.toFixed(2)),
+        q50: Number(q50.toFixed(2)),
+        q75: Number(q75.toFixed(2)),
+        q90: Number(q90.toFixed(2)),
+        samples: sorted.length,
+      };
+    })
+    .filter((row) => Number.isFinite(row.q10) && Number.isFinite(row.q90));
+
+  return {
+    points,
+    bucketDays,
+    sourceJarCount: jarIds.size,
+    totalPoints,
+  };
+};
+
+const interpolateBandAtAge = (bandPoints, ageDays, key) => {
+  if (!Array.isArray(bandPoints) || !bandPoints.length || !Number.isFinite(ageDays)) return null;
+  if (ageDays <= bandPoints[0].x) return toNumber(bandPoints[0]?.[key]);
+  if (ageDays >= bandPoints[bandPoints.length - 1].x) return toNumber(bandPoints[bandPoints.length - 1]?.[key]);
+
+  for (let i = 0; i < bandPoints.length - 1; i += 1) {
+    const left = bandPoints[i];
+    const right = bandPoints[i + 1];
+    if (ageDays < left.x || ageDays > right.x) continue;
+    const leftVal = toNumber(left?.[key]);
+    const rightVal = toNumber(right?.[key]);
+    if (!Number.isFinite(leftVal) || !Number.isFinite(rightVal)) return null;
+    const width = right.x - left.x;
+    if (!Number.isFinite(width) || width <= 0) return leftVal;
+    const t = (ageDays - left.x) / width;
+    return leftVal + (rightVal - leftVal) * t;
+  }
+
+  return null;
+};
+
+const classifyGrowthLevel = (bandPoints, ageDays, heightMm) => {
+  const q10 = interpolateBandAtAge(bandPoints, ageDays, "q10");
+  const q25 = interpolateBandAtAge(bandPoints, ageDays, "q25");
+  const q75 = interpolateBandAtAge(bandPoints, ageDays, "q75");
+  const q90 = interpolateBandAtAge(bandPoints, ageDays, "q90");
+  const y = toNumber(heightMm);
+  if (![q10, q25, q75, q90, y].every(Number.isFinite)) return { label: "No prediction", tone: "text-subtle" };
+
+  if (y < q10) return { label: "Critical low", tone: "text-violet-700 dark:text-violet-300" };
+  if (y < q25) return { label: "Below expected", tone: "text-amber-700 dark:text-amber-300" };
+  if (y <= q75) return { label: "Expected range", tone: "text-emerald-700 dark:text-emerald-300" };
+  if (y <= q90) return { label: "Above expected", tone: "text-orange-700 dark:text-orange-300" };
+  return { label: "Very high", tone: "text-rose-700 dark:text-rose-300" };
+};
+
 const rackEndLabelsPlugin = {
   id: "rackEndLabels",
   afterDatasetsDraw(chart, _args, pluginOptions) {
@@ -1029,6 +1135,10 @@ const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
       rate: stats.rate,
       delta: stats.delta,
       avg: stats.avg,
+      first: stats.first,
+      last: stats.last,
+      firstTs: sorted[0]?.x ?? null,
+      lastTs: sorted[sorted.length - 1]?.x ?? null,
       count: stats.count,
       ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), sorted[sorted.length - 1]?.x),
     });
@@ -1046,9 +1156,16 @@ const buildRackStats = (rackPlants) => {
       .sort((a, b) => a.x - b.x);
     const summary = computeSeriesStats(points);
     const latestTs = points.length ? points[points.length - 1].x : null;
+    const firstTs = points.length ? points[0].x : null;
     return {
       id: plant.id,
       avg: summary?.avg ?? null,
+      rate: summary?.rate ?? null,
+      delta: summary?.delta ?? null,
+      latest: summary?.last ?? null,
+      days: summary?.days ?? null,
+      firstTs,
+      lastTs: latestTs,
       count: summary?.count ?? 0,
       ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs),
     };
@@ -1783,6 +1900,17 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
   if (!stats || !history.length) return "No measurement data is available yet.";
 
   const q = question.toLowerCase();
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "weak", "slow", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong", "well");
+  const asksGrowth = hasAny("growth", "growing", "rate", "trend", "change", "delta", "progress", "improv", "better", "worse");
+  const asksHeight = hasAny("height", "tall");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const sortedHistory = [...history].sort((a, b) => Number(a.ts) - Number(b.ts));
+  const subject = record?.id ? `Jar ${record.id}` : "This jar";
+
   const qualityVerdict = (() => {
     if (!stats || history.length < 2 || stats.days === null || stats.rate === null || !Number.isFinite(stats.rate)) {
       return {
@@ -1824,6 +1952,39 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
       detail: `Growth is strong (${rate.toFixed(2)} mm/day) with an increasing trend. Confidence ${confidence}.`,
     };
   })();
+  const badVerdict = qualityVerdict.label === "Bad" || qualityVerdict.label === "Weak";
+  const goodVerdict = qualityVerdict.label === "Good" || qualityVerdict.label === "Moderate";
+
+  if (asksBinary && (asksBad || asksGood) && (asksGrowth || asksHeight || asksGood || asksBad)) {
+    if (qualityVerdict.label === "Insufficient trend confidence") {
+      return "Cannot answer yes/no yet. Need more time-based measurements for this jar.";
+    }
+    if (asksBad && !asksGood) {
+      return badVerdict
+        ? `Yes. ${subject} shows weak/bad growth. ${qualityVerdict.detail}`
+        : `No. ${subject} is not in a bad-growth state. ${qualityVerdict.detail}`;
+    }
+    if (asksGood && !asksBad) {
+      return goodVerdict
+        ? `Yes. ${subject} growth is acceptable/good. ${qualityVerdict.detail}`
+        : `No. ${subject} is not in a good-growth state. ${qualityVerdict.detail}`;
+    }
+    return `${subject} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+  }
+
+  if (asksHistory) {
+    const first = sortedHistory[0];
+    const last = sortedHistory[sortedHistory.length - 1];
+    const firstHeight = Number(first?.height_mm);
+    const lastHeight = Number(last?.height_mm);
+    return `${subject} history spans ${formatDate(first?.ts)} to ${formatDate(last?.ts)} (${sortedHistory.length} measurements). First ${
+      Number.isFinite(firstHeight) ? `${firstHeight.toFixed(1)} mm` : "n/a"
+    }, latest ${Number.isFinite(lastHeight) ? `${lastHeight.toFixed(1)} mm` : "n/a"}.`;
+  }
+
+  if (asksCount) {
+    return `${subject} has ${history.length} tracked measurements in history.`;
+  }
 
   if (
     q.includes("good") ||
@@ -1837,7 +1998,7 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
     q.includes("better") ||
     q.includes("progress")
   ) {
-    return `${record?.id ? `Jar ${record.id}` : "This jar"} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+    return `${subject} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
   }
 
   if (q.includes("why")) {
@@ -1849,7 +2010,11 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
   }
 
   if (q.includes("rate") || q.includes("growth")) {
-    return stats.rate !== null ? `Growth rate is ${stats.rate.toFixed(2)} mm/day.` : "Growth rate is not available yet.";
+    return stats.rate !== null
+      ? `Growth rate is ${stats.rate.toFixed(2)} mm/day with total change ${
+          Number.isFinite(stats.delta) ? `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm` : "n/a"
+        }.`
+      : "Growth rate is not available yet.";
   }
   if (q.includes("average") || q.includes("avg")) {
     return Number.isFinite(stats.avg) ? `Average height is ${stats.avg.toFixed(1)} mm.` : "Average height is not available yet.";
@@ -1874,8 +2039,63 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
   if (!question?.trim()) return insight;
   if (!metrics.length) return "No comparison data yet.";
   const q = question.toLowerCase();
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "weak", "slow", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong", "well");
+  const asksGrowth = hasAny("growth", "growing", "rate", "trend", "change", "delta");
+  const asksHeight = hasAny("height", "tall");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const asksPerJar = hasAny("jar", "jars", "each", "per jar", "all jars", "all jar", "line");
   const windowLabel = compareWindow === "all" ? "all time" : compareWindow;
   const valid = metrics.filter((m) => m.rate !== null);
+
+  if (asksBinary && (asksBad || asksGood) && (asksGrowth || asksHeight || asksGood || asksBad)) {
+    if (!valid.length) return "Cannot answer yes/no yet. No growth-rate data is available for the selected jars.";
+    const weakOrBad = valid.filter((m) => Number(m.rate) < 0.2);
+    if (asksBad && !asksGood) {
+      if (weakOrBad.length) {
+        const ids = weakOrBad.map((item) => item.id).join(", ");
+        return `Yes. Weak/bad growth exists in ${windowLabel}: ${ids}.`;
+      }
+      return `No. None of the compared jars show weak/bad growth in ${windowLabel}.`;
+    }
+    if (asksGood && !asksBad) {
+      if (!weakOrBad.length) return `Yes. All compared jars show acceptable growth in ${windowLabel}.`;
+      const ids = weakOrBad.map((item) => item.id).join(", ");
+      return `No. Some jars are weak/slow in ${windowLabel}: ${ids}.`;
+    }
+  }
+
+  if (asksHistory) {
+    const rows = metrics.map((m) => {
+      const firstText = m.firstTs ? formatDate(m.firstTs) : "n/a";
+      const lastText = m.lastTs ? formatDate(m.lastTs) : "n/a";
+      const firstHeight = Number.isFinite(m.first) ? `${m.first.toFixed(1)} mm` : "n/a";
+      const lastHeight = Number.isFinite(m.last) ? `${m.last.toFixed(1)} mm` : "n/a";
+      return `${m.id}: ${firstText} (${firstHeight}) -> ${lastText} (${lastHeight}), ${m.count} pts`;
+    });
+    return `Comparison history (${windowLabel}): ${rows.join("; ")}.`;
+  }
+
+  if (asksCount) {
+    const total = metrics.reduce((sum, m) => sum + (Number.isFinite(m.count) ? m.count : 0), 0);
+    const rows = metrics.map((m) => `${m.id}: ${m.count} pts`).join(", ");
+    return `Tracked measurements (${windowLabel}) total ${total}: ${rows}.`;
+  }
+
+  if ((asksGrowth || asksHeight) && asksPerJar) {
+    const rows = metrics
+      .map(
+        (m) =>
+          `${m.id}: rate ${Number.isFinite(m.rate) ? `${m.rate.toFixed(2)} mm/day` : "n/a"}, change ${
+            Number.isFinite(m.delta) ? `${m.delta >= 0 ? "+" : ""}${m.delta.toFixed(1)} mm` : "n/a"
+          }, avg ${Number.isFinite(m.avg) ? `${m.avg.toFixed(1)} mm` : "n/a"}`
+      )
+      .join("; ");
+    return `Per-jar growth (${windowLabel}): ${rows}.`;
+  }
 
   if (q.includes("best") || q.includes("fastest")) {
     if (!valid.length) return "No growth rates available yet.";
@@ -1898,6 +2118,12 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
       .map((m) => `${m.id}: ${Number.isFinite(m.delta) ? m.delta.toFixed(1) : "n/a"} mm`)
       .join(", ");
     return `Total change (${windowLabel}): ${rows}.`;
+  }
+  if (q.includes("rate") || q.includes("growth")) {
+    const rows = metrics
+      .map((m) => `${m.id}: ${Number.isFinite(m.rate) ? `${m.rate.toFixed(2)} mm/day` : "n/a"}`)
+      .join(", ");
+    return `Growth rates (${windowLabel}): ${rows}.`;
   }
   return insight;
 };
@@ -1929,25 +2155,89 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = []
   if (!activeRackStats.length) return "No rack data yet.";
 
   const valid = activeRackStats.filter((item) => item.avg !== null);
+  const validRateRows = valid.filter((item) => Number.isFinite(item.rate));
   const validCategories = (activeCategoryStats || []).filter((item) => Number.isFinite(item.avgRate));
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksCategory = hasAny("category", "type", "cultivar");
+  const asksSuggestion = hasAny("suggest", "recommend", "improve");
+  const asksAverage = hasAny("average", "avg");
+  const asksBest = hasAny("best", "highest", "tallest");
+  const asksWorst = hasAny("worst", "lowest", "shortest");
+  const asksFastest = hasAny("fastest", "quickest");
+  const asksSlowest = hasAny("slowest");
+  const asksGrowth = hasAny("growth", "growing", "rate", "change", "delta", "trend");
+  const asksHeight = hasAny("height", "tall");
+  const asksPerJar = hasAny("jar", "jars", "each", "per jar", "all jars", "all jar", "line");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "slow", "weak", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong");
   const simpleRackAsk =
     Boolean(mentionedRack) &&
     !(
-      q.includes("best") ||
-      q.includes("worst") ||
-      q.includes("lowest") ||
-      q.includes("average") ||
-      q.includes("avg") ||
-      q.includes("category") ||
-      q.includes("type") ||
-      q.includes("cultivar") ||
-      q.includes("suggest") ||
-      q.includes("recommend") ||
-      q.includes("improve")
+      asksBest ||
+      asksWorst ||
+      asksAverage ||
+      asksCategory ||
+      asksSuggestion ||
+      asksGrowth ||
+      asksHeight ||
+      asksPerJar ||
+      asksFastest ||
+      asksSlowest
     );
   if (simpleRackAsk) return activeInsight;
 
-  if ((q.includes("category") || q.includes("type") || q.includes("cultivar")) && validCategories.length) {
+  if (asksBinary && (asksGrowth || asksHeight || asksPerJar || asksBest || asksWorst || asksAverage) && (asksBad || asksGood)) {
+    if (!validRateRows.length) {
+      return "Cannot answer yes/no yet. Need at least two dated measurements per jar to calculate growth trends.";
+    }
+    const avgRate = validRateRows.reduce((sum, item) => sum + item.rate, 0) / validRateRows.length;
+    const slowCategories = validCategories.filter((item) => item.growthLabel === "slow");
+    const hasBadGrowth = avgRate < 0.2 || slowCategories.length > 0;
+    const hasGoodGrowth = avgRate >= 0.2 && slowCategories.length === 0;
+
+    if (asksBad && !asksGood) {
+      if (hasBadGrowth) {
+        const reason = slowCategories.length
+          ? `Slow category detected: ${slowCategories.map((item) => item.category).join(", ")}.`
+          : `Average rack growth rate is low (${avgRate.toFixed(2)} mm/day).`;
+        return `Yes. ${reason}`;
+      }
+      return `No. Rack ${activeRackCode} is not in a bad-growth state (average ${avgRate.toFixed(2)} mm/day).`;
+    }
+
+    if (asksGood && !asksBad) {
+      if (hasGoodGrowth) {
+        return `Yes. Rack ${activeRackCode} shows acceptable growth overall (average ${avgRate.toFixed(2)} mm/day).`;
+      }
+      const reason = slowCategories.length
+        ? `Slow category detected: ${slowCategories.map((item) => item.category).join(", ")}.`
+        : `Average growth is weak (${avgRate.toFixed(2)} mm/day).`;
+      return `No. ${reason}`;
+    }
+  }
+
+  if (asksHistory) {
+    const rows = valid.map((item) => {
+      const firstText = item.firstTs ? formatDate(item.firstTs) : "n/a";
+      const lastText = item.lastTs ? formatDate(item.lastTs) : "n/a";
+      const latestText = Number.isFinite(item.latest) ? `${item.latest.toFixed(1)} mm` : "n/a";
+      return `${item.id}: ${firstText} -> ${lastText}, latest ${latestText}, ${item.count} pts`;
+    });
+    if (!rows.length) return `No measurement history found for rack ${activeRackCode}.`;
+    const limited = rows.slice(0, 8).join("; ");
+    const suffix = rows.length > 8 ? ` Showing first 8 of ${rows.length} jars.` : "";
+    return `Rack ${activeRackCode} history by jar: ${limited}.${suffix}`;
+  }
+
+  if (asksCount) {
+    const total = valid.reduce((sum, item) => sum + (Number.isFinite(item.count) ? item.count : 0), 0);
+    return `Rack ${activeRackCode} has ${total} tracked measurements across ${valid.length} jars.`;
+  }
+
+  if (asksCategory && validCategories.length) {
     const rows = validCategories
       .map(
         (item) =>
@@ -1956,20 +2246,53 @@ const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = []
       .join(", ");
     return `Category growth change on ${activeRackCode}: ${rows}.`;
   }
-  if (q.includes("suggest") || q.includes("recommend") || q.includes("improve")) {
+  if (asksSuggestion) {
     if (!validCategories.length) return "Need category-level growth data before suggesting interventions.";
     const focus = validCategories[validCategories.length - 1];
     return `Recommended focus for ${focus.category}: ${focus.suggestion}`;
   }
-  if (q.includes("best")) {
+  if ((asksFastest || (asksBest && asksGrowth)) && validRateRows.length) {
+    const fastest = validRateRows.reduce((a, b) => (a.rate > b.rate ? a : b));
+    return `Fastest growth on ${activeRackCode}: ${fastest.id} at ${fastest.rate.toFixed(2)} mm/day (change ${
+      Number.isFinite(fastest.delta) ? `${fastest.delta >= 0 ? "+" : ""}${fastest.delta.toFixed(1)} mm` : "n/a"
+    }).`;
+  }
+  if ((asksSlowest || (asksWorst && asksGrowth)) && validRateRows.length) {
+    const slowest = validRateRows.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `Slowest growth on ${activeRackCode}: ${slowest.id} at ${slowest.rate.toFixed(2)} mm/day (change ${
+      Number.isFinite(slowest.delta) ? `${slowest.delta >= 0 ? "+" : ""}${slowest.delta.toFixed(1)} mm` : "n/a"
+    }).`;
+  }
+  if ((asksGrowth || asksHeight) && asksPerJar) {
+    const rows = valid.map((item) => {
+      const avg = Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a";
+      const rate = Number.isFinite(item.rate) ? `${item.rate.toFixed(2)} mm/day` : "n/a";
+      const delta = Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a";
+      return `${item.id}: avg ${avg}, rate ${rate}, change ${delta}`;
+    });
+    if (!rows.length) return "Not enough per-jar measurements to summarize growth.";
+    const limited = rows.slice(0, 8).join("; ");
+    const suffix = rows.length > 8 ? ` Showing first 8 of ${rows.length} jars.` : "";
+    return `Per-jar height and growth on ${activeRackCode}: ${limited}.${suffix}`;
+  }
+  if (asksGrowth) {
+    if (!validRateRows.length) return "Need at least two dated measurements per jar to calculate growth rate.";
+    const avgRate = validRateRows.reduce((sum, item) => sum + item.rate, 0) / validRateRows.length;
+    const fastest = validRateRows.reduce((a, b) => (a.rate > b.rate ? a : b));
+    const slowest = validRateRows.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `Rack ${activeRackCode} average growth rate is ${avgRate.toFixed(2)} mm/day. Fastest jar: ${fastest.id} (${fastest.rate.toFixed(
+      2
+    )} mm/day). Slowest jar: ${slowest.id} (${slowest.rate.toFixed(2)} mm/day).`;
+  }
+  if (asksBest) {
     const best = valid.find((item) => item.rank === "Best");
     return best ? `Best average height on ${activeRackCode}: ${best.id} at ${best.avg.toFixed(1)} mm.` : activeInsight;
   }
-  if (q.includes("worst") || q.includes("lowest")) {
+  if (asksWorst) {
     const worst = valid.find((item) => item.rank === "Worst");
     return worst ? `Lowest average height on ${activeRackCode}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : activeInsight;
   }
-  if (q.includes("average") || q.includes("avg")) {
+  if (asksAverage || (asksHeight && asksPerJar)) {
     const rows = valid.map((item) => `${item.id}: ${item.avg.toFixed(1)} mm`).join(", ");
     return rows ? `Average height per jar on ${activeRackCode}: ${rows}.` : activeInsight;
   }
@@ -2040,12 +2363,16 @@ const applyMockRackProtocolToCulture = (entry) => {
     specialDetail: protocol.special ? MOCK_SPECIAL_DETAIL : "",
   });
 
-  const normalizedRecultures = (entry.recultures || []).map((row) => ({
-    ...row,
-    note: protocol.special
-      ? "Special nutrition protocol maintained for rack trial."
-      : "Normal rack protocol maintained.",
-  }));
+  const protocolNote = protocol.special
+    ? "Special nutrition protocol maintained for rack trial."
+    : "Normal rack protocol maintained.";
+  const normalizedRecultures = (entry.recultures || []).map((row) => {
+    const baseNote = firstText(row?.note);
+    return {
+      ...row,
+      note: baseNote ? `${baseNote} | ${protocolNote}` : protocolNote,
+    };
+  });
 
   return {
     ...entry,
@@ -2087,8 +2414,8 @@ const HISTORY_TEST_MOCK_PLANTS = [
     cultivar: "Phalaenopsis (test A)",
     nutrition: "VW medium",
     heights: [
-      { date: "2025-12-22", height_mm: 6 },
-      { date: "2025-12-30", height_mm: 7 },
+      { date: "2025-12-30", height_mm: 6 },
+      { date: "2026-01-03", height_mm: 7 },
       { date: "2026-01-05", height_mm: 9 },
       { date: "2026-01-11", height_mm: 11 },
       { date: "2026-01-20", height_mm: 14 },
@@ -2115,8 +2442,8 @@ const HISTORY_TEST_MOCK_PLANTS = [
     cultivar: "Phalaenopsis (test A)",
     nutrition: "MS + banana extract",
     heights: [
-      { date: "2025-12-20", height_mm: 5 },
-      { date: "2025-12-26", height_mm: 6 },
+      { date: "2025-12-27", height_mm: 5 },
+      { date: "2025-12-30", height_mm: 6 },
       { date: "2026-01-02", height_mm: 8 },
       { date: "2026-01-09", height_mm: 10 },
       { date: "2026-01-20", height_mm: 13 },
@@ -2368,8 +2695,9 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-01-24", note: "Hormone: BA 1.0 mg/L + NAA 0.1 mg/L" },
       { date: "2026-02-21", note: "Special nutrition: coconut water 10%" },
+      { date: "2026-03-28", note: "Clear update: contamination check passed, medium refreshed, growth remained stable." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-28T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-92", {
     jarId: "Jar-92",
@@ -2384,7 +2712,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-02-09", note: "Hormone reduced to BA 0.5 mg/L" },
       { date: "2026-03-23", note: "Observed slow growth; pH corrected to 5.6 and medium refreshed." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-23T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-93", {
     jarId: "Jar-93",
@@ -2489,7 +2817,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-03-06", note: "Slow growth observed; seaweed extract added." },
       { date: "2026-04-17", note: "No contamination; maintain slow-growth protocol and monitor." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-04-17T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-100", {
     jarId: "Jar-100",
@@ -2504,7 +2832,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-03-10", note: "No visible growth after 60 days; sent for contamination test." },
       { date: "2026-04-21", note: "Still stagnant; planned reculture if unchanged in 14 days." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-04-21T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-101", {
     jarId: "Jar-101",
@@ -2519,7 +2847,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-03-12", note: "Rapid growth confirmed; continue protocol and monitor spacing." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-12T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-102", {
     jarId: "Jar-102",
@@ -2534,7 +2862,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-03-14", note: "Growth steady; no intervention required." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-14T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-103", {
     jarId: "Jar-103",
@@ -2549,7 +2877,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-03-30", note: "Stable normal growth; continue current medium." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-104", {
     jarId: "Jar-104",
@@ -2565,7 +2893,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-04-29", note: "No growth trend after 100 days; contamination and pH review started." },
       { date: "2026-05-27", note: "Still stagnant; flagged for urgent reculture decision." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-05-27T00:00:00.000Z",
   }),
 ]
   .map(applyMockRackProtocolToCulture)
@@ -3160,6 +3488,7 @@ export default function GrowthHistory() {
             isLight={isLight}
             record={record}
             history={history}
+            combinedRecords={combinedRecords}
             reportInsightText={growthReportInsight || growthBrief}
             includeInsight={includeInsightInReport}
           />
@@ -3170,7 +3499,7 @@ export default function GrowthHistory() {
             summaryText={growthInsight}
             includeInsight={includeInsightInReport}
             setIncludeInsight={setIncludeInsightInReport}
-            placeholder="Ask: is this good or bad, why, rate, change, average, latest..."
+            placeholder="Ask about growth history: yes/no quality, timeline, rate, change, average, latest..."
             onReportTextChange={setGrowthReportInsight}
             onAsk={(question) =>
               answerGrowthQuestion({
@@ -3215,7 +3544,6 @@ export default function GrowthHistory() {
             reportInsightText={rackReportInsight || rackBrief}
             includeInsight={includeRackInsight}
           />
-          <RackPairComparison combinedRecords={combinedRecords} />
           <InsightAssistant
             kicker="Rack assistant"
             title="Rack summary"
@@ -3223,7 +3551,7 @@ export default function GrowthHistory() {
             summaryText={rackInsight}
             includeInsight={includeRackInsight}
             setIncludeInsight={setIncludeRackInsight}
-            placeholder="Ask about category growth, best/worst, or suggestions..."
+            placeholder="Ask rack history: yes/no growth quality, per-jar timeline, best/worst, categories, suggestions..."
             onReportTextChange={setRackReportInsight}
             onAsk={(question) =>
               answerRackQuestion({
@@ -3236,6 +3564,7 @@ export default function GrowthHistory() {
               })
             }
           />
+          <RackPairComparison combinedRecords={combinedRecords} />
           <GrowthClusterPanel clusterResult={rackClusterResult} />
           </SectionCard>
         ) : null}
@@ -3272,7 +3601,7 @@ export default function GrowthHistory() {
             summaryText={compareInsight}
             includeInsight={includeCompareInsight}
             setIncludeInsight={setIncludeCompareInsight}
-            placeholder="Ask about best, worst, change, or average..."
+            placeholder="Ask comparison history: yes/no quality, best/worst, per-jar trend, change, average..."
             onReportTextChange={setCompareReportInsight}
             onAsk={(question) =>
               answerCompareQuestion({
@@ -3528,11 +3857,13 @@ function LookupCard({
   );
 }
 // Chart card
-function ChartCard({ record, history, isLight, reportInsightText, includeInsight }) {
+function ChartCard({ record, history, combinedRecords, isLight, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const pieCanvasRef = useRef(null);
   const pieChartRef = useRef(null);
+  const predictionCanvasRef = useRef(null);
+  const predictionChartRef = useRef(null);
   const plantingTs = useMemo(() => toPlantingTimestamp(record?.planting_date), [record?.planting_date]);
   const cleanedPoints = useMemo(() => {
     const rawPoints = history
@@ -3599,6 +3930,99 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       return { x: point.x, y: Number(median.toFixed(2)) };
     });
   }, [cleanedPoints]);
+  const predictionBands = useMemo(
+    () => buildPredictedGrowthBands(combinedRecords, { bucketDays: 7, minSamplesPerBucket: 4, maxAgeDays: 365 }),
+    [combinedRecords]
+  );
+  const actualAgeSeries = useMemo(
+    () =>
+      cleanedPoints
+        .map((point) => {
+          const ageDays = computeAgeDaysAt(plantingTs, point.x);
+          if (!Number.isFinite(ageDays)) return null;
+          return { x: Number(ageDays.toFixed(2)), y: point.y, ts: point.x };
+        })
+        .filter(Boolean),
+    [cleanedPoints, plantingTs]
+  );
+  const predictionMaxY = useMemo(() => {
+    const bandHigh = predictionBands.points.length ? Math.max(...predictionBands.points.map((row) => row.q90)) : 0;
+    const actualHigh = actualAgeSeries.length ? Math.max(...actualAgeSeries.map((row) => row.y)) : 0;
+    const raw = Math.max(60, bandHigh + 15, actualHigh + 10);
+    return Math.ceil(raw / 20) * 20;
+  }, [predictionBands, actualAgeSeries]);
+  const latestPredictedLevel = useMemo(() => {
+    if (!actualAgeSeries.length) return { label: "Select a jar to compare", tone: "text-subtle" };
+    const latest = actualAgeSeries[actualAgeSeries.length - 1];
+    return classifyGrowthLevel(predictionBands.points, latest.x, latest.y);
+  }, [actualAgeSeries, predictionBands]);
+  const expectedVsActualComment = useMemo(() => {
+    if (!predictionBands.points.length) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Prediction bands are not ready yet. Add more dataset points to build expected levels.",
+        toneClass: "border-slate-300/40 bg-slate-500/10 text-slate-700 dark:text-slate-300",
+      };
+    }
+    if (!actualAgeSeries.length) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Expected chart is ready. Select a jar to overlay real growth and get an automatic comparison comment.",
+        toneClass: "border-sky-300/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+      };
+    }
+
+    const latest = actualAgeSeries[actualAgeSeries.length - 1];
+    const q25 = interpolateBandAtAge(predictionBands.points, latest.x, "q25");
+    const q50 = interpolateBandAtAge(predictionBands.points, latest.x, "q50");
+    const q75 = interpolateBandAtAge(predictionBands.points, latest.x, "q75");
+    if (![q25, q50, q75].every(Number.isFinite)) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Real growth is available, but expected band interpolation is incomplete at the latest age.",
+        toneClass: "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
+
+    const deltaMm = latest.y - q50;
+    const latestLevel = classifyGrowthLevel(predictionBands.points, latest.x, latest.y).label;
+
+    const tail = actualAgeSeries.slice(-Math.min(6, actualAgeSeries.length));
+    let trendText = "Trend comparison is limited.";
+    if (tail.length >= 2) {
+      const first = tail[0];
+      const last = tail[tail.length - 1];
+      const days = Math.max(0.01, last.x - first.x);
+      const actualRate = (last.y - first.y) / days;
+      const expStart = interpolateBandAtAge(predictionBands.points, first.x, "q50");
+      const expEnd = interpolateBandAtAge(predictionBands.points, last.x, "q50");
+      if (Number.isFinite(expStart) && Number.isFinite(expEnd)) {
+        const expectedRate = (expEnd - expStart) / days;
+        const rateDelta = actualRate - expectedRate;
+        trendText = `Recent real trend is ${rateDelta >= 0 ? "faster" : "slower"} than expected by ${Math.abs(rateDelta).toFixed(2)} mm/day.`;
+      }
+    }
+
+    if (latest.y < q25) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: `Real growth is below expected at current age (${latestLevel}). It is ${Math.abs(deltaMm).toFixed(1)} mm under the expected median. ${trendText}`,
+        toneClass: "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
+    if (latest.y > q75) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: `Real growth is above expected at current age (${latestLevel}). It is +${Math.abs(deltaMm).toFixed(1)} mm over the expected median. ${trendText}`,
+        toneClass: "border-emerald-300/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+      };
+    }
+    return {
+      title: "Expected vs Actual Comment",
+      text: `Real growth is within the expected band (${latestLevel}) and is ${deltaMm >= 0 ? "+" : ""}${deltaMm.toFixed(1)} mm vs expected median. ${trendText}`,
+      toneClass: "border-sky-300/40 bg-sky-500/10 text-sky-800 dark:text-sky-200",
+    };
+  }, [actualAgeSeries, predictionBands]);
   const nutritionEvents = useMemo(() => {
     if (!record) return [];
 
@@ -3862,9 +4286,16 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
 
   const handleReport = (mode = "preview") => {
     if (!cleanedPoints.length) return;
+    const predictionChartImage = predictionChartRef.current?.toBase64Image?.();
     const lineChartImage = chartRef.current?.toBase64Image?.();
     const interventionPieImage = pieChartRef.current?.toBase64Image?.();
     const chartImages = [
+      predictionChartImage
+        ? {
+            src: predictionChartImage,
+            caption: "Predicted growth levels vs actual growth",
+          }
+        : null,
       lineChartImage
         ? {
             src: lineChartImage,
@@ -3914,7 +4345,12 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
 
     openReportWindow({
       title: `Jar History Report - ${record?.id || "Unknown"}`,
-      subtitle: chartImages.length > 1 ? "Height trend and intervention outcome charts" : "Height over time chart",
+      subtitle:
+        chartImages.length > 2
+          ? "Predicted level, growth trend, and intervention outcome charts"
+          : chartImages.length > 1
+            ? "Height trend and intervention outcome charts"
+            : "Height over time chart",
       chartImages,
       sections,
       mode,
@@ -4078,6 +4514,180 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     };
   }, [chartPoints, segmentSeries, nutritionMarkers, plantingTs, record?.id, isLight]);
   useEffect(() => {
+    if (predictionChartRef.current) {
+      predictionChartRef.current.destroy();
+      predictionChartRef.current = null;
+    }
+    if (!predictionCanvasRef.current || !predictionBands.points.length) return;
+
+    const theme = chartTheme(isLight);
+    const lowerBaseline = predictionBands.points.map((row) => ({ x: row.x, y: 0 }));
+    const q10Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q10 }));
+    const q25Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q25 }));
+    const q50Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q50 }));
+    const q75Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q75 }));
+    const q90Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q90 }));
+    const topCapSeries = predictionBands.points.map((row) => ({ x: row.x, y: predictionMaxY }));
+    const maxAge = Math.max(
+      predictionBands.points[predictionBands.points.length - 1]?.x || 0,
+      actualAgeSeries[actualAgeSeries.length - 1]?.x || 0
+    );
+    const xMax = Math.max(35, Math.ceil((maxAge + 7) / 7) * 7);
+    const hasActualSeries = actualAgeSeries.length > 0;
+    const datasets = [
+      {
+        label: "Baseline",
+        data: lowerBaseline,
+        borderColor: "rgba(0,0,0,0)",
+        pointRadius: 0,
+        tension: 0.22,
+      },
+      {
+        label: "Critical low",
+        data: q10Series,
+        borderColor: "rgba(139,92,246,0.35)",
+        backgroundColor: "rgba(139,92,246,0.22)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Below expected",
+        data: q25Series,
+        borderColor: "rgba(245,158,11,0.4)",
+        backgroundColor: "rgba(245,158,11,0.2)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Expected range",
+        data: q75Series,
+        borderColor: "rgba(16,185,129,0.4)",
+        backgroundColor: "rgba(16,185,129,0.2)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Above expected",
+        data: q90Series,
+        borderColor: "rgba(249,115,22,0.45)",
+        backgroundColor: "rgba(249,115,22,0.2)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Very high",
+        data: topCapSeries,
+        borderColor: "rgba(239,68,68,0.36)",
+        backgroundColor: "rgba(239,68,68,0.16)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Predicted median",
+        data: q50Series,
+        borderColor: isLight ? "#065f46" : "#6ee7b7",
+        borderWidth: 1.8,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        tension: 0.24,
+        fill: false,
+      },
+    ];
+    if (hasActualSeries) {
+      datasets.push({
+        label: "Actual growth",
+        data: actualAgeSeries,
+        borderColor: isLight ? "#1d4ed8" : "#93c5fd",
+        backgroundColor: isLight ? "rgba(29,78,216,0.15)" : "rgba(147,197,253,0.2)",
+        borderWidth: 2.6,
+        pointRadius: actualAgeSeries.length > 80 ? 0 : 2.2,
+        pointHoverRadius: 4,
+        pointBackgroundColor: isLight ? "#1d4ed8" : "#bfdbfe",
+        pointBorderColor: isLight ? "#ffffff" : "#0f172a",
+        pointBorderWidth: 1,
+        tension: 0.24,
+        fill: false,
+      });
+    }
+
+    predictionChartRef.current = new Chart(predictionCanvasRef.current, {
+      type: "line",
+      data: {
+        datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        parsing: false,
+        interaction: { intersect: false, mode: "nearest" },
+        scales: {
+          x: {
+            type: "linear",
+            min: 0,
+            max: xMax,
+            grid: { color: theme.grid },
+            ticks: {
+              color: theme.ticks,
+              stepSize: xMax > 120 ? 14 : 7,
+              callback: (value) => `${value}d`,
+            },
+            title: { display: true, text: "Age since planting (days)", color: theme.axis },
+          },
+          y: {
+            min: 0,
+            max: predictionMaxY,
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks, maxTicksLimit: 8 },
+            title: { display: true, text: "Plant height (mm)", color: theme.axis },
+          },
+        },
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: {
+              color: theme.axis,
+              usePointStyle: true,
+              boxWidth: 14,
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                if (ctx.dataset?.label !== "Actual growth") {
+                  return `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)} mm`;
+                }
+                const level = classifyGrowthLevel(predictionBands.points, ctx.parsed.x, ctx.parsed.y);
+                return `Actual: ${Number(ctx.parsed.y).toFixed(1)} mm | ${level.label}`;
+              },
+              afterLabel: (ctx) => {
+                if (ctx.dataset?.label !== "Actual growth") return "";
+                const age = Number(ctx.parsed?.x);
+                const q50 = interpolateBandAtAge(predictionBands.points, age, "q50");
+                if (!Number.isFinite(q50)) return "";
+                const delta = Number(ctx.parsed?.y) - q50;
+                return `vs median: ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} mm`;
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return () => {
+      predictionChartRef.current?.destroy();
+    };
+  }, [predictionBands, actualAgeSeries, predictionMaxY, isLight]);
+  useEffect(() => {
     if (pieChartRef.current) {
       pieChartRef.current.destroy();
       pieChartRef.current = null;
@@ -4197,6 +4807,49 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           ))}
         </div>
       ) : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Predicted growth levels</p>
+              <p className="text-sm font-semibold text-dark">Expected bands (from collected dataset)</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] text-subtle">
+                Model: {predictionBands.sourceJarCount} jars, {predictionBands.totalPoints} points, {predictionBands.bucketDays}-day bins
+              </p>
+              <p className={`text-xs font-semibold ${latestPredictedLevel.tone}`}>Latest level: {latestPredictedLevel.label}</p>
+            </div>
+          </div>
+          <div className="h-72">
+            {predictionBands.points.length ? (
+              <canvas ref={predictionCanvasRef} />
+            ) : (
+              <EmptyState message="Prediction bands need more age-aligned points across jars." />
+            )}
+          </div>
+        </div>
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Actual growth curve</p>
+              <p className="text-sm font-semibold text-dark">Real jar growth over time</p>
+            </div>
+            <span className="text-[11px] text-subtle">{cleanedPoints.length} points</span>
+          </div>
+          <div className="h-72">
+            {cleanedPoints.length ? (
+              <canvas ref={canvasRef} />
+            ) : (
+              <EmptyState message="No measurements yet. Choose a Jar ID to see the real growth line." />
+            )}
+          </div>
+        </div>
+      </div>
+      <div className={`rounded-xl border px-4 py-3 text-sm ${expectedVsActualComment.toneClass}`}>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] mb-1">{expectedVsActualComment.title}</p>
+        <p>{expectedVsActualComment.text}</p>
+      </div>
       {nutritionImpactRows.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
@@ -4241,24 +4894,17 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           </div>
         </div>
       ) : null}
-      <div className={`grid gap-4 ${impactPieData ? "lg:grid-cols-[2fr_1fr]" : ""}`}>
-        <div className="h-80">
-          {cleanedPoints.length ? (
-            <canvas ref={canvasRef} />
-          ) : (
-            <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
-          )}
-        </div>
-        {impactPieData ? (
-          <div className="panel-muted px-4 py-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
-              <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
-            </div>
+      {impactPieData ? (
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
+            <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
             <div className="h-56">
               <canvas ref={pieCanvasRef} />
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="grid grid-cols-2 gap-2 text-[11px] content-start">
               <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
                 Improved: <span className="font-semibold text-emerald-700 dark:text-emerald-300">{impactPieData.values[0]}</span>
               </div>
@@ -4273,8 +4919,8 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
               </div>
             </div>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </motion.div>
   );
 }
@@ -4290,11 +4936,11 @@ function InsightAssistant({
   onAsk,
   onReportTextChange,
 }) {
-  const [messages, setMessages] = useState(() => [{ role: "assistant", text: insightText }]);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 
   useEffect(() => {
-    setMessages([{ role: "assistant", text: insightText }]);
+    setMessages([]);
   }, [insightText, title]);
 
   const handleAsk = (e) => {
@@ -4337,7 +4983,7 @@ function InsightAssistant({
           <div>
             <p className="kicker">{kicker}</p>
             <h3 className="text-lg font-semibold text-dark">{title}</h3>
-            <p className="text-xs text-subtle">Mini scientist assistant</p>
+            <p className="text-xs text-subtle">Growth tracker & history assistant</p>
           </div>
         </div>
         <label className="flex items-center gap-2 text-xs text-subtle shrink-0">
