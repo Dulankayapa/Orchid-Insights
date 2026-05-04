@@ -26,7 +26,7 @@ const navItems = [
   { to: "/plants", label: "Plant Database", code: "\u{1F33F}" },
   { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
   { to: "/classifier", label: "Orchid Classifier", code: "\u{1F4F7}" },
-  { to: "/companion", label: "Orchid Companion", code: "\u{1F916}" },
+  { to: "/companion", label: "Orchid Care Companion", code: "\u{1FABC}" },
 ];
 
 const TIME_ZONE = "Asia/Colombo";

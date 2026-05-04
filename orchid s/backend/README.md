@@ -4,6 +4,9 @@ FastAPI service combining:
 - Growth tracker ML (RandomForest) `/api/growth/analyze`
 - Leaf disease detector (PlantVillage MobileNetV3) `/api/disease/predict`
 - Firebase bridge for plant/env rows `/api/env/*`
+- OpenAI-powered orchid quiz generator `/api/quiz/*`
+- OpenAI-powered orchid care chat `/api/companion/*`
+- Reminder storage `/api/reminders/*`
 - Service health `/api/health`
 
 ### Setup
@@ -31,6 +34,9 @@ GROWTH_MODEL_PATH=
 GROWTH_METADATA_PATH=
 GROWTH_DATASET_PATH=
 DISEASE_WEIGHTS_PATH=
+OPENAI_API_KEY=
+OPENAI_QUIZ_MODEL=gpt-4o-mini
+OPENAI_CHAT_MODEL=gpt-4o-mini
 ```
 
 ### Run
@@ -45,3 +51,10 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - `GET /api/env/plants`
 - `PUT /api/env/plants/{id}`
 - `DELETE /api/env/plants/{id}`
+- `GET /api/quiz/questions`
+- `GET /api/quiz/history`
+- `POST /api/quiz/submit`
+- `POST /api/companion/chat`
+- `GET /api/reminders`
+- `POST /api/reminders`
+- `DELETE /api/reminders/{id}`

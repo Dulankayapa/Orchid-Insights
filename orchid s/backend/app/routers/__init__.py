@@ -1,3 +1,3 @@
-from app.routers import disease, env, growth, health, classifier, companion, devices
+from app.routers import companion, disease, env, growth, health, classifier, devices, quiz, reminders
 
-__all__ = ["growth", "disease", "env", "health", "classifier", "companion", "devices"]
+__all__ = ["companion", "growth", "disease", "env", "health", "classifier", "devices", "quiz", "reminders"]

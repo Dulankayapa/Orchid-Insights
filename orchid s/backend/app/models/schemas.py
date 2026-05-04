@@ -30,104 +30,6 @@ class HealthResponse(BaseModel):
     timestamp: datetime
 
 
-# ---------- Companion core ----------
-class CompanionProblem(BaseModel):
-    symptom: str
-    cause: str
-    fix: str
-
-
-class CompanionSection(BaseModel):
-    id: int
-    title: str
-    icon: str
-    tips: List[str] = Field(default_factory=list)
-    warning: Optional[str] = None
-    problems: List[CompanionProblem] = Field(default_factory=list)
-
-
-class CompanionGuideResponse(BaseModel):
-    title: str
-    subtitle: str
-    sections: List[CompanionSection]
-
-
-class CompanionChatRequest(BaseModel):
-    message: str
-    temperature: Optional[float] = None
-    humidity: Optional[float] = None
-    lux: Optional[float] = None
-    mq135: Optional[float] = None
-
-
-class CompanionChatResponse(BaseModel):
-    response: str
-    confidence: float
-    suggestions: List[str]
-
-
-# ---------- New companion models ----------
-class Orchid(BaseModel):
-    orchid_id: str
-    name: str
-    species: str
-    growth_stage: str
-    planted_date: str  # YYYY-MM-DD
-    user_id: str = "default"
-
-
-class CareSchedule(BaseModel):
-    schedule_id: str
-    orchid_id: str
-    watering_frequency: int  # days
-    fertilizing_frequency: int  # days
-    light_requirement: str  # low, medium, high
-    humidity_requirement: int  # percentage
-
-
-class Reminder(BaseModel):
-    reminder_id: str
-    orchid_id: str
-    task: str  # "water", "fertilize", "mist", etc.
-    reminder_date: str  # YYYY-MM-DD
-    status: str  # "pending", "done", "skipped"
-
-
-class EducationalResource(BaseModel):
-    resource_id: str
-    title: str
-    description: str
-    species: str
-    link: str
-
-
-class GrowthStageAdvice(BaseModel):
-    stage_id: str
-    growth_stage: str
-    care_instructions: str
-
-
-class Feedback(BaseModel):
-    feedback_id: str
-    orchid_id: str
-    recommendation_type: str  # "watering", "health_score", "resource", "chat"
-    rating: int  # 1 = thumbs up, 0 = thumbs down
-    timestamp: datetime
-
-
-class HealthScoreResponse(BaseModel):
-    score: int
-    breakdown: Dict[str, int]  # e.g., {"temperature": 85, "humidity": 90}
-    forecast: List[int]  # next 3 days predicted scores
-    anomaly_detected: bool
-
-
-class NextWateringResponse(BaseModel):
-    recommended_date: str
-    confidence: float  # 0-1
-    reason: str
-
-
 # ---------- Device status ----------
 class DeviceStatus(BaseModel):
     device_id: str
@@ -170,3 +72,53 @@ class DiseasePrediction(BaseModel):
     confidence: float
     confidence_percent: float
     class_index: int
+
+
+# ---------- Quiz ----------
+class QuizQuestion(BaseModel):
+    id: str
+    question: str
+    options: List[str] = Field(default_factory=list)
+    correct: int
+    explanation: Optional[str] = None
+
+
+class QuizSubmission(BaseModel):
+    score: int
+    total: int
+    answers: List[object] = Field(default_factory=list)
+
+
+class QuizAttempt(BaseModel):
+    id: str
+    score: int
+    total: int
+    completed_at: datetime
+
+
+# ---------- Companion chat ----------
+class CompanionChatMessage(BaseModel):
+    role: str
+    text: str
+
+
+class CompanionChatRequest(BaseModel):
+    messages: List[CompanionChatMessage] = Field(default_factory=list)
+
+
+class CompanionChatResponse(BaseModel):
+    reply: str
+
+
+# ---------- Reminders ----------
+class ReminderItem(BaseModel):
+    id: str
+    title: str
+    type: str
+    reminder_time: datetime
+
+
+class ReminderCreateRequest(BaseModel):
+    title: str
+    type: str
+    reminderTime: str
