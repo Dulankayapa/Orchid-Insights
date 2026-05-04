@@ -1,9 +1,21 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { usePwaInstallPrompt } from "../hooks/usePwaInstallPrompt";
 
 export default function PwaInstallButton({ compact = false }) {
   const { canInstall, isStandalone, needsManualInstall, install } = usePwaInstallPrompt();
-  const [dismissedHint, setDismissedHint] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+
+  const helperText = useMemo(() => {
+    if (needsManualInstall) {
+      return "Open this site in Safari, tap Share, then choose Add to Home Screen.";
+    }
+
+    return "Open this site in Chrome or Edge, then use the browser menu and choose Install app or Add to Home screen.";
+  }, [needsManualInstall]);
+
+  const baseButtonClass = `inline-flex items-center justify-center rounded-full border font-semibold transition ${
+    compact ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"
+  }`;
 
   if (isStandalone) {
     return (
@@ -18,28 +30,27 @@ export default function PwaInstallButton({ compact = false }) {
       <button
         type="button"
         onClick={install}
-        className={`inline-flex items-center justify-center rounded-full border border-primary/25 bg-primary/12 font-semibold text-primary transition hover:border-primary/40 hover:bg-primary/18 ${
-          compact ? "px-3 py-1.5 text-xs" : "px-4 py-2 text-sm"
-        }`}
+        className={`${baseButtonClass} border-primary/25 bg-primary/12 text-primary hover:border-primary/40 hover:bg-primary/18`}
       >
         Install app
       </button>
     );
   }
 
-  if (needsManualInstall && !dismissedHint) {
-    return (
+  return (
+    <div className={`flex ${compact ? "max-w-[14rem] flex-col items-end gap-2" : "flex-col items-start gap-2"}`}>
       <button
         type="button"
-        onClick={() => setDismissedHint(true)}
-        className={`inline-flex items-center justify-center rounded-full border border-border/70 bg-paper/85 text-subtle transition hover:border-primary/30 hover:text-dark ${
-          compact ? "px-3 py-1.5 text-[11px]" : "px-4 py-2 text-sm"
-        }`}
+        onClick={() => setShowHelp((current) => !current)}
+        className={`${baseButtonClass} border-border/70 bg-paper/85 text-subtle hover:border-primary/30 hover:text-dark`}
       >
-        Add to Home Screen in Safari
+        {needsManualInstall ? "Install on iPhone" : "Install help"}
       </button>
-    );
-  }
-
-  return null;
+      {showHelp ? (
+        <p className={`text-subtle ${compact ? "max-w-[14rem] text-right text-[11px]" : "text-xs"}`}>
+          {helperText}
+        </p>
+      ) : null}
+    </div>
+  );
 }
