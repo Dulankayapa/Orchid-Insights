@@ -9,7 +9,9 @@ Looks for model artifacts in this order:
 Required files:
   - orchid_classifier_ood.onnx
   - orchid_feature_extractor.onnx
+Optional files (enable OOD checks):
   - ood_config.json (or ood_config1.json)
+  - labels.json (used as fallback class names)
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ REQUIRED_ONNX = [
     "orchid_feature_extractor.onnx",
 ]
 OOD_CONFIG_CANDIDATES = ["ood_config.json", "ood_config1.json"]
+LABELS_CANDIDATES = ["labels.json"]
 
 IMG_SIZE = (224, 224)
 TOP_K = 3
@@ -55,13 +58,11 @@ def _find_model_dir() -> Path:
     for base in _model_search_dirs():
         if not base:
             continue
-        if all((base / name).exists() for name in REQUIRED_ONNX) and any(
-            (base / cand).exists() for cand in OOD_CONFIG_CANDIDATES
-        ):
+        if all((base / name).exists() for name in REQUIRED_ONNX):
             return base
     raise ModelNotReady(
         "Classifier artifacts not found. "
-        "Set ORCHID_CLS_MODEL_DIR or place ONNX + ood_config.json under backend/models/classifier."
+        "Set ORCHID_CLS_MODEL_DIR or place required ONNX files under backend/models/classifier."
     )
 
 
@@ -85,7 +86,8 @@ def _load_state():
 
     classifier_path = model_dir / REQUIRED_ONNX[0]
     extractor_path = model_dir / REQUIRED_ONNX[1]
-    ood_path = next((model_dir / c for c in OOD_CONFIG_CANDIDATES if (model_dir / c).exists()))
+    ood_path = next((model_dir / c for c in OOD_CONFIG_CANDIDATES if (model_dir / c).exists()), None)
+    labels_path = next((model_dir / c for c in LABELS_CANDIDATES if (model_dir / c).exists()), None)
 
     available = ort.get_available_providers()
     providers = (
@@ -100,26 +102,35 @@ def _load_state():
     classifier = ort.InferenceSession(str(classifier_path), sess_options=opts, providers=providers)
     extractor = ort.InferenceSession(str(extractor_path), sess_options=opts, providers=providers)
 
-    with ood_path.open("r", encoding="utf-8") as f:
-        ood_cfg = json.load(f)
+    ood_cfg = {}
+    if ood_path:
+        with ood_path.open("r", encoding="utf-8") as f:
+            ood_cfg = json.load(f)
 
     class_names = ood_cfg.get("class_names") or ood_cfg.get("labels")
+    if not class_names and labels_path:
+        with labels_path.open("r", encoding="utf-8") as f:
+            labels_data = json.load(f)
+        if isinstance(labels_data, list):
+            class_names = labels_data
+        elif isinstance(labels_data, dict):
+            class_names = labels_data.get("class_names") or labels_data.get("labels")
+
     if not class_names:
-        raise ModelNotReady("ood_config missing class_names/labels.")
+        raise ModelNotReady("Class names not found. Provide ood_config.json or labels.json.")
 
     raw_stats = (
         ood_cfg.get("class_stats")
         or ood_cfg.get("class_stats_for_flutter")
         or ood_cfg.get("class_stats_export")
     )
-    if not raw_stats:
-        raise ModelNotReady("ood_config missing class_stats.")
-
     class_stats = []
-    for idx, cs in enumerate(raw_stats):
-        mean = np.array(cs["mean"], dtype=np.float64)
-        cov_inv = np.array(cs.get("cov_inv") or np.eye(len(mean)), dtype=np.float64)
-        class_stats.append({"name": cs.get("class_name", class_names[idx]), "mean": mean, "cov_inv": cov_inv})
+    if raw_stats:
+        for idx, cs in enumerate(raw_stats):
+            mean = np.array(cs["mean"], dtype=np.float64)
+            cov_inv = np.array(cs.get("cov_inv") or np.eye(len(mean)), dtype=np.float64)
+            fallback_name = class_names[idx] if idx < len(class_names) else f"class_{idx}"
+            class_stats.append({"name": cs.get("class_name", fallback_name), "mean": mean, "cov_inv": cov_inv})
 
     # Warm-up
     dummy = np.zeros((1, *IMG_SIZE, 3), dtype=np.float32)
@@ -134,6 +145,7 @@ def _load_state():
         "class_names": class_names,
         "class_stats": class_stats,
         "threshold": float(ood_cfg.get("threshold", 8.0)),
+        "ood_enabled": bool(class_stats),
     }
 
 
@@ -165,9 +177,6 @@ def predict_image(img_bytes: bytes) -> dict:
     tensor = _preprocess(img_bytes)
 
     t0 = time.perf_counter()
-    features = state["extractor"].run(None, {state["ext_input"]: tensor})[0]
-    distance, closest_idx = _mahalanobis(features, state["class_stats"])
-
     probs = state["classifier"].run(None, {state["cls_input"]: tensor})[0][0]
     prob_sum = float(np.sum(probs))
     if prob_sum > 5.0:  # logits fallback
@@ -175,42 +184,55 @@ def predict_image(img_bytes: bytes) -> dict:
         probs /= probs.sum()
 
     top_idx = np.argsort(probs)[::-1][:TOP_K]
-    top = [
-        {"label": state["class_names"][i], "score": float(probs[i])}
-        for i in top_idx
-    ]
+    top = []
+    for i in top_idx:
+        label = state["class_names"][i] if i < len(state["class_names"]) else f"class_{i}"
+        top.append({"label": label, "score": float(probs[i])})
 
     top_confidence = float(top[0]["score"]) if top else 0.0
     second_confidence = float(top[1]["score"]) if len(top) > 1 else 0.0
     top_margin = max(0.0, top_confidence - second_confidence)
     predicted_label = top[0]["label"] if top else "unknown"
-    closest_label = state["class_names"][closest_idx]
     distance_threshold = state["threshold"]
-
+    distance = 0.0
+    closest_label = predicted_label
     ood_reasons = []
 
-    if not top:
-        ood_reasons.append("no_prediction")
-    if distance > distance_threshold:
-        ood_reasons.append("distance_above_threshold")
-    if top_confidence < CONFIDENCE_THRESHOLD:
-        ood_reasons.append("low_confidence")
-    if top_margin < TOP_MARGIN_THRESHOLD:
-        ood_reasons.append("low_margin")
-    if predicted_label != closest_label:
-        ood_reasons.append("feature_classifier_mismatch")
-    if (
-        distance > distance_threshold * DISTANCE_SAFETY_FACTOR
-        and top_confidence < HIGH_CONFIDENCE_DISTANCE_THRESHOLD
-    ):
-        ood_reasons.append("near_threshold_without_high_confidence")
+    if state["ood_enabled"]:
+        features = state["extractor"].run(None, {state["ext_input"]: tensor})[0]
+        distance, closest_idx = _mahalanobis(features, state["class_stats"])
+        closest_label = state["class_names"][closest_idx]
 
-    is_ood = bool(ood_reasons)
+        if not top:
+            ood_reasons.append("no_prediction")
+        if distance > distance_threshold:
+            ood_reasons.append("distance_above_threshold")
+        if top_confidence < CONFIDENCE_THRESHOLD:
+            ood_reasons.append("low_confidence")
+        if top_margin < TOP_MARGIN_THRESHOLD:
+            ood_reasons.append("low_margin")
+        if predicted_label != closest_label:
+            ood_reasons.append("feature_classifier_mismatch")
+        if (
+            distance > distance_threshold * DISTANCE_SAFETY_FACTOR
+            and top_confidence < HIGH_CONFIDENCE_DISTANCE_THRESHOLD
+        ):
+            ood_reasons.append("near_threshold_without_high_confidence")
+    else:
+        if not top:
+            ood_reasons.append("no_prediction")
+        if top_confidence < CONFIDENCE_THRESHOLD:
+            ood_reasons.append("low_confidence")
+        if top_margin < TOP_MARGIN_THRESHOLD:
+            ood_reasons.append("low_margin")
+        ood_reasons.append("ood_disabled_missing_config")
+
+    is_ood = bool(ood_reasons) if state["ood_enabled"] else False
 
     inf_ms = (time.perf_counter() - t0) * 1000
 
     ood_score = distance / max(1e-6, distance_threshold)
-    ood_score = max(0.0, min(1.5, ood_score))  # cap for display
+    ood_score = max(0.0, min(1.5, ood_score)) if state["ood_enabled"] else 0.0
 
     return {
         "label": predicted_label,
@@ -223,6 +245,7 @@ def predict_image(img_bytes: bytes) -> dict:
         "closest_label": closest_label,
         "ood_reasons": ood_reasons,
         "is_ood": is_ood,
+        "ood_enabled": state["ood_enabled"],
         "inference_ms": round(inf_ms, 1),
     }
 
@@ -234,6 +257,7 @@ def health() -> dict:
             "status": "ok",
             "classes": state["class_names"],
             "threshold": state["threshold"],
+            "ood_enabled": state["ood_enabled"],
             "providers": state["classifier"].get_providers(),
         }
     except Exception as exc:  # pragma: no cover - simple status
