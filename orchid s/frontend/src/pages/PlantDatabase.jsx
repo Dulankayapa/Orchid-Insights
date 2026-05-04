@@ -109,7 +109,7 @@ export default function PlantDatabase() {
         )}
 
         <div className="overflow-auto rounded-2xl border border-primary/15">
-          <table className="min-w-full text-left text-sm text-slate-800">
+          <table className="min-w-full text-left text-sm text-dark">
             <thead className="bg-primary/8 text-xs uppercase tracking-[0.2em] text-subtle">
               <tr>
                 <th className="px-4 py-3">Jar ID</th>
@@ -128,9 +128,9 @@ export default function PlantDatabase() {
                   }`}
                 >
                   <td className="px-4 py-3 font-semibold text-primary">{row.id}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.planting_date || "--"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.height_mm ?? "--"}</td>
-                  <td className="px-4 py-3 text-slate-600">{row.updated_at || "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.planting_date || "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.height_mm ?? "--"}</td>
+                  <td className="px-4 py-3 text-subtle">{row.updated_at || "--"}</td>
                 </tr>
               ))}
               {!filtered.length && (
