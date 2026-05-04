@@ -33,6 +33,14 @@ async def predict(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=f"Inference failed: {exc}") from exc
 
     if result.get("is_ood"):
+        if not result.get("ood_enabled"):
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Prediction is low confidence and OOD calibration is unavailable. "
+                    "Add ood_config.json in backend/models/classifier for reliable rejection."
+                ),
+            )
         raise HTTPException(
             status_code=422,
             detail=(
