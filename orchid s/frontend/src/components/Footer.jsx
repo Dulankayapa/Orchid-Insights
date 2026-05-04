@@ -1,16 +1,5 @@
 import { NavLink } from "react-router-dom";
-
-const quickLinks = [
-  { to: "/", label: "Dashboard" },
-  { to: "/monitor", label: "Env Monitor" },
-  { to: "/reculture", label: "Culture Details" },
-  { to: "/growth", label: "Growth Tracker" },
-  { to: "/history", label: "Growth History" },
-  { to: "/plants", label: "Plant Database" },
-  { to: "/firebase", label: "Firebase Table" },
-  { to: "/classifier", label: "Orchid Classifier" },
-  { to: "/companion", label: "Orchid Care Companion" },
-];
+import { quickLinks } from "../lib/navigation";
 
 export default function Footer() {
   const currentYear = new Date().getFullYear();
@@ -18,7 +7,7 @@ export default function Footer() {
   return (
     <footer className="relative mt-10 border-t border-border/60 bg-paper/90 backdrop-blur-xl">
       <div className="pointer-events-none absolute inset-x-10 -top-14 h-28 rounded-[32px] bg-gradient-to-r from-primary/20 via-secondary/20 to-accent/20 blur-3xl opacity-70" />
-      <div className="mx-auto max-w-[1600px] px-4 py-8 sm:px-8 lg:px-10">
+      <div className="mx-auto max-w-[1600px] px-4 py-8 pb-[calc(2rem+env(safe-area-inset-bottom))] sm:px-8 lg:px-10">
         <div className="flex flex-col gap-7 lg:flex-row lg:items-center lg:justify-between">
           <div className="grid w-full gap-3 text-sm sm:grid-cols-2 sm:gap-4 lg:w-auto lg:flex lg:flex-wrap lg:items-center lg:justify-end lg:gap-3">
             {quickLinks.map((link) => (

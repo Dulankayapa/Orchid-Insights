@@ -48,6 +48,8 @@
 
   body {
     font-family: "Manrope", "Space Grotesk", "Segoe UI", sans-serif;
+    min-height: 100vh;
+    min-height: 100dvh;
     background-image:
       radial-gradient(circle at 12% 18%, rgba(var(--secondary) / 0.1), transparent 32%),
       radial-gradient(circle at 82% 10%, rgba(var(--primary) / 0.12), transparent 30%),
@@ -55,6 +57,11 @@
       linear-gradient(135deg, #f8fbff, #f1f5ff 40%, #ecf4ff 75%, #e8f3ff);
     background-attachment: fixed;
     @apply bg-background text-dark antialiased transition-colors duration-300;
+  }
+
+  #root {
+    min-height: 100vh;
+    min-height: 100dvh;
   }
 
   body::before {
@@ -96,6 +103,12 @@
 
   ::selection {
     background: rgb(var(--primary) / 0.16);
+  }
+
+  @media (display-mode: standalone) {
+    body {
+      background-attachment: scroll;
+    }
   }
 }
 
