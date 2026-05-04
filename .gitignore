@@ -1,9 +1,51 @@
-node_modules/
+# =====================
+# Python (Backen 
+venv/
 .venv/
-__pycache__/
-*.pyc
+env/
+.env.local
+
+# ONNX model files (large binaries)
+*.onnx
+
+# OOD config files (large JSON blobs)
+backend/ood_config.json
+backend/ood_config1.json
+
+# =====================
+# Node.js (Frontend)
+# =====================
 node_modules/
 dist/
+dist-ssr/
+*.local
+.vite/
+
+# Logs
+logs/
 *.log
-New folder/backend/.DS_Store
-New folder/backend/app/core/config.py
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# =====================
+# OS & Editor files
+# =====================
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# =====================
+# Package lock files (optional — remove if you want to track these)
+# =====================
+# package-lock.json
+# yarn.lock
