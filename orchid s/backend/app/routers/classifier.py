@@ -44,7 +44,7 @@ async def predict(file: UploadFile = File(...)):
         raise HTTPException(
             status_code=422,
             detail=(
-                "This classifier only supports the trained orchid species: "
+                "Out of distribution. This classifier only supports the trained orchid species: "
                 "cattleya, dendrobium, oncidium, phalaenopsis, and vanda. "
                 "Please upload a clear photo of one of those orchids."
             ),
