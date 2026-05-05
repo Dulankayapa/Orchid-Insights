@@ -378,6 +378,26 @@ const getAverage = (rows, key) => {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 };
 
+const buildLiveFallback = (path, receivedAt) => {
+  const jarMatch = /^Jar(\d+)$/i.exec(String(path || ''));
+  if (jarMatch) {
+    const jarId = Number(jarMatch[1]);
+    return {
+      receivedAt,
+      jarId,
+      jar_id: jarId,
+      nodeId: `jar-${jarId}`,
+      zoneId: `Zone ${jarId}`,
+    };
+  }
+
+  return {
+    receivedAt,
+    nodeId: 'node-1',
+    zoneId: 'Zone A',
+  };
+};
+
 export const useMonitorData = (settingsOverride = null) => {
   const [latest, setLatest] = useState(null);
   const [history, setHistory] = useState([]);
@@ -928,6 +948,24 @@ export const useMonitorData = (settingsOverride = null) => {
     [controlState.devices, energyPayload],
   );
 
+  const publishLiveReading = (value, path = 'orchidData/latest') => {
+    const candidate = getPreferredLatest(value);
+    const receivedAt = Date.now();
+    const normalized = normalizeSensor(candidate ?? value, buildLiveFallback(path, receivedAt));
+    if (!normalized) return false;
+
+    const previous = latestReadingRef.current;
+    const previousTs = toTimestampMs(previous?.ts ?? previous?.timestamp) ?? 0;
+    const nextTs = toTimestampMs(normalized.ts ?? normalized.timestamp) ?? 0;
+    if (previous && nextTs < previousTs) return false;
+
+    latestReadingRef.current = normalized;
+    setLatest(normalized);
+    setLastUpdate(receivedAt);
+    setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
+    return true;
+  };
+
   useEffect(() => {
     const connectedRef = ref(db, '.info/connected');
     const unConnected = onValue(connectedRef, (snapshot) => {
@@ -935,18 +973,11 @@ export const useMonitorData = (settingsOverride = null) => {
       setFirebaseConnected(connected);
     });
 
-    const latestRef = ref(db, 'orchidData/latest');
-    const unLatest = onValue(latestRef, (snapshot) => {
-      const value = snapshot.val();
-      const candidate = getPreferredLatest(value);
-      const receivedAt = Date.now();
-      const normalized = normalizeSensor(candidate ?? value, { receivedAt });
-      if (!normalized) return;
-      latestReadingRef.current = normalized;
-      setLatest(normalized);
-      setLastUpdate(receivedAt);
-      setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
-    });
+    const unLiveListeners = LIVE_PATHS.map((path) => (
+      onValue(ref(db, path), (snapshot) => {
+        publishLiveReading(snapshot.val(), path);
+      })
+    ));
 
     const historyRef = query(ref(db, HISTORY_PATH), orderByKey(), limitToLast(3000));
     const unHistory = onValue(historyRef, (snapshot) => {
@@ -1001,7 +1032,7 @@ export const useMonitorData = (settingsOverride = null) => {
 
     return () => {
       unConnected();
-      unLatest();
+      unLiveListeners.forEach((unsubscribe) => unsubscribe());
       unHistory();
       unGrowth();
       unZones();
@@ -1028,19 +1059,7 @@ export const useMonitorData = (settingsOverride = null) => {
           if (!response.ok) continue;
 
           const json = await response.json();
-          const candidate = getPreferredLatest(json);
-          const receivedAt = Date.now();
-          const normalized = normalizeSensor(candidate ?? json, { receivedAt });
-          if (!normalized) continue;
-
-          latestReadingRef.current = normalized;
-          setLatest((prev) => {
-            const prevTs = toTimestampMs(prev?.ts ?? prev?.timestamp) ?? 0;
-            return normalized.ts >= prevTs ? normalized : prev;
-          });
-          setLastUpdate(receivedAt);
-          setHistory((prev) => mergeLiveIntoHistory(prev, normalized, 3000));
-          break;
+          if (publishLiveReading(json, path)) break;
         }
       } catch {
         // fallback polling errors are ignored

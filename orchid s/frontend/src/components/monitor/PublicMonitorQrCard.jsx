@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { METRIC_DEFINITIONS } from "../../lib/monitorConfig";
 
-const DEFAULT_PUBLIC_MONITOR_URL = "https://orchid-insights.web.app/monitor";
+const DEFAULT_PUBLIC_MONITOR_URL = "https://orchid-insights.web.app/";
+
+const resolvePublicMonitorBaseUrl = () => {
+  const configuredBaseUrl = String(import.meta.env.VITE_PUBLIC_MONITOR_URL ?? "").trim();
+  if (configuredBaseUrl) return configuredBaseUrl;
+
+  if (typeof window !== "undefined") {
+    const { origin, hostname } = window.location;
+    const isLocalhost = ["localhost", "127.0.0.1"].includes(hostname);
+    if (origin && !isLocalhost) return `${origin}/`;
+  }
+
+  return DEFAULT_PUBLIC_MONITOR_URL;
+};
 
 const toNumber = (value) => {
   const parsed = Number(value);
@@ -47,9 +60,8 @@ export default function PublicMonitorQrCard({ latest, lastUpdate, className = "p
   const [qrStatus, setQrStatus] = useState("");
 
   const monitorLink = useMemo(() => {
-    const configuredBaseUrl = String(import.meta.env.VITE_PUBLIC_MONITOR_URL ?? "").trim();
     return buildMonitorUrl(
-      configuredBaseUrl || DEFAULT_PUBLIC_MONITOR_URL,
+      resolvePublicMonitorBaseUrl(),
       latest?.nodeId,
       latest?.zoneId
     );
@@ -127,7 +139,7 @@ export default function PublicMonitorQrCard({ latest, lastUpdate, className = "p
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="kicker">QR label</p>
-          <p className="text-sm text-subtle">Scan to open the public Env Monitor page.</p>
+          <p className="text-sm text-subtle">Scan to open the Orchid Insights web app.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button

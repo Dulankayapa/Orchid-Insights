@@ -6,6 +6,14 @@ import "./index.css";
 
 const root = document.getElementById("root");
 
+if ("serviceWorker" in navigator && import.meta.env.PROD) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      // Ignore registration failures so the web app still boots normally.
+    });
+  });
+}
+
 createRoot(root).render(
   <React.StrictMode>
     <BrowserRouter
