@@ -3,6 +3,19 @@ import { METRIC_DEFINITIONS } from "../../lib/monitorConfig";
 
 const DEFAULT_PUBLIC_MONITOR_URL = "https://orchid-insights.web.app/";
 
+const resolvePublicMonitorBaseUrl = () => {
+  const configuredBaseUrl = String(import.meta.env.VITE_PUBLIC_MONITOR_URL ?? "").trim();
+  if (configuredBaseUrl) return configuredBaseUrl;
+
+  if (typeof window !== "undefined") {
+    const { origin, hostname } = window.location;
+    const isLocalhost = ["localhost", "127.0.0.1"].includes(hostname);
+    if (origin && !isLocalhost) return `${origin}/`;
+  }
+
+  return DEFAULT_PUBLIC_MONITOR_URL;
+};
+
 const toNumber = (value) => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -47,9 +60,8 @@ export default function PublicMonitorQrCard({ latest, lastUpdate, className = "p
   const [qrStatus, setQrStatus] = useState("");
 
   const monitorLink = useMemo(() => {
-    const configuredBaseUrl = String(import.meta.env.VITE_PUBLIC_MONITOR_URL ?? "").trim();
     return buildMonitorUrl(
-      configuredBaseUrl || DEFAULT_PUBLIC_MONITOR_URL,
+      resolvePublicMonitorBaseUrl(),
       latest?.nodeId,
       latest?.zoneId
     );

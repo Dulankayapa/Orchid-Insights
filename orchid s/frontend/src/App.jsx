@@ -13,21 +13,12 @@ import OrchidCompanion from "./pages/OrchidCompanion.jsx";
 import OrchidClassifier from "./pages/OrchidClassifier.jsx";
 import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
 import Footer from "./components/Footer.jsx";
+import MobileBottomNav from "./components/MobileBottomNav.jsx";
+import PwaInstallButton from "./components/PwaInstallButton.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
-
-const navItems = [
-  { to: "/", label: "Dashboard", code: "\u{1F4CA}" },
-  { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
-  { to: "/reculture", label: "Culture Details", code: "\u{1F9EA}" },
-  { to: "/growth", label: "Growth Tracker", code: "\u{1F4C8}" },
-  { to: "/history", label: "Growth History", code: "\u{1F552}" },
-  { to: "/plants", label: "Plant Database", code: "\u{1F33F}" },
-  { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
-  { to: "/classifier", label: "Orchid Classifier", code: "\u{1F4F7}" },
-  { to: "/companion", label: "Orchid Care Companion", code: "\u{1FABC}" },
-];
+import { navItems } from "./lib/navigation";
 
 const TIME_ZONE = "Asia/Colombo";
 const LOCATION_LABEL = "Colombo, Sri Lanka";
@@ -96,6 +87,14 @@ export default function App() {
               <div className="sidebar-modern-card flex items-center justify-between px-4 py-3">
                 <p className="sidebar-label text-subtle/90">Theme</p>
                 <ThemeToggle />
+              </div>
+
+              <div className="sidebar-modern-card px-4 py-3">
+                <p className="sidebar-meta-label">Mobile App</p>
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <p className="text-sm text-subtle">Install Orchid Insights for a full-screen phone experience.</p>
+                  <PwaInstallButton compact />
+                </div>
               </div>
             </div>
 
@@ -193,10 +192,15 @@ export default function App() {
                     </NavLink>
                   ))}
                 </div>
+
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <span className="text-xs text-subtle">Install this on your phone for a native-style layout.</span>
+                  <PwaInstallButton compact />
+                </div>
               </div>
             </header>
 
-            <main className="flex-1 px-3 py-5 sm:px-8 sm:py-8 lg:px-10">
+            <main className="flex-1 px-3 py-5 pb-[calc(6.75rem+env(safe-area-inset-bottom))] sm:px-8 sm:py-8 sm:pb-[calc(7rem+env(safe-area-inset-bottom))] lg:px-10 lg:pb-8">
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -221,6 +225,8 @@ export default function App() {
             <Footer />
           </div>
         </div>
+
+        <MobileBottomNav />
       </div>
     </ThemeProvider>
   );
