@@ -11,11 +11,11 @@ import pandas as pd
 from app.core.config import BASE_DIR, ROOT_DIR, get_settings
 
 
-def _first_existing(paths):
+def _first_existing(paths): # Return the first existing path from a list of paths, or None if none exist.
     return next((p for p in paths if p and Path(p).exists()), None)
 
 
-def _first_artifact_match(search_dirs, token: str):
+def _first_artifact_match(search_dirs, token: str): # Search for files matching a token in given directories, returning the first match found.
     for directory in search_dirs:
         if not directory:
             continue
@@ -59,7 +59,7 @@ def load_model():
             ],
             "orchid_growth_rf_model",
         )
-    if not meta_path:
+    if not meta_path: # If metadata path isn't explicitly found, search for any artifact matching the token "orchid_growth_metadata" in the specified directories.
         meta_path = _first_artifact_match(
             [
                 BASE_DIR,
@@ -88,7 +88,7 @@ def _parse_range_to_min_max(s: str) -> Tuple[Optional[float], Optional[float]]:
     return None, None
 
 
-@lru_cache(maxsize=1)
+@lru_cache(maxsize=1) # Cache the result of this function to avoid re-reading and processing the dataset on every call, improving performance.
 def build_age_lookup_from_dataset():
     settings = get_settings()
     possible_dataset_paths = [
@@ -137,7 +137,7 @@ def expected_range_from_lookup(age_days: int):
     return ranges[-1]
 
 
-def get_expected_height_range(age_days: int):
+def get_expected_height_range(age_days: int): 
     """Legacy heuristic buckets used when dataset lookup is unavailable."""
     if age_days <= 40:
         return (3, 10)
@@ -152,7 +152,7 @@ def get_expected_height_range(age_days: int):
     else:
         return (30, 50)
 
-
+# Compute the age in days based on planting and current dates, using the provided format.
 def compute_age_days(planting_date_str: str, current_date_str: str, date_format: str = "%Y-%m-%d") -> int:
     planting_date = datetime.strptime(planting_date_str, date_format)
     current_date = datetime.strptime(current_date_str, date_format)
