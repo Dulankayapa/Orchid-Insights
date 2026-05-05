@@ -3,6 +3,7 @@ import DropZone from '../components/classifier/DropZone'
 import Loader from '../components/classifier/Loader'
 import ResultPanel from '../components/classifier/ResultPanel'
 import { fileApi } from '../lib/api'
+import { useTheme } from '../context/ThemeContext'
 
 function normalizeResult(data) {
   const rawPredictions = Array.isArray(data?.top_predictions)
@@ -115,7 +116,7 @@ function ErrorBanner({ error }) {
   )
 }
 
-function FeatureCard({ icon, title, body, onClick, disabled }) {
+function FeatureCard({ icon, title, body, onClick, disabled, isDark }) {
   return (
     <button
       type="button"
@@ -124,13 +125,25 @@ function FeatureCard({ icon, title, body, onClick, disabled }) {
       className="group rounded-[20px] px-4 py-3 text-center transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-60"
     >
       <div className="mb-2 flex justify-center transition-transform duration-200 group-hover:-translate-y-0.5">{icon}</div>
-      <p className="font-['Cormorant_Garamond'] text-[1.15rem] leading-none text-[#b6e2c0]">{title}</p>
-      <p className="mt-2 font-['DM_Sans'] text-[0.94rem] leading-7 text-[#5f8d6f]">{body}</p>
+      <p
+        className="font-['Cormorant_Garamond'] text-[1.15rem] leading-none"
+        style={{ color: isDark ? '#e2f1e6' : '#355445' }}
+      >
+        {title}
+      </p>
+      <p
+        className="mt-2 font-['DM_Sans'] text-[0.94rem] leading-7"
+        style={{ color: isDark ? '#a5cdb0' : '#4f745e' }}
+      >
+        {body}
+      </p>
     </button>
   )
 }
 
 export default function OrchidClassifier() {
+  const { theme } = useTheme()
+  const isDark = theme === 'dark'
   const [preview, setPreview] = useState(null)
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
@@ -219,7 +232,15 @@ export default function OrchidClassifier() {
   }
 
   return (
-    <div className="classifier-scope min-h-screen bg-[#fcfdf9] text-[#446b54]">
+    <div
+      className="classifier-scope min-h-screen"
+      style={{
+        background: isDark
+          ? 'radial-gradient(circle at 18% 18%, rgba(76, 175, 123, 0.16), transparent 28%), radial-gradient(circle at 82% 16%, rgba(201, 132, 255, 0.14), transparent 24%), linear-gradient(180deg, #08110c 0%, #0d1711 100%)'
+          : 'radial-gradient(circle at 14% 18%, rgba(189, 227, 198, 0.22), transparent 28%), radial-gradient(circle at 82% 20%, rgba(248, 215, 231, 0.18), transparent 24%), linear-gradient(180deg, #fbfcf8 0%, #fcfdf9 100%)',
+        color: isDark ? '#d5eadb' : '#446b54',
+      }}
+    >
       <main className="mx-auto flex min-h-screen w-full max-w-[980px] flex-col px-4 pb-14 pt-8 md:px-6">
         <input
           ref={fileInputRef}
@@ -230,13 +251,22 @@ export default function OrchidClassifier() {
         />
 
         <header className="mx-auto max-w-[440px] text-center">
-          <p className="font-['DM_Sans'] text-[0.72rem] font-semibold uppercase tracking-[0.42em] text-[#7ca88e]">
-            AI · BOTANICAL INTELLIGENCE
+          <p
+            className="font-['DM_Sans'] text-[0.72rem] font-semibold uppercase tracking-[0.42em]"
+            style={{ color: isDark ? '#95c7a6' : '#7ca88e' }}
+          >
+            AI - BOTANICAL INTELLIGENCE
           </p>
-          <h1 className="mt-2 font-['Cormorant_Garamond'] text-[3.4rem] leading-none text-[#1f231e] md:text-[4rem]">
+          <h1
+            className="mt-2 font-['Cormorant_Garamond'] text-[3.4rem] leading-none md:text-[4rem]"
+            style={{ color: isDark ? '#f2faf4' : '#1f231e' }}
+          >
             OrchidAI
           </h1>
-          <p className="mx-auto mt-2 max-w-[320px] font-['DM_Sans'] text-[0.98rem] leading-6 text-[#7bb08d]">
+          <p
+            className="mx-auto mt-2 max-w-[320px] font-['DM_Sans'] text-[0.98rem] leading-6"
+            style={{ color: isDark ? '#a8cfb4' : '#6f9b7d' }}
+          >
             EfficientNetB0 species classifier with out-of-distribution detection
           </p>
         </header>
@@ -309,6 +339,7 @@ export default function OrchidClassifier() {
             body="Drag & drop or click to browse your orchid photo"
             onClick={handleUploadCardClick}
             disabled={loading}
+            isDark={isDark}
           />
           <FeatureCard
             icon={<AnalyzeSymbol />}
@@ -316,6 +347,7 @@ export default function OrchidClassifier() {
             body="EfficientNetB0 extracts deep features for classification"
             onClick={handleAnalyseCardClick}
             disabled={loading}
+            isDark={isDark}
           />
           <FeatureCard
             icon={<IdentifySymbol />}
@@ -323,6 +355,7 @@ export default function OrchidClassifier() {
             body="Get species name, confidence, and OOD detection result"
             onClick={handleIdentifyCardClick}
             disabled={loading}
+            isDark={isDark}
           />
         </section>
       </main>

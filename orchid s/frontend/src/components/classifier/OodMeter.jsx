@@ -1,12 +1,21 @@
 import React from 'react'
+import { useTheme } from '../../context/ThemeContext'
 
-function OodBadge({ isOod }) {
+function OodBadge({ isOod, isDark }) {
+  const tone = isOod
+    ? {
+        background: isDark ? '#5a284b' : '#d8a9c6',
+        text: isDark ? '#ffe8f7' : '#582046',
+      }
+    : {
+        background: isDark ? '#234030' : '#b9dcc4',
+        text: isDark ? '#e8f7ec' : '#183323',
+      }
+
   return (
     <span
-      className={`
-        inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold
-        ${isOod ? 'bg-[#c59cc8] text-white' : 'bg-[#85b18f] text-[#eaf9ee]'}
-      `}
+      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[11px] font-semibold"
+      style={{ background: tone.background, color: tone.text }}
     >
       {isOod ? (
         <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
@@ -29,6 +38,8 @@ function OodBadge({ isOod }) {
 }
 
 export default function OodMeter({ distance, threshold, isOod }) {
+  const { theme } = useTheme()
+  const isDark = theme === 'dark'
   const safeThreshold = Number.isFinite(threshold) && threshold > 0 ? threshold : 1
   const safeDistance = Number.isFinite(distance) ? distance : 0
   const maxVal = Math.max(safeThreshold * 1.5, safeDistance, 1)
@@ -38,27 +49,36 @@ export default function OodMeter({ distance, threshold, isOod }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3">
-        <span className="font-['DM_Sans'] text-[0.72rem] font-semibold uppercase tracking-[0.18em] text-[#80b191]">
+        <span
+          className="font-['DM_Sans'] text-[0.72rem] font-semibold uppercase tracking-[0.18em]"
+          style={{ color: isDark ? '#9fc7ac' : '#567664' }}
+        >
           Mahalanobis Distance
         </span>
-        <OodBadge isOod={isOod} />
+        <OodBadge isOod={isOod} isDark={isDark} />
       </div>
 
-      <div className="relative h-2 rounded-full bg-[#365a47]">
+      <div
+        className="relative h-2 rounded-full"
+        style={{ background: isDark ? '#203728' : '#cadfce' }}
+      >
         <div
-          className={`absolute left-0 top-0 h-full rounded-full ${isOod ? 'bg-[#cf4fe0]' : 'bg-[#5ad67e]'}`}
-          style={{ width: `${fillPct}%` }}
+          className="absolute left-0 top-0 h-full rounded-full"
+          style={{
+            width: `${fillPct}%`,
+            background: isOod ? '#d78fbb' : '#4ade80',
+          }}
         />
         <div
-          className="absolute top-1/2 h-5 w-px -translate-y-1/2 bg-[#d8bb63]"
-          style={{ left: `${thresholdPct}%` }}
+          className="absolute top-1/2 h-5 w-px -translate-y-1/2"
+          style={{ left: `${thresholdPct}%`, background: '#d8bb63' }}
         />
       </div>
 
       <div className="flex items-center justify-between font-['DM_Sans'] text-[0.76rem] tabular-nums">
-        <span className="text-[#7ea389]">0</span>
-        <span className="text-[#d7ba67]">threshold {safeThreshold.toFixed(1)}</span>
-        <span className="text-[#6bb783]">{safeDistance.toFixed(1)}</span>
+        <span style={{ color: isDark ? '#8eb198' : '#5c7c6a' }}>0</span>
+        <span style={{ color: '#c49d33' }}>threshold {safeThreshold.toFixed(1)}</span>
+        <span style={{ color: isDark ? '#b0e4be' : '#2f7044' }}>{safeDistance.toFixed(1)}</span>
       </div>
     </div>
   )
