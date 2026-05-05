@@ -85,6 +85,59 @@ function ErrorBanner({ error }) {
   )
 }
 
+function ActionSymbol({ title }) {
+  const commonProps = {
+    className: 'w-6 h-6',
+    fill: 'none',
+    stroke: 'currentColor',
+    viewBox: '0 0 24 24',
+    'aria-hidden': 'true',
+  }
+
+  if (title === 'Upload') {
+    return (
+      <svg {...commonProps}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M12 16V5m0 0-3.5 3.5M12 5l3.5 3.5M5 19h14"
+        />
+      </svg>
+    )
+  }
+
+  if (title === 'Analyse') {
+    return (
+      <svg {...commonProps}>
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={1.8}
+          d="M11 5a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 0v2m0 8v2m4-6h2M5 11H3m10.5 4.5L15 17m-8-8L5.5 7m8 0L15 7m-8 10L5.5 15"
+        />
+      </svg>
+    )
+  }
+
+  return (
+    <svg {...commonProps}>
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        d="M12 6.5c.8-1.7 2.1-2.5 3.6-2.5 2.1 0 3.9 1.7 3.9 3.9 0 4.2-5 7.2-7.5 8.8-2.5-1.6-7.5-4.6-7.5-8.8C4.5 5.7 6.3 4 8.4 4c1.5 0 2.8.8 3.6 2.5Z"
+      />
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.8}
+        d="M12 3v1.5M7 5.5l1 1M17 5.5l-1 1"
+      />
+    </svg>
+  )
+}
+
 export default function OrchidClassifier() {
   const [preview, setPreview] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -270,24 +323,21 @@ export default function OrchidClassifier() {
           <div className="grid max-w-xl grid-cols-3 gap-4 mx-auto mt-10">
             {[
               {
-                icon: 'Upload',
                 title: 'Upload',
                 body: 'Drag & drop or click to browse your orchid photo',
                 onClick: handleUploadCardClick,
               },
               {
-                icon: 'Analyze',
                 title: 'Analyse',
                 body: 'EfficientNetB0 extracts deep features for classification',
                 onClick: handleAnalyseCardClick,
               },
               {
-                icon: 'Identify',
                 title: 'Identify',
                 body: 'Get species name, confidence, and OOD detection result',
                 onClick: handleIdentifyCardClick,
               },
-            ].map(({ icon, title, body, onClick }) => (
+            ].map(({ title, body, onClick }) => (
               <button
                 key={title}
                 type="button"
@@ -295,7 +345,9 @@ export default function OrchidClassifier() {
                 disabled={loading}
                 className="p-4 text-center rounded-xl glass-dark transition-all duration-200 hover:scale-[1.02] hover:border-green-700/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <div className="mb-2 text-sm uppercase tracking-[0.24em] text-green-500">{icon}</div>
+                <div className="mb-2 flex justify-center text-green-500">
+                  <ActionSymbol title={title} />
+                </div>
                 <p className="text-sm font-light text-green-300 font-display">{title}</p>
                 <p className="mt-1 text-xs leading-relaxed text-green-700 font-body">{body}</p>
               </button>
