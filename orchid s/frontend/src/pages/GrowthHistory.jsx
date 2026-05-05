@@ -5,6 +5,7 @@ import Chart from "chart.js/auto";
 import "chartjs-adapter-date-fns";
 import { limitToLast, onValue, query as fbQuery, ref } from "firebase/database";
 import { db } from "../lib/firebase";
+import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 import { useTheme } from "../context/ThemeContext";
 
 const MAX_VALID_HEIGHT_MM = 190;
@@ -35,11 +36,9 @@ const normalizeId = (value) => {
 };
 
 const canonicalPlantId = (value) => {
-  const norm = normalizeId(value);
-  if (!norm) return "";
-  const match = norm.match(/^jar(\d+)$/);
-  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
-  return String(value || "").trim().toLowerCase();
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw;
 };
 
 const coerceTimestamp = (value) => {
@@ -197,6 +196,17 @@ const normalizeCultureRecord = (key, value) => {
 
   return {
     jarId,
+    parentJarId: firstText(
+      entry.directParentJarId,
+      entry.direct_parent_jar_id,
+      entry.sourceJarId,
+      entry.source_jar_id,
+      entry.parentJarId,
+      entry.parentJarID,
+      entry.parentJar,
+      entry.parent_id,
+      entry.parent_jar_id
+    ),
     cultureDate: firstText(entry.cultureDate, entry.culture_date, entry.planting_date, entry.plantingDate),
     rackNo: firstText(entry.rackNo, entry.rack_no, entry.rack),
     orchidType: firstText(entry.orchidType, entry.cultivar, entry.type),
@@ -217,6 +227,120 @@ const normalizeJarIdInput = (value) => {
   return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
 };
 
+const getJarIdNumericPart = (value) => {
+  const normalized = normalizeId(value);
+  const match = normalized.match(/^jar(\d+)$/);
+  return match ? match[1] : "";
+};
+
+const getJarSuggestions = (input, ids, limit = 12) => {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+  const normalizedInput = normalizeId(raw);
+  const numericPrefix = getJarIdNumericPart(raw);
+  const normalizedMap = new Map();
+  (ids || [])
+    .filter(Boolean)
+    .forEach((id) => {
+      const key = normalizeId(id) || String(id).toLowerCase();
+      if (!key || normalizedMap.has(key)) return;
+      normalizedMap.set(key, id);
+    });
+  const unique = Array.from(normalizedMap.values());
+  const matches = unique.filter((id) => {
+    if (numericPrefix) {
+      return getJarIdNumericPart(id).startsWith(numericPrefix);
+    }
+    const normalizedId = normalizeId(id);
+    return normalizedId.startsWith(normalizedInput) || String(id).toLowerCase().startsWith(raw.toLowerCase());
+  });
+  return matches
+    .sort((a, b) => {
+      if (numericPrefix) {
+        const aNumText = getJarIdNumericPart(a);
+        const bNumText = getJarIdNumericPart(b);
+        const aExactPrefixLength = aNumText.length === numericPrefix.length;
+        const bExactPrefixLength = bNumText.length === numericPrefix.length;
+        if (aExactPrefixLength !== bExactPrefixLength) return aExactPrefixLength ? 1 : -1;
+      }
+      const aNum = Number(getJarIdNumericPart(a));
+      const bNum = Number(getJarIdNumericPart(b));
+      if (Number.isFinite(aNum) && Number.isFinite(bNum) && aNum !== bNum) return aNum - bNum;
+      return String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+    })
+    .slice(0, limit);
+};
+
+const normalizeRackSearchKey = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^RACK\s*/i, "")
+    .replace(/[\s_-]+/g, "");
+
+const getRackSuggestions = (input, rackHints = [], limit = 12) => {
+  const raw = String(input || "").trim();
+  if (!raw) return [];
+  const inputKey = normalizeRackSearchKey(raw);
+  const unique = Array.from(new Set((rackHints || []).filter(Boolean)));
+  const matches = unique.filter((label) => {
+    const rackCode = extractRackCode(label);
+    const labelKey = normalizeRackSearchKey(label);
+    const rackCodeKey = normalizeRackSearchKey(rackCode);
+    return labelKey.startsWith(inputKey) || rackCodeKey.startsWith(inputKey);
+  });
+  return matches
+    .map((label) => extractRackCode(label) || label.replace(/^Rack\s+/i, "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }))
+    .slice(0, limit);
+};
+
+const buildLineageIndex = (cultureEntries) => {
+  const parentById = new Map();
+  const childrenById = new Map();
+
+  (cultureEntries || []).forEach((entry) => {
+    const childId = normalizeId(entry?.jarId);
+    const parentId = normalizeId(entry?.parentJarId);
+    if (!childId || !parentId || childId === parentId) return;
+    parentById.set(childId, parentId);
+    const existingChildren = childrenById.get(parentId) || [];
+    childrenById.set(parentId, [...existingChildren, childId]);
+  });
+
+  return { parentById, childrenById };
+};
+
+const collectLineageIds = (seedId, lineageIndex) => {
+  const seed = normalizeId(seedId);
+  if (!seed) return [];
+
+  const { parentById, childrenById } = lineageIndex || {};
+  const visited = new Set([seed]);
+
+  let cursor = seed;
+  while (parentById?.has(cursor)) {
+    const parent = parentById.get(cursor);
+    if (!parent || visited.has(parent)) break;
+    visited.add(parent);
+    cursor = parent;
+  }
+
+  const queue = Array.from(visited);
+  while (queue.length) {
+    const current = queue.shift();
+    const children = childrenById?.get(current) || [];
+    children.forEach((child) => {
+      if (!child || visited.has(child)) return;
+      visited.add(child);
+      queue.push(child);
+    });
+  }
+
+  return Array.from(visited);
+};
+
 const resolveHeightTimestamp = (row) => {
   const direct = coerceTimestamp(row.timestamp ?? row.ts);
   if (direct !== null) return direct;
@@ -234,6 +358,33 @@ const chartTheme = (isLight) => ({
 });
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+const toPlantingTimestamp = (value) => {
+  const text = firstText(value);
+  if (!text) return null;
+  const parsed = /^\d{4}-\d{2}-\d{2}$/.test(text) ? Date.parse(`${text}T12:00:00Z`) : Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+};
+
+const computeAgeDaysAt = (plantingTs, measurementTs) => {
+  const planted = Number(plantingTs);
+  const measured = Number(measurementTs);
+  if (!Number.isFinite(planted) || !Number.isFinite(measured)) return null;
+  return Math.max(0, (measured - planted) / DAY_MS);
+};
+
+const formatAgeDays = (value) => {
+  const days = Number(value);
+  if (!Number.isFinite(days)) return "-";
+  return `${days >= 10 ? days.toFixed(0) : days.toFixed(1)} days`;
+};
+
+const formatNutritionOutcome = (outcome) => {
+  if (outcome === "improved") return "Improved";
+  if (outcome === "slowed") return "Slowed";
+  if (outcome === "no_clear_change") return "No clear change";
+  return "Insufficient data";
+};
 
 const escapeHtml = (value) =>
   String(value ?? "")
@@ -255,9 +406,9 @@ const formatReportDate = () =>
 const renderKeyValueTable = (rows) => {
   if (!rows || !rows.length) return "";
   const body = rows
-    .map(([label, value]) => `<tr><td>${escapeHtml(label)}</td><td>${escapeHtml(value)}</td></tr>`)
+    .map(([label, value]) => `<tr><td class="label">${escapeHtml(label)}</td><td class="value">${escapeHtml(value)}</td></tr>`)
     .join("");
-  return `<table class="kv"><tbody>${body}</tbody></table>`;
+  return `<table class="report-table kv-table"><tbody>${body}</tbody></table>`;
 };
 
 const renderDataTable = (headers, rows) => {
@@ -266,17 +417,58 @@ const renderDataTable = (headers, rows) => {
   const body = rows
     .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
     .join("");
-  return `<table class="data"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  return `<table class="report-table data-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
 };
 
-const openReportWindow = ({ title, subtitle, chartImage, sections }) => {
-  const reportWindow = window.open("", "_blank");
-  if (!reportWindow) return;
+const buildReportFilename = (title) => {
+  const safeTitle = String(title || "jar-history-report")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  const stamp = new Date().toISOString().slice(0, 10);
+  return `${safeTitle || "jar-history-report"}-${stamp}.html`;
+};
 
+const downloadReportHtml = (filename, html) => {
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+};
+
+const openReportWindow = ({ title, subtitle, chartImage, chartImages, sections, mode = "preview" }) => {
+  const targetMode = ["preview", "print", "download"].includes(mode) ? mode : "preview";
+
+  const reportId = `GH-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}`;
+  const generatedAt = formatReportDate();
+  const fileName = buildReportFilename(title);
+  const normalizedCharts = (Array.isArray(chartImages) ? chartImages : [])
+    .map((entry) => {
+      if (!entry) return null;
+      if (typeof entry === "string") return { src: entry, caption: "" };
+      return { src: firstText(entry.src), caption: firstText(entry.caption) };
+    })
+    .filter((entry) => entry?.src);
+  if (!normalizedCharts.length && chartImage) {
+    normalizedCharts.push({ src: chartImage, caption: subtitle || "Chart" });
+  }
+  const chartsHtml = normalizedCharts.length
+    ? normalizedCharts
+        .map(
+          (entry, idx) =>
+            `<figure class="chart"><img src="${escapeHtml(entry.src)}" alt="Chart ${idx + 1}" />${
+              entry.caption ? `<figcaption>${escapeHtml(entry.caption)}</figcaption>` : ""
+            }</figure>`
+        )
+        .join("")
+    : "";
   const sectionsHtml = (sections || [])
     .map((section) => {
       const heading = section.heading ? `<h2>${escapeHtml(section.heading)}</h2>` : "";
-      return `<section>${heading}${section.content || ""}</section>`;
+      return `<section class="report-section">${heading}${section.content || ""}</section>`;
     })
     .join("");
 
@@ -286,41 +478,388 @@ const openReportWindow = ({ title, subtitle, chartImage, sections }) => {
     <meta charset="utf-8" />
     <title>${escapeHtml(title || "Report")}</title>
     <style>
-      body { font-family: "Manrope", Arial, sans-serif; color: #0f172a; padding: 32px; }
-      h1 { margin: 0 0 6px; font-size: 24px; }
-      h2 { margin: 20px 0 8px; font-size: 16px; }
-      p { margin: 6px 0; }
-      .muted { color: #64748b; font-size: 12px; }
-      .chart { margin: 16px 0; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px; }
-      .chart img { width: 100%; height: auto; display: block; }
-      table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-      table.kv td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 13px; }
-      table.kv td:first-child { color: #64748b; width: 180px; }
-      table.data th, table.data td { padding: 6px 8px; border-bottom: 1px solid #e2e8f0; font-size: 12px; text-align: left; }
-      table.data th { color: #475569; font-weight: 600; background: #f8fafc; }
-      .footer { margin-top: 32px; }
-      .signature { margin-top: 24px; }
-      .signature-line { margin-top: 32px; border-bottom: 1px solid #94a3b8; width: 240px; }
+      :root {
+        --ink: #0f172a;
+        --ink-soft: #334155;
+        --muted: #64748b;
+        --line: #dbe3ee;
+        --paper: #ffffff;
+        --paper-soft: #f8fafc;
+        --brand: #0f766e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        padding: 28px;
+        font-family: "Manrope", "Segoe UI", Arial, sans-serif;
+        color: var(--ink);
+        background: var(--paper-soft);
+      }
+      .report-actions {
+        max-width: 980px;
+        margin: 0 auto 12px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+      }
+      .report-actions button {
+        border: 1px solid var(--line);
+        background: #ffffff;
+        color: var(--ink);
+        border-radius: 8px;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 7px 11px;
+        cursor: pointer;
+      }
+      .report-actions button:hover { border-color: #94a3b8; }
+      .report-page {
+        max-width: 980px;
+        margin: 0 auto;
+        background: var(--paper);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        overflow: hidden;
+      }
+      .academic-head {
+        padding: 14px 26px 12px;
+        border-bottom: 1px solid var(--line);
+        background: #ffffff;
+      }
+      .academic-head .lab-name {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 800;
+        letter-spacing: 0.03em;
+        color: var(--ink);
+        text-transform: uppercase;
+      }
+      .academic-head .lab-unit {
+        margin: 4px 0 0;
+        font-size: 12px;
+        color: var(--ink-soft);
+      }
+      .academic-head .lab-doc {
+        margin: 4px 0 0;
+        font-size: 11px;
+        color: var(--muted);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-weight: 700;
+      }
+      .report-head {
+        padding: 22px 26px 20px;
+        border-bottom: 1px solid var(--line);
+        background: linear-gradient(135deg, #f0fdfa, #ecfeff);
+      }
+      .kicker {
+        margin: 0 0 8px;
+        color: var(--brand);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.2;
+      }
+      .subtitle {
+        margin: 8px 0 0;
+        color: var(--ink-soft);
+        font-size: 14px;
+      }
+      .meta-strip {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 10px;
+      }
+      .meta-chip {
+        border: 1px solid var(--line);
+        background: #ffffffcc;
+        border-radius: 10px;
+        padding: 8px 10px;
+      }
+      .meta-chip .label {
+        color: var(--muted);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-weight: 700;
+      }
+      .meta-chip .value {
+        margin-top: 2px;
+        font-size: 13px;
+        color: var(--ink);
+        font-weight: 600;
+      }
+      .report-body { padding: 20px 26px 8px; }
+      .charts-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        align-items: start;
+      }
+      .chart {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 8px;
+        background: #fff;
+      }
+      .chart img {
+        width: 100%;
+        height: auto;
+        max-height: 230px;
+        object-fit: contain;
+        display: block;
+      }
+      .chart figcaption {
+        margin-top: 8px;
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        color: var(--ink-soft);
+        text-transform: uppercase;
+      }
+      .report-section {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        background: #fff;
+        margin: 0 0 14px;
+        page-break-inside: avoid;
+      }
+      h2 {
+        margin: 0 0 10px;
+        font-size: 15px;
+        letter-spacing: 0.01em;
+      }
+      p { margin: 6px 0; color: var(--ink-soft); font-size: 13px; line-height: 1.45; }
+      .muted { color: var(--muted); font-size: 12px; }
+      .report-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 6px;
+      }
+      .report-table th,
+      .report-table td {
+        border-bottom: 1px solid var(--line);
+        padding: 7px 8px;
+        text-align: left;
+        vertical-align: top;
+      }
+      .report-table th {
+        color: var(--ink-soft);
+        font-size: 11px;
+        font-weight: 700;
+        background: #f8fafc;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .report-table td {
+        font-size: 12px;
+        color: var(--ink);
+      }
+      .kv-table td.label {
+        color: var(--muted);
+        width: 220px;
+        font-weight: 600;
+      }
+      .kv-table td.value { color: var(--ink); }
+      .report-foot {
+        border-top: 1px solid var(--line);
+        margin-top: 16px;
+        padding: 14px 26px 18px;
+        background: #fff;
+      }
+      .report-foot .foot-note {
+        margin: 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .report-foot .foot-note + .foot-note {
+        margin-top: 4px;
+      }
+      .approval-grid {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+      }
+      .approval-card {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #f8fafc;
+        padding: 10px 12px;
+      }
+      .approval-title {
+        margin: 0 0 8px;
+        font-size: 11px;
+        color: var(--ink-soft);
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .sign-field {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin: 6px 0 0;
+      }
+      .sign-label {
+        min-width: 66px;
+        font-size: 11px;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .sign-fill {
+        flex: 1;
+        border-bottom: 1px solid #94a3b8;
+        min-height: 16px;
+        font-size: 12px;
+        color: var(--ink);
+        padding-bottom: 1px;
+        outline: none;
+      }
+      .sign-fill:empty::before {
+        content: attr(data-placeholder);
+        color: #94a3b8;
+        font-size: 11px;
+        font-weight: 500;
+      }
+      @media print {
+        body { padding: 0; background: #fff; }
+        .no-print { display: none !important; }
+        .report-page { max-width: none; border: none; border-radius: 0; }
+        .report-section { break-inside: avoid; }
+        .approval-card { break-inside: avoid; }
+        .chart img { max-height: 200px; }
+      }
     </style>
   </head>
   <body>
-    <h1>${escapeHtml(title || "Report")}</h1>
-    ${subtitle ? `<p class="muted">${escapeHtml(subtitle)}</p>` : ""}
-    ${chartImage ? `<div class="chart"><img src="${chartImage}" alt="Chart" /></div>` : ""}
-    ${sectionsHtml}
-    <div class="footer">
-      <p class="muted">Generated: ${escapeHtml(formatReportDate())}</p>
-      <div class="signature">
-        <p class="muted">Signature</p>
-        <div class="signature-line"></div>
+    <div class="report-actions no-print">
+      <button id="printReportBtn" type="button">Print</button>
+      <button id="downloadReportBtn" type="button">Download</button>
+      <button id="closeReportBtn" type="button">Close</button>
+    </div>
+    <div class="report-page">
+      <header class="academic-head">
+        <p class="lab-name">Orchid Insights Laboratory</p>
+        <p class="lab-unit">Growth Analytics and Tissue Culture Monitoring Unit</p>
+        <p class="lab-doc">Academic Laboratory Report</p>
+      </header>
+      <header class="report-head">
+        <p class="kicker">Orchid Insights - Growth History</p>
+        <h1>${escapeHtml(title || "Report")}</h1>
+        ${subtitle ? `<p class="subtitle">${escapeHtml(subtitle)}</p>` : ""}
+        <div class="meta-strip">
+          <div class="meta-chip">
+            <div class="label">Generated</div>
+            <div class="value">${escapeHtml(generatedAt)}</div>
+          </div>
+          <div class="meta-chip">
+            <div class="label">Report ID</div>
+            <div class="value">${escapeHtml(reportId)}</div>
+          </div>
+          <div class="meta-chip">
+            <div class="label">Source</div>
+            <div class="value">Growth History Analytics</div>
+          </div>
+        </div>
+      </header>
+      <main class="report-body">
+        ${chartsHtml ? `<section class="report-section"><h2>Charts</h2><div class="charts-grid">${chartsHtml}</div></section>` : ""}
+        ${sectionsHtml}
+      </main>
+      <div class="report-foot">
+        <p class="foot-note">Prepared by Orchid Insights reporting engine.</p>
+        <p class="foot-note">For academic and laboratory documentation use.</p>
+        <div class="approval-grid">
+          <div class="approval-card">
+            <p class="approval-title">Prepared By</p>
+            <div class="sign-field">
+              <span class="sign-label">Name</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter name"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Position</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter position"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Signature</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Sign here"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Date</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="YYYY-MM-DD"></span>
+            </div>
+          </div>
+          <div class="approval-card">
+            <p class="approval-title">Reviewed / Approved By</p>
+            <div class="sign-field">
+              <span class="sign-label">Name</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter name"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Position</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Enter position"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Signature</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="Sign here"></span>
+            </div>
+            <div class="sign-field">
+              <span class="sign-label">Date</span>
+              <span class="sign-fill" contenteditable="true" data-placeholder="YYYY-MM-DD"></span>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
+    <script>
+      (function () {
+        const fileName = ${JSON.stringify(fileName)};
+        const printBtn = document.getElementById("printReportBtn");
+        const downloadBtn = document.getElementById("downloadReportBtn");
+        const closeBtn = document.getElementById("closeReportBtn");
+        if (printBtn) printBtn.addEventListener("click", function () { window.print(); });
+        if (downloadBtn) {
+          downloadBtn.addEventListener("click", function () {
+            const blob = new Blob([document.documentElement.outerHTML], { type: "text/html;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = fileName;
+            link.click();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1200);
+          });
+        }
+        if (closeBtn) closeBtn.addEventListener("click", function () { window.close(); });
+      })();
+    </script>
   </body>
 </html>`;
 
+  if (targetMode === "download") {
+    downloadReportHtml(fileName, html);
+    return;
+  }
+
+  const reportWindow = window.open("", "_blank");
+  if (!reportWindow) return;
   reportWindow.document.write(html);
   reportWindow.document.close();
   reportWindow.focus();
+  if (targetMode === "print") {
+    reportWindow.onload = () => {
+      reportWindow.focus();
+      reportWindow.print();
+    };
+  }
 };
 
 const computeSeriesStats = (points) => {
@@ -400,6 +939,112 @@ const toValidPoint = (x, y) => {
   if (!Number.isFinite(xn) || !Number.isFinite(yn)) return null;
   if (yn > MAX_VALID_HEIGHT_MM) return null;
   return { x: xn, y: yn };
+};
+
+const quantileSorted = (sorted, q) => {
+  if (!sorted?.length) return null;
+  if (sorted.length === 1) return sorted[0];
+  const pos = (sorted.length - 1) * q;
+  const base = Math.floor(pos);
+  const rest = pos - base;
+  const left = sorted[base];
+  const right = sorted[Math.min(base + 1, sorted.length - 1)];
+  return left + (right - left) * rest;
+};
+
+const buildPredictedGrowthBands = (records, { bucketDays = 7, minSamplesPerBucket = 4, maxAgeDays = 365 } = {}) => {
+  const buckets = new Map();
+  const jarIds = new Set();
+  let totalPoints = 0;
+
+  (records || []).forEach((plant, idx) => {
+    const plantingTs = toPlantingTimestamp(plant?.planting_date);
+    if (!Number.isFinite(plantingTs)) return;
+
+    const jarId = firstText(plant?.id, `jar-${idx + 1}`);
+    if (jarId) jarIds.add(jarId);
+
+    const heights = Array.isArray(plant?.heights) ? plant.heights : [];
+    heights.forEach((row) => {
+      const ts = resolveHeightTimestamp(row || {});
+      const mm = toNumber(row?.height_mm ?? row?.height ?? row?.heightMm ?? row?.current_height);
+      const point = toValidPoint(ts, mm);
+      if (!point) return;
+
+      const ageDays = computeAgeDaysAt(plantingTs, point.x);
+      if (ageDays === null || ageDays < 0 || ageDays > maxAgeDays) return;
+
+      const ageBucket = Math.round(ageDays / bucketDays) * bucketDays;
+      if (!buckets.has(ageBucket)) buckets.set(ageBucket, []);
+      buckets.get(ageBucket).push(point.y);
+      totalPoints += 1;
+    });
+  });
+
+  const points = Array.from(buckets.entries())
+    .filter(([, values]) => Array.isArray(values) && values.length >= minSamplesPerBucket)
+    .sort((a, b) => a[0] - b[0])
+    .map(([ageDays, values]) => {
+      const sorted = [...values].sort((a, b) => a - b);
+      const q10 = quantileSorted(sorted, 0.1);
+      const q25 = quantileSorted(sorted, 0.25);
+      const q50 = quantileSorted(sorted, 0.5);
+      const q75 = quantileSorted(sorted, 0.75);
+      const q90 = quantileSorted(sorted, 0.9);
+      return {
+        x: ageDays,
+        q10: Number(q10.toFixed(2)),
+        q25: Number(q25.toFixed(2)),
+        q50: Number(q50.toFixed(2)),
+        q75: Number(q75.toFixed(2)),
+        q90: Number(q90.toFixed(2)),
+        samples: sorted.length,
+      };
+    })
+    .filter((row) => Number.isFinite(row.q10) && Number.isFinite(row.q90));
+
+  return {
+    points,
+    bucketDays,
+    sourceJarCount: jarIds.size,
+    totalPoints,
+  };
+};
+
+const interpolateBandAtAge = (bandPoints, ageDays, key) => {
+  if (!Array.isArray(bandPoints) || !bandPoints.length || !Number.isFinite(ageDays)) return null;
+  if (ageDays <= bandPoints[0].x) return toNumber(bandPoints[0]?.[key]);
+  if (ageDays >= bandPoints[bandPoints.length - 1].x) return toNumber(bandPoints[bandPoints.length - 1]?.[key]);
+
+  for (let i = 0; i < bandPoints.length - 1; i += 1) {
+    const left = bandPoints[i];
+    const right = bandPoints[i + 1];
+    if (ageDays < left.x || ageDays > right.x) continue;
+    const leftVal = toNumber(left?.[key]);
+    const rightVal = toNumber(right?.[key]);
+    if (!Number.isFinite(leftVal) || !Number.isFinite(rightVal)) return null;
+    const width = right.x - left.x;
+    if (!Number.isFinite(width) || width <= 0) return leftVal;
+    const t = (ageDays - left.x) / width;
+    return leftVal + (rightVal - leftVal) * t;
+  }
+
+  return null;
+};
+
+const classifyGrowthLevel = (bandPoints, ageDays, heightMm) => {
+  const q10 = interpolateBandAtAge(bandPoints, ageDays, "q10");
+  const q25 = interpolateBandAtAge(bandPoints, ageDays, "q25");
+  const q75 = interpolateBandAtAge(bandPoints, ageDays, "q75");
+  const q90 = interpolateBandAtAge(bandPoints, ageDays, "q90");
+  const y = toNumber(heightMm);
+  if (![q10, q25, q75, q90, y].every(Number.isFinite)) return { label: "No prediction", tone: "text-subtle" };
+
+  if (y < q10) return { label: "Critical low", tone: "text-violet-700 dark:text-violet-300" };
+  if (y < q25) return { label: "Below expected", tone: "text-amber-700 dark:text-amber-300" };
+  if (y <= q75) return { label: "Expected range", tone: "text-emerald-700 dark:text-emerald-300" };
+  if (y <= q90) return { label: "Above expected", tone: "text-orange-700 dark:text-orange-300" };
+  return { label: "Very high", tone: "text-rose-700 dark:text-rose-300" };
 };
 
 const rackEndLabelsPlugin = {
@@ -490,7 +1135,12 @@ const buildCompareMetrics = (combinedRecords, compareIds, compareWindow) => {
       rate: stats.rate,
       delta: stats.delta,
       avg: stats.avg,
+      first: stats.first,
+      last: stats.last,
+      firstTs: sorted[0]?.x ?? null,
+      lastTs: sorted[sorted.length - 1]?.x ?? null,
       count: stats.count,
+      ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), sorted[sorted.length - 1]?.x),
     });
   });
 
@@ -505,10 +1155,19 @@ const buildRackStats = (rackPlants) => {
       .filter((p) => p !== null)
       .sort((a, b) => a.x - b.x);
     const summary = computeSeriesStats(points);
+    const latestTs = points.length ? points[points.length - 1].x : null;
+    const firstTs = points.length ? points[0].x : null;
     return {
       id: plant.id,
       avg: summary?.avg ?? null,
+      rate: summary?.rate ?? null,
+      delta: summary?.delta ?? null,
+      latest: summary?.last ?? null,
+      days: summary?.days ?? null,
+      firstTs,
+      lastTs: latestTs,
       count: summary?.count ?? 0,
+      ageDays: computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs),
     };
   });
 
@@ -522,6 +1181,318 @@ const buildRackStats = (rackPlants) => {
     if (item.avg === minAvg) return { ...item, rank: "Worst" };
     return { ...item, rank: null };
   });
+};
+
+const deriveCategoryLabel = (value) => {
+  const text = firstText(value);
+  if (!text) return "Uncategorized";
+  const cleaned = text
+    .replace(/\(.*?\)/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!cleaned) return "Uncategorized";
+  const genus = cleaned.match(/^[A-Za-z][A-Za-z-]*/);
+  return genus ? genus[0] : cleaned;
+};
+
+const resolvePlantCategory = (plant) =>
+  deriveCategoryLabel(firstText(plant?.category, plant?.cultivar, plant?.orchidType));
+
+const toPlantSeriesPoints = (plant, cutoffMs = null) =>
+  (plant?.heights || [])
+    .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
+    .filter((point) => point !== null && (cutoffMs === null || point.x >= cutoffMs))
+    .sort((a, b) => a.x - b.x);
+
+const classifyCategoryGrowth = ({ avgRate, avgDelta, measuredPlants }) => {
+  if (!measuredPlants || avgRate === null) {
+    return {
+      growthLabel: "insufficient data",
+      suggestion: "Log at least two measurements per jar before deciding interventions for this category.",
+    };
+  }
+  if (avgRate < 0.2 || avgDelta < 8) {
+    return {
+      growthLabel: "slow",
+      suggestion: "Try improving nutrition, refresh medium/pH, adjust light/temperature, and check contamination this week.",
+    };
+  }
+  if (avgRate < 0.55) {
+    return {
+      growthLabel: "moderate",
+      suggestion: "Consider a small nutrition boost, tune humidity/light, and review growth again after the next 7-14 days.",
+    };
+  }
+  return {
+    growthLabel: "fast",
+    suggestion: "Keep current nutrition and conditions, but monitor spacing/ventilation to avoid stress from rapid growth.",
+  };
+};
+
+const buildRackCategoryStats = (rackPlants) => {
+  if (!rackPlants?.length) return [];
+  const grouped = new Map();
+
+  rackPlants.forEach((plant) => {
+    const category = resolvePlantCategory(plant);
+    if (!grouped.has(category)) {
+      grouped.set(category, {
+        category,
+        ids: [],
+        measuredPlants: 0,
+        rates: [],
+        deltas: [],
+        avgHeights: [],
+        latestHeights: [],
+        totalPoints: 0,
+      });
+    }
+
+    const bucket = grouped.get(category);
+    bucket.ids.push(plant.id);
+
+    const stats = computeSeriesStats(toPlantSeriesPoints(plant));
+    if (!stats) return;
+
+    bucket.measuredPlants += 1;
+    bucket.totalPoints += stats.count || 0;
+    if (Number.isFinite(stats.rate)) bucket.rates.push(stats.rate);
+    if (Number.isFinite(stats.delta)) bucket.deltas.push(stats.delta);
+    if (Number.isFinite(stats.avg)) bucket.avgHeights.push(stats.avg);
+    if (Number.isFinite(stats.last)) bucket.latestHeights.push(stats.last);
+  });
+
+  const avgOrNull = (values) =>
+    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+
+  return Array.from(grouped.values())
+    .map((item) => {
+      const avgRate = avgOrNull(item.rates);
+      const avgDelta = avgOrNull(item.deltas);
+      const avgHeight = avgOrNull(item.avgHeights);
+      const latestAvg = avgOrNull(item.latestHeights);
+      const { growthLabel, suggestion } = classifyCategoryGrowth({
+        avgRate,
+        avgDelta,
+        measuredPlants: item.measuredPlants,
+      });
+
+      return {
+        category: item.category,
+        plantCount: item.ids.length,
+        measuredPlants: item.measuredPlants,
+        avgRate,
+        avgDelta,
+        avgHeight,
+        latestAvg,
+        totalPoints: item.totalPoints,
+        growthLabel,
+        suggestion,
+      };
+    })
+    .sort((a, b) => {
+      const left = Number.isFinite(a.avgRate) ? a.avgRate : Number.NEGATIVE_INFINITY;
+      const right = Number.isFinite(b.avgRate) ? b.avgRate : Number.NEGATIVE_INFINITY;
+      return right - left;
+    });
+};
+
+const LAB_COMMON_MIN_DAYS = 365;
+const LAB_COMMON_MAX_DAYS = 548;
+
+const buildRackCategoryScenarioPlan = (rackPlants, rackCategoryStats) => {
+  const plants = Array.isArray(rackPlants) ? rackPlants : [];
+  const categories = Array.isArray(rackCategoryStats) ? rackCategoryStats : [];
+
+  const nutritionCounts = new Map();
+  plants.forEach((plant) => {
+    const label = firstText(plant?.nutritionStatus, plant?.nutrition);
+    if (!label) return;
+    nutritionCounts.set(label, (nutritionCounts.get(label) || 0) + 1);
+  });
+
+  const baselineNutrition =
+    Array.from(nutritionCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Rack standard medium";
+
+  const byCategory = new Map();
+  plants.forEach((plant) => {
+    const category = resolvePlantCategory(plant);
+    const points = toPlantSeriesPoints(plant);
+    const stats = computeSeriesStats(points);
+    const latestTs = points.length ? points[points.length - 1].x : null;
+    const ageDays = computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs);
+
+    if (!byCategory.has(category)) byCategory.set(category, []);
+    byCategory.get(category).push({
+      id: plant?.id || "-",
+      rate: stats?.rate ?? null,
+      delta: stats?.delta ?? null,
+      ageDays,
+    });
+  });
+
+  const avgOrNull = (values) => {
+    const valid = values.filter((v) => Number.isFinite(v));
+    if (!valid.length) return null;
+    return valid.reduce((sum, v) => sum + v, 0) / valid.length;
+  };
+
+  const map = new Map();
+  categories.forEach((item) => {
+    const rows = byCategory.get(item.category) || [];
+    const avgAgeDays = avgOrNull(rows.map((row) => row.ageDays));
+
+    const specialJarIds = rows
+      .filter((row) => {
+        const slowerThanCategory =
+          Number.isFinite(row.rate) &&
+          Number.isFinite(item.avgRate) &&
+          row.rate < Math.max(0.12, Number(item.avgRate) * 0.65);
+        const lowDelta = Number.isFinite(row.delta) && row.delta < 8;
+        const overLabWindow = Number.isFinite(row.ageDays) && row.ageDays > LAB_COMMON_MAX_DAYS;
+        return slowerThanCategory || lowDelta || overLabWindow;
+      })
+      .map((row) => row.id);
+
+    let defaultProtocol = "";
+    if (item.growthLabel === "fast") {
+      defaultProtocol = `Keep ${baselineNutrition} and same agar mL for all jars in this category.`;
+    } else if (item.growthLabel === "moderate") {
+      defaultProtocol = `Keep ${baselineNutrition} as base protocol; monitor another cycle before increasing nutrients.`;
+    } else if (item.growthLabel === "slow") {
+      if (Number.isFinite(avgAgeDays) && avgAgeDays >= LAB_COMMON_MAX_DAYS) {
+        defaultProtocol = `Category is near/over 1.5 years in lab; plan reculture/exit while keeping rack baseline for stable jars.`;
+      } else if (Number.isFinite(avgAgeDays) && avgAgeDays >= LAB_COMMON_MIN_DAYS) {
+        defaultProtocol = `Category is within 1.0-1.5 year window; keep rack baseline and schedule a controlled nutrition review.`;
+      } else {
+        defaultProtocol = `Below 1 year but slow; run a small controlled nutrition increase trial for this category only.`;
+      }
+    } else {
+      defaultProtocol = "Need more measurements before changing rack-level nutrition protocol.";
+    }
+
+    const specialProtocol = specialJarIds.length
+      ? `Special-case override for ${specialJarIds.join(", ")}: allow research-purpose nutrition adjustment and close follow-up.`
+      : "No special-case override needed now; keep common rack protocol.";
+
+    map.set(item.category, {
+      avgAgeDays,
+      defaultProtocol,
+      specialProtocol,
+      specialJarIds,
+    });
+  });
+
+  return {
+    baselineNutrition,
+    baselineAgarRule: "Use same agar mL for the rack by default.",
+    labRuleWindow: "Common lab window: 1.0-1.5 years.",
+    byCategory: map,
+  };
+};
+
+const inferNutritionMode = (value) => {
+  const text = firstText(value).toLowerCase();
+  if (!text) return "unknown";
+  if (text.includes("special") || text.includes("coconut water")) return "special";
+  if (text.includes("normal") || text.includes("baseline")) return "normal";
+  return "normal";
+};
+
+const averageOrNull = (values) => {
+  const valid = (values || []).filter((v) => Number.isFinite(v));
+  if (!valid.length) return null;
+  return valid.reduce((sum, v) => sum + v, 0) / valid.length;
+};
+
+const buildRackComparisonSummary = (rackCode, rackPlants) => {
+  const plants = Array.isArray(rackPlants) ? rackPlants : [];
+  const typeCounts = new Map();
+  const nutritionCounts = new Map();
+  const rates = [];
+  const deltas = [];
+  const ages = [];
+
+  plants.forEach((plant) => {
+    const type = deriveCategoryLabel(firstText(plant?.cultivar, plant?.category));
+    const nutrition = firstText(plant?.nutritionStatus, plant?.nutrition);
+    typeCounts.set(type, (typeCounts.get(type) || 0) + 1);
+    nutritionCounts.set(nutrition, (nutritionCounts.get(nutrition) || 0) + 1);
+
+    const points = toPlantSeriesPoints(plant);
+    const stats = computeSeriesStats(points);
+    if (Number.isFinite(stats?.rate)) rates.push(stats.rate);
+    if (Number.isFinite(stats?.delta)) deltas.push(stats.delta);
+
+    const latestTs = points.length ? points[points.length - 1].x : null;
+    const age = computeAgeDaysAt(toPlantingTimestamp(plant?.planting_date), latestTs);
+    if (Number.isFinite(age)) ages.push(age);
+  });
+
+  const dominantType = Array.from(typeCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
+  const dominantNutrition = Array.from(nutritionCounts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] || "Unknown";
+  return {
+    rackCode,
+    jarCount: plants.length,
+    dominantType,
+    dominantNutrition,
+    nutritionMode: inferNutritionMode(dominantNutrition),
+    avgRate: averageOrNull(rates),
+    avgDelta: averageOrNull(deltas),
+    avgAgeDays: averageOrNull(ages),
+  };
+};
+
+const buildRackPairComparison = ({ leftSummary, rightSummary }) => {
+  const left = leftSummary;
+  const right = rightSummary;
+  const sameType = left.dominantType === right.dominantType;
+  const sameNutritionMode = left.nutritionMode === right.nutritionMode;
+
+  if (sameType && !sameNutritionMode) {
+    const special = left.nutritionMode === "special" ? left : right;
+    const normal = left.nutritionMode === "normal" ? left : right;
+    const deltaRate =
+      Number.isFinite(special.avgRate) && Number.isFinite(normal.avgRate) ? special.avgRate - normal.avgRate : null;
+    const effectText =
+      deltaRate === null ? "Not enough data to quantify growth-rate difference." : `${deltaRate >= 0 ? "+" : ""}${deltaRate.toFixed(2)} mm/day`;
+    const verdict =
+      deltaRate === null
+        ? "observe more points"
+        : deltaRate > 0
+          ? "special nutrition is improving growth for this orchid type"
+          : deltaRate < 0
+            ? "special nutrition is underperforming vs normal for this orchid type"
+            : "both protocols are currently equivalent";
+
+    return {
+      mode: "same_type_diff_nutrition",
+      headline: "Same orchid type, normal vs special nutrition",
+      detail: `Type ${left.dominantType}: Rack ${special.rackCode} (special) vs Rack ${normal.rackCode} (normal). Rate gap: ${effectText}.`,
+      recommendation: `Result: ${verdict}. Keep agar mL equal per rack and only run targeted overrides on slow jars.`,
+    };
+  }
+
+  if (!sameType && sameNutritionMode) {
+    const deltaRate =
+      Number.isFinite(right.avgRate) && Number.isFinite(left.avgRate) ? right.avgRate - left.avgRate : null;
+    const effectText =
+      deltaRate === null ? "Not enough data to quantify type effect." : `${deltaRate >= 0 ? "+" : ""}${deltaRate.toFixed(2)} mm/day`;
+    return {
+      mode: "diff_type_same_nutrition",
+      headline: `Different orchid types under same ${left.nutritionMode} nutrition`,
+      detail: `Rack ${left.rackCode} (${left.dominantType}) vs Rack ${right.rackCode} (${right.dominantType}). Rate gap: ${effectText}.`,
+      recommendation: "This isolates orchid-type response under the same nutrition mode; tune protocol per type, not per jar.",
+    };
+  }
+
+  return {
+    mode: "mixed_factors",
+    headline: "Two-factor comparison (type and nutrition both differ)",
+    detail: `Rack ${left.rackCode}: ${left.dominantType} with ${left.nutritionMode} nutrition vs Rack ${right.rackCode}: ${right.dominantType} with ${right.nutritionMode} nutrition.`,
+    recommendation:
+      "For clearer conclusions, compare either same type with different nutrition or different types with the same nutrition mode.",
+  };
 };
 
 // START CLUSTER_UI_STEP: jar-id-based K-Means helpers (safe to remove as one block)
@@ -855,7 +1826,7 @@ const buildCompareBrief = ({ metrics, compareWindow }) => {
   return `Fastest growth: ${best.id} at ${best.rate.toFixed(2)} mm/day (${windowLabel}).`;
 };
 
-const buildRackInsight = ({ rackStats, rackQuery }) => {
+const buildRackInsight = ({ rackStats, rackQuery, categoryStats = [] }) => {
   if (!rackQuery) return "Enter a rack label to generate a rack summary.";
   if (!rackStats.length) return "No jars found for this rack.";
   const valid = rackStats.filter((item) => item.avg !== null);
@@ -863,18 +1834,65 @@ const buildRackInsight = ({ rackStats, rackQuery }) => {
   const best = valid.find((item) => item.rank === "Best") || valid[0];
   const worst = valid.find((item) => item.rank === "Worst") || valid[valid.length - 1];
   const avgAcross = valid.reduce((sum, item) => sum + item.avg, 0) / valid.length;
-  return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Best average height is ${
-    best.id
-  } at ${best.avg.toFixed(1)} mm; lowest is ${worst.id} at ${worst.avg.toFixed(1)} mm.`;
+  const validCategories = categoryStats.filter((item) => Number.isFinite(item.avgRate));
+  if (!validCategories.length) {
+    return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Best average height is ${
+      best.id
+    } at ${best.avg.toFixed(1)} mm; lowest is ${worst.id} at ${worst.avg.toFixed(1)} mm.`;
+  }
+  if (validCategories.length === 1) {
+    const only = validCategories[0];
+    return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Category ${only.category} shows ${only.avgRate.toFixed(
+      2
+    )} mm/day and ${only.avgDelta.toFixed(1)} mm average change. Suggested action: ${only.suggestion}`;
+  }
+
+  const topCategory = validCategories[0];
+  const lowCategory = validCategories[validCategories.length - 1];
+  return `Rack ${rackQuery} averages ${avgAcross.toFixed(1)} mm across ${valid.length} jars. Category growth-change comparison shows ${
+    topCategory.category
+  } is strongest (${topCategory.avgRate.toFixed(2)} mm/day, ${topCategory.avgDelta.toFixed(
+    1
+  )} mm avg change), while ${lowCategory.category} is slowest (${lowCategory.avgRate.toFixed(
+    2
+  )} mm/day). Suggested action for ${lowCategory.category}: ${lowCategory.suggestion}`;
 };
 
-const buildRackBrief = ({ rackStats, rackQuery }) => {
+const buildRackBrief = ({ rackStats, rackQuery, categoryStats = [] }) => {
   if (!rackQuery) return "Enter a rack label to summarize.";
   if (!rackStats.length) return "No jars found on this rack.";
   const valid = rackStats.filter((item) => item.avg !== null);
   if (!valid.length) return "Not enough data to summarize rack averages.";
-  const best = valid.find((item) => item.rank === "Best") || valid[0];
-  return `Rack ${rackQuery}: best average height is ${best.id} at ${best.avg.toFixed(1)} mm.`;
+  const validCategories = categoryStats.filter((item) => Number.isFinite(item.avgRate));
+  if (!validCategories.length) {
+    const best = valid.find((item) => item.rank === "Best") || valid[0];
+    return `Rack ${rackQuery}: best average height is ${best.id} at ${best.avg.toFixed(1)} mm.`;
+  }
+  if (validCategories.length === 1) {
+    const only = validCategories[0];
+    return `Rack ${rackQuery}: ${only.category} average growth is ${only.avgRate.toFixed(2)} mm/day.`;
+  }
+  const topCategory = validCategories[0];
+  const lowCategory = validCategories[validCategories.length - 1];
+  return `Rack ${rackQuery} category focus: ${topCategory.category} grows fastest (${topCategory.avgRate.toFixed(
+    2
+  )} mm/day). Improve ${lowCategory.category} by checking nutrition and conditions: ${lowCategory.suggestion}`;
+};
+
+const buildRackSnapshot = ({ rackCode, plants }) => {
+  const rackStats = buildRackStats(plants || []);
+  const categoryStats = buildRackCategoryStats(plants || []);
+  const rackInsight = buildRackInsight({
+    rackStats,
+    rackQuery: rackCode,
+    categoryStats,
+  });
+  return {
+    rackCode,
+    rackStats,
+    categoryStats,
+    rackInsight,
+  };
 };
 
 const answerGrowthQuestion = ({ question, stats, history, record, insight }) => {
@@ -882,8 +1900,121 @@ const answerGrowthQuestion = ({ question, stats, history, record, insight }) => 
   if (!stats || !history.length) return "No measurement data is available yet.";
 
   const q = question.toLowerCase();
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "weak", "slow", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong", "well");
+  const asksGrowth = hasAny("growth", "growing", "rate", "trend", "change", "delta", "progress", "improv", "better", "worse");
+  const asksHeight = hasAny("height", "tall");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const sortedHistory = [...history].sort((a, b) => Number(a.ts) - Number(b.ts));
+  const subject = record?.id ? `Jar ${record.id}` : "This jar";
+
+  const qualityVerdict = (() => {
+    if (!stats || history.length < 2 || stats.days === null || stats.rate === null || !Number.isFinite(stats.rate)) {
+      return {
+        label: "Insufficient trend confidence",
+        detail: "Need more time-based points before judging growth quality.",
+      };
+    }
+
+    const rate = Number(stats.rate);
+    const spanDays = Number(stats.days);
+    const sampleCount = history.length;
+    const confidence =
+      sampleCount >= 8 && spanDays >= 45
+        ? "High"
+        : sampleCount >= 4 && spanDays >= 14
+          ? "Medium"
+          : "Low";
+
+    if (rate < 0) {
+      return {
+        label: "Bad",
+        detail: `Height is declining (${rate.toFixed(2)} mm/day). Confidence ${confidence}.`,
+      };
+    }
+    if (rate < 0.08) {
+      return {
+        label: "Weak",
+        detail: `Growth is very slow (${rate.toFixed(2)} mm/day). Confidence ${confidence}.`,
+      };
+    }
+    if (rate < 0.2) {
+      return {
+        label: "Moderate",
+        detail: `Growth is acceptable but not strong (${rate.toFixed(2)} mm/day). Confidence ${confidence}.`,
+      };
+    }
+    return {
+      label: "Good",
+      detail: `Growth is strong (${rate.toFixed(2)} mm/day) with an increasing trend. Confidence ${confidence}.`,
+    };
+  })();
+  const badVerdict = qualityVerdict.label === "Bad" || qualityVerdict.label === "Weak";
+  const goodVerdict = qualityVerdict.label === "Good" || qualityVerdict.label === "Moderate";
+
+  if (asksBinary && (asksBad || asksGood) && (asksGrowth || asksHeight || asksGood || asksBad)) {
+    if (qualityVerdict.label === "Insufficient trend confidence") {
+      return "Cannot answer yes/no yet. Need more time-based measurements for this jar.";
+    }
+    if (asksBad && !asksGood) {
+      return badVerdict
+        ? `Yes. ${subject} shows weak/bad growth. ${qualityVerdict.detail}`
+        : `No. ${subject} is not in a bad-growth state. ${qualityVerdict.detail}`;
+    }
+    if (asksGood && !asksBad) {
+      return goodVerdict
+        ? `Yes. ${subject} growth is acceptable/good. ${qualityVerdict.detail}`
+        : `No. ${subject} is not in a good-growth state. ${qualityVerdict.detail}`;
+    }
+    return `${subject} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+  }
+
+  if (asksHistory) {
+    const first = sortedHistory[0];
+    const last = sortedHistory[sortedHistory.length - 1];
+    const firstHeight = Number(first?.height_mm);
+    const lastHeight = Number(last?.height_mm);
+    return `${subject} history spans ${formatDate(first?.ts)} to ${formatDate(last?.ts)} (${sortedHistory.length} measurements). First ${
+      Number.isFinite(firstHeight) ? `${firstHeight.toFixed(1)} mm` : "n/a"
+    }, latest ${Number.isFinite(lastHeight) ? `${lastHeight.toFixed(1)} mm` : "n/a"}.`;
+  }
+
+  if (asksCount) {
+    return `${subject} has ${history.length} tracked measurements in history.`;
+  }
+
+  if (
+    q.includes("good") ||
+    q.includes("bad") ||
+    q.includes("healthy") ||
+    q.includes("ok") ||
+    q.includes("okay") ||
+    q.includes("well") ||
+    q.includes("improv") ||
+    q.includes("worse") ||
+    q.includes("better") ||
+    q.includes("progress")
+  ) {
+    return `${subject} verdict: ${qualityVerdict.label}. ${qualityVerdict.detail}`;
+  }
+
+  if (q.includes("why")) {
+    return `${qualityVerdict.detail} This is based on total change ${
+      Number.isFinite(stats.delta) ? `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm` : "n/a"
+    }, average ${
+      Number.isFinite(stats.avg) ? `${stats.avg.toFixed(1)} mm` : "n/a"
+    }, and span ${stats.days !== null ? `${stats.days.toFixed(0)} days` : "n/a"}.`;
+  }
+
   if (q.includes("rate") || q.includes("growth")) {
-    return stats.rate !== null ? `Growth rate is ${stats.rate.toFixed(2)} mm/day.` : "Growth rate is not available yet.";
+    return stats.rate !== null
+      ? `Growth rate is ${stats.rate.toFixed(2)} mm/day with total change ${
+          Number.isFinite(stats.delta) ? `${stats.delta >= 0 ? "+" : ""}${stats.delta.toFixed(1)} mm` : "n/a"
+        }.`
+      : "Growth rate is not available yet.";
   }
   if (q.includes("average") || q.includes("avg")) {
     return Number.isFinite(stats.avg) ? `Average height is ${stats.avg.toFixed(1)} mm.` : "Average height is not available yet.";
@@ -908,8 +2039,63 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
   if (!question?.trim()) return insight;
   if (!metrics.length) return "No comparison data yet.";
   const q = question.toLowerCase();
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "weak", "slow", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong", "well");
+  const asksGrowth = hasAny("growth", "growing", "rate", "trend", "change", "delta");
+  const asksHeight = hasAny("height", "tall");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const asksPerJar = hasAny("jar", "jars", "each", "per jar", "all jars", "all jar", "line");
   const windowLabel = compareWindow === "all" ? "all time" : compareWindow;
   const valid = metrics.filter((m) => m.rate !== null);
+
+  if (asksBinary && (asksBad || asksGood) && (asksGrowth || asksHeight || asksGood || asksBad)) {
+    if (!valid.length) return "Cannot answer yes/no yet. No growth-rate data is available for the selected jars.";
+    const weakOrBad = valid.filter((m) => Number(m.rate) < 0.2);
+    if (asksBad && !asksGood) {
+      if (weakOrBad.length) {
+        const ids = weakOrBad.map((item) => item.id).join(", ");
+        return `Yes. Weak/bad growth exists in ${windowLabel}: ${ids}.`;
+      }
+      return `No. None of the compared jars show weak/bad growth in ${windowLabel}.`;
+    }
+    if (asksGood && !asksBad) {
+      if (!weakOrBad.length) return `Yes. All compared jars show acceptable growth in ${windowLabel}.`;
+      const ids = weakOrBad.map((item) => item.id).join(", ");
+      return `No. Some jars are weak/slow in ${windowLabel}: ${ids}.`;
+    }
+  }
+
+  if (asksHistory) {
+    const rows = metrics.map((m) => {
+      const firstText = m.firstTs ? formatDate(m.firstTs) : "n/a";
+      const lastText = m.lastTs ? formatDate(m.lastTs) : "n/a";
+      const firstHeight = Number.isFinite(m.first) ? `${m.first.toFixed(1)} mm` : "n/a";
+      const lastHeight = Number.isFinite(m.last) ? `${m.last.toFixed(1)} mm` : "n/a";
+      return `${m.id}: ${firstText} (${firstHeight}) -> ${lastText} (${lastHeight}), ${m.count} pts`;
+    });
+    return `Comparison history (${windowLabel}): ${rows.join("; ")}.`;
+  }
+
+  if (asksCount) {
+    const total = metrics.reduce((sum, m) => sum + (Number.isFinite(m.count) ? m.count : 0), 0);
+    const rows = metrics.map((m) => `${m.id}: ${m.count} pts`).join(", ");
+    return `Tracked measurements (${windowLabel}) total ${total}: ${rows}.`;
+  }
+
+  if ((asksGrowth || asksHeight) && asksPerJar) {
+    const rows = metrics
+      .map(
+        (m) =>
+          `${m.id}: rate ${Number.isFinite(m.rate) ? `${m.rate.toFixed(2)} mm/day` : "n/a"}, change ${
+            Number.isFinite(m.delta) ? `${m.delta >= 0 ? "+" : ""}${m.delta.toFixed(1)} mm` : "n/a"
+          }, avg ${Number.isFinite(m.avg) ? `${m.avg.toFixed(1)} mm` : "n/a"}`
+      )
+      .join("; ");
+    return `Per-jar growth (${windowLabel}): ${rows}.`;
+  }
 
   if (q.includes("best") || q.includes("fastest")) {
     if (!valid.length) return "No growth rates available yet.";
@@ -933,27 +2119,184 @@ const answerCompareQuestion = ({ question, metrics, compareWindow, insight }) =>
       .join(", ");
     return `Total change (${windowLabel}): ${rows}.`;
   }
+  if (q.includes("rate") || q.includes("growth")) {
+    const rows = metrics
+      .map((m) => `${m.id}: ${Number.isFinite(m.rate) ? `${m.rate.toFixed(2)} mm/day` : "n/a"}`)
+      .join(", ");
+    return `Growth rates (${windowLabel}): ${rows}.`;
+  }
   return insight;
 };
 
-const answerRackQuestion = ({ question, rackStats, rackQuery, insight }) => {
+const answerRackQuestion = ({ question, rackStats, rackQuery, categoryStats = [], insight, rackSnapshots = {} }) => {
   if (!question?.trim()) return insight;
-  if (!rackStats.length) return "No rack data yet.";
   const q = question.toLowerCase();
-  const valid = rackStats.filter((item) => item.avg !== null);
-  if (q.includes("best")) {
+  const mentionedRack = (question.match(/\bT\d+\b/i)?.[0] || "").toUpperCase();
+  const availableRacks = Object.keys(rackSnapshots || {}).sort();
+
+  let activeRackCode = rackQuery;
+  let activeRackStats = rackStats;
+  let activeCategoryStats = categoryStats;
+  let activeInsight = insight;
+
+  if (mentionedRack) {
+    const target = rackSnapshots?.[mentionedRack];
+    if (!target) {
+      return availableRacks.length
+        ? `Rack ${mentionedRack} is not available. Available racks: ${availableRacks.join(", ")}.`
+        : "No rack data yet.";
+    }
+    activeRackCode = mentionedRack;
+    activeRackStats = target.rackStats || [];
+    activeCategoryStats = target.categoryStats || [];
+    activeInsight = target.rackInsight || activeInsight;
+  }
+
+  if (!activeRackStats.length) return "No rack data yet.";
+
+  const valid = activeRackStats.filter((item) => item.avg !== null);
+  const validRateRows = valid.filter((item) => Number.isFinite(item.rate));
+  const validCategories = (activeCategoryStats || []).filter((item) => Number.isFinite(item.avgRate));
+  const hasAny = (...terms) => terms.some((term) => q.includes(term));
+  const asksCategory = hasAny("category", "type", "cultivar");
+  const asksSuggestion = hasAny("suggest", "recommend", "improve");
+  const asksAverage = hasAny("average", "avg");
+  const asksBest = hasAny("best", "highest", "tallest");
+  const asksWorst = hasAny("worst", "lowest", "shortest");
+  const asksFastest = hasAny("fastest", "quickest");
+  const asksSlowest = hasAny("slowest");
+  const asksGrowth = hasAny("growth", "growing", "rate", "change", "delta", "trend");
+  const asksHeight = hasAny("height", "tall");
+  const asksPerJar = hasAny("jar", "jars", "each", "per jar", "all jars", "all jar", "line");
+  const asksHistory = hasAny("history", "timeline", "first", "start", "begin", "earliest");
+  const asksCount = hasAny("measurement", "measurements", "record", "records", "points", "entries", "samples", "count");
+  const asksBinary = /\b(is|are|do|does|did|can|could|should|will)\b/.test(q);
+  const asksBad = hasAny("bad", "poor", "slow", "weak", "unhealthy", "problem", "issue");
+  const asksGood = hasAny("good", "healthy", "ok", "okay", "fine", "strong");
+  const simpleRackAsk =
+    Boolean(mentionedRack) &&
+    !(
+      asksBest ||
+      asksWorst ||
+      asksAverage ||
+      asksCategory ||
+      asksSuggestion ||
+      asksGrowth ||
+      asksHeight ||
+      asksPerJar ||
+      asksFastest ||
+      asksSlowest
+    );
+  if (simpleRackAsk) return activeInsight;
+
+  if (asksBinary && (asksGrowth || asksHeight || asksPerJar || asksBest || asksWorst || asksAverage) && (asksBad || asksGood)) {
+    if (!validRateRows.length) {
+      return "Cannot answer yes/no yet. Need at least two dated measurements per jar to calculate growth trends.";
+    }
+    const avgRate = validRateRows.reduce((sum, item) => sum + item.rate, 0) / validRateRows.length;
+    const slowCategories = validCategories.filter((item) => item.growthLabel === "slow");
+    const hasBadGrowth = avgRate < 0.2 || slowCategories.length > 0;
+    const hasGoodGrowth = avgRate >= 0.2 && slowCategories.length === 0;
+
+    if (asksBad && !asksGood) {
+      if (hasBadGrowth) {
+        const reason = slowCategories.length
+          ? `Slow category detected: ${slowCategories.map((item) => item.category).join(", ")}.`
+          : `Average rack growth rate is low (${avgRate.toFixed(2)} mm/day).`;
+        return `Yes. ${reason}`;
+      }
+      return `No. Rack ${activeRackCode} is not in a bad-growth state (average ${avgRate.toFixed(2)} mm/day).`;
+    }
+
+    if (asksGood && !asksBad) {
+      if (hasGoodGrowth) {
+        return `Yes. Rack ${activeRackCode} shows acceptable growth overall (average ${avgRate.toFixed(2)} mm/day).`;
+      }
+      const reason = slowCategories.length
+        ? `Slow category detected: ${slowCategories.map((item) => item.category).join(", ")}.`
+        : `Average growth is weak (${avgRate.toFixed(2)} mm/day).`;
+      return `No. ${reason}`;
+    }
+  }
+
+  if (asksHistory) {
+    const rows = valid.map((item) => {
+      const firstText = item.firstTs ? formatDate(item.firstTs) : "n/a";
+      const lastText = item.lastTs ? formatDate(item.lastTs) : "n/a";
+      const latestText = Number.isFinite(item.latest) ? `${item.latest.toFixed(1)} mm` : "n/a";
+      return `${item.id}: ${firstText} -> ${lastText}, latest ${latestText}, ${item.count} pts`;
+    });
+    if (!rows.length) return `No measurement history found for rack ${activeRackCode}.`;
+    const limited = rows.slice(0, 8).join("; ");
+    const suffix = rows.length > 8 ? ` Showing first 8 of ${rows.length} jars.` : "";
+    return `Rack ${activeRackCode} history by jar: ${limited}.${suffix}`;
+  }
+
+  if (asksCount) {
+    const total = valid.reduce((sum, item) => sum + (Number.isFinite(item.count) ? item.count : 0), 0);
+    return `Rack ${activeRackCode} has ${total} tracked measurements across ${valid.length} jars.`;
+  }
+
+  if (asksCategory && validCategories.length) {
+    const rows = validCategories
+      .map(
+        (item) =>
+          `${item.category}: ${item.avgRate.toFixed(2)} mm/day, change ${item.avgDelta?.toFixed(1) || "n/a"} mm (${item.growthLabel})`
+      )
+      .join(", ");
+    return `Category growth change on ${activeRackCode}: ${rows}.`;
+  }
+  if (asksSuggestion) {
+    if (!validCategories.length) return "Need category-level growth data before suggesting interventions.";
+    const focus = validCategories[validCategories.length - 1];
+    return `Recommended focus for ${focus.category}: ${focus.suggestion}`;
+  }
+  if ((asksFastest || (asksBest && asksGrowth)) && validRateRows.length) {
+    const fastest = validRateRows.reduce((a, b) => (a.rate > b.rate ? a : b));
+    return `Fastest growth on ${activeRackCode}: ${fastest.id} at ${fastest.rate.toFixed(2)} mm/day (change ${
+      Number.isFinite(fastest.delta) ? `${fastest.delta >= 0 ? "+" : ""}${fastest.delta.toFixed(1)} mm` : "n/a"
+    }).`;
+  }
+  if ((asksSlowest || (asksWorst && asksGrowth)) && validRateRows.length) {
+    const slowest = validRateRows.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `Slowest growth on ${activeRackCode}: ${slowest.id} at ${slowest.rate.toFixed(2)} mm/day (change ${
+      Number.isFinite(slowest.delta) ? `${slowest.delta >= 0 ? "+" : ""}${slowest.delta.toFixed(1)} mm` : "n/a"
+    }).`;
+  }
+  if ((asksGrowth || asksHeight) && asksPerJar) {
+    const rows = valid.map((item) => {
+      const avg = Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a";
+      const rate = Number.isFinite(item.rate) ? `${item.rate.toFixed(2)} mm/day` : "n/a";
+      const delta = Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a";
+      return `${item.id}: avg ${avg}, rate ${rate}, change ${delta}`;
+    });
+    if (!rows.length) return "Not enough per-jar measurements to summarize growth.";
+    const limited = rows.slice(0, 8).join("; ");
+    const suffix = rows.length > 8 ? ` Showing first 8 of ${rows.length} jars.` : "";
+    return `Per-jar height and growth on ${activeRackCode}: ${limited}.${suffix}`;
+  }
+  if (asksGrowth) {
+    if (!validRateRows.length) return "Need at least two dated measurements per jar to calculate growth rate.";
+    const avgRate = validRateRows.reduce((sum, item) => sum + item.rate, 0) / validRateRows.length;
+    const fastest = validRateRows.reduce((a, b) => (a.rate > b.rate ? a : b));
+    const slowest = validRateRows.reduce((a, b) => (a.rate < b.rate ? a : b));
+    return `Rack ${activeRackCode} average growth rate is ${avgRate.toFixed(2)} mm/day. Fastest jar: ${fastest.id} (${fastest.rate.toFixed(
+      2
+    )} mm/day). Slowest jar: ${slowest.id} (${slowest.rate.toFixed(2)} mm/day).`;
+  }
+  if (asksBest) {
     const best = valid.find((item) => item.rank === "Best");
-    return best ? `Best average height on ${rackQuery}: ${best.id} at ${best.avg.toFixed(1)} mm.` : insight;
+    return best ? `Best average height on ${activeRackCode}: ${best.id} at ${best.avg.toFixed(1)} mm.` : activeInsight;
   }
-  if (q.includes("worst") || q.includes("lowest")) {
+  if (asksWorst) {
     const worst = valid.find((item) => item.rank === "Worst");
-    return worst ? `Lowest average height on ${rackQuery}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : insight;
+    return worst ? `Lowest average height on ${activeRackCode}: ${worst.id} at ${worst.avg.toFixed(1)} mm.` : activeInsight;
   }
-  if (q.includes("average") || q.includes("avg")) {
+  if (asksAverage || (asksHeight && asksPerJar)) {
     const rows = valid.map((item) => `${item.id}: ${item.avg.toFixed(1)} mm`).join(", ");
-    return rows ? `Average height per jar: ${rows}.` : insight;
+    return rows ? `Average height per jar on ${activeRackCode}: ${rows}.` : activeInsight;
   }
-  return insight;
+  return activeInsight;
 };
 
 const ENABLE_HISTORY_TEST_MOCK = true;
@@ -971,6 +2314,77 @@ const mergeUniqueByNormalizedId = (primary, secondary, pickId) => {
     map.set(key, item);
   });
   return Array.from(map.values());
+};
+
+const MOCK_ORCHID_TYPE_T1_T2 = "Phalaenopsis (protocol A)";
+const MOCK_ORCHID_TYPE_T3_T4 = "Dendrobium (protocol B)";
+const MOCK_NUTRITION_NORMAL = "MS baseline (normal)";
+const MOCK_NUTRITION_SPECIAL = "MS + coconut water 10% (special)";
+const MOCK_SPECIAL_DETAIL = "Coconut water 10%";
+
+const extractRackCode = (value) => {
+  const text = firstText(value).toUpperCase();
+  if (!text) return "";
+  const match = text.match(/\bT\d+\b/);
+  if (match) return match[0];
+  return text.replace(/^RACK\s+/, "").trim();
+};
+
+const MOCK_RACK_PROTOCOLS = {
+  T1: { orchidType: MOCK_ORCHID_TYPE_T1_T2, nutrition: MOCK_NUTRITION_NORMAL, special: false },
+  T2: { orchidType: MOCK_ORCHID_TYPE_T1_T2, nutrition: MOCK_NUTRITION_SPECIAL, special: true },
+  T3: { orchidType: MOCK_ORCHID_TYPE_T3_T4, nutrition: MOCK_NUTRITION_NORMAL, special: false },
+  T4: { orchidType: MOCK_ORCHID_TYPE_T3_T4, nutrition: MOCK_NUTRITION_SPECIAL, special: true },
+};
+
+const applyMockRackProtocolToPlant = (plant) => {
+  if (!plant) return plant;
+  const rackCode = extractRackCode(plant?.location);
+  const protocol = MOCK_RACK_PROTOCOLS[rackCode];
+  if (!protocol) return plant;
+  return {
+    ...plant,
+    cultivar: protocol.orchidType,
+    nutrition: protocol.nutrition,
+  };
+};
+
+const applyMockRackProtocolToCulture = (entry) => {
+  if (!entry) return entry;
+  const rackCode = extractRackCode(entry?.rackNo);
+  const protocol = MOCK_RACK_PROTOCOLS[rackCode];
+  if (!protocol) return entry;
+
+  const nutritionStatus = buildNutritionSnapshot({
+    baseNutrition: protocol.nutrition,
+    hormoneEnabled: false,
+    hormoneDetail: "",
+    specialEnabled: protocol.special,
+    specialDetail: protocol.special ? MOCK_SPECIAL_DETAIL : "",
+  });
+
+  const protocolNote = protocol.special
+    ? "Special nutrition protocol maintained for rack trial."
+    : "Normal rack protocol maintained.";
+  const normalizedRecultures = (entry.recultures || []).map((row) => {
+    const baseNote = firstText(row?.note);
+    return {
+      ...row,
+      note: baseNote ? `${baseNote} | ${protocolNote}` : protocolNote,
+    };
+  });
+
+  return {
+    ...entry,
+    orchidType: protocol.orchidType,
+    nutrition: protocol.nutrition,
+    nutritionStatus,
+    addHormone: false,
+    hormoneDetail: "",
+    addSpecialNutrition: protocol.special,
+    specialNutritionDetail: protocol.special ? MOCK_SPECIAL_DETAIL : "",
+    recultures: normalizedRecultures,
+  };
 };
 
 const HISTORY_TEST_MOCK_PLANTS = [
@@ -997,45 +2411,65 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-92",
     planting_date: "2025-12-30",
     location: "Rack T1",
-    cultivar: "Phalaenopsis (test B)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "VW medium",
     heights: [
-      { date: "2026-01-30", height_mm: 20 },
-      { date: "2026-02-13", height_mm: 22 },
-      { date: "2026-02-27", height_mm: 24 },
-      { date: "2026-03-13", height_mm: 27 },
-      { date: "2026-03-27", height_mm: 30 },
-      { date: "2026-04-10", height_mm: 33 },
-      { date: "2026-04-24", height_mm: 36 },
-      { date: "2026-05-08", height_mm: 40 },
-      { date: "2026-05-22", height_mm: 44 },
-      { date: "2026-06-05", height_mm: 49 },
+      { date: "2025-12-30", height_mm: 6 },
+      { date: "2026-01-03", height_mm: 7 },
+      { date: "2026-01-05", height_mm: 9 },
+      { date: "2026-01-11", height_mm: 11 },
+      { date: "2026-01-20", height_mm: 14 },
+      { date: "2026-01-30", height_mm: 18 },
+      { date: "2026-02-06", height_mm: 20 },
+      { date: "2026-02-13", height_mm: 24 },
+      { date: "2026-02-20", height_mm: 26 },
+      { date: "2026-02-27", height_mm: 28 },
+      { date: "2026-03-13", height_mm: 31 },
+      { date: "2026-03-20", height_mm: 33 },
+      { date: "2026-03-27", height_mm: 36 },
+      { date: "2026-04-03", height_mm: 38 },
+      { date: "2026-04-10", height_mm: 41 },
+      { date: "2026-04-24", height_mm: 45 },
+      { date: "2026-05-08", height_mm: 50 },
+      { date: "2026-05-22", height_mm: 55 },
+      { date: "2026-06-05", height_mm: 61 },
     ],
   }),
   normalizePlantRecord({
     id: "Jar-93",
     planting_date: "2025-12-26",
     location: "Rack T1",
-    cultivar: "Dendrobium (test C)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "MS + banana extract",
     heights: [
+      { date: "2025-12-27", height_mm: 5 },
+      { date: "2025-12-30", height_mm: 6 },
+      { date: "2026-01-02", height_mm: 8 },
+      { date: "2026-01-09", height_mm: 10 },
+      { date: "2026-01-20", height_mm: 13 },
       { date: "2026-01-26", height_mm: 16 },
-      { date: "2026-02-09", height_mm: 23 },
-      { date: "2026-02-23", height_mm: 31 },
-      { date: "2026-03-09", height_mm: 40 },
-      { date: "2026-03-23", height_mm: 50 },
-      { date: "2026-04-06", height_mm: 62 },
-      { date: "2026-04-20", height_mm: 75 },
-      { date: "2026-05-04", height_mm: 89 },
-      { date: "2026-05-18", height_mm: 106 },
-      { date: "2026-06-01", height_mm: 128 },
+      { date: "2026-01-31", height_mm: 18 },
+      { date: "2026-02-06", height_mm: 22 },
+      { date: "2026-02-09", height_mm: 24 },
+      { date: "2026-02-16", height_mm: 28 },
+      { date: "2026-02-23", height_mm: 32 },
+      { date: "2026-02-28", height_mm: 35 },
+      { date: "2026-03-05", height_mm: 38 },
+      { date: "2026-03-09", height_mm: 42 },
+      { date: "2026-03-13", height_mm: 45 },
+      { date: "2026-03-23", height_mm: 52 },
+      { date: "2026-04-06", height_mm: 64 },
+      { date: "2026-04-20", height_mm: 78 },
+      { date: "2026-05-04", height_mm: 93 },
+      { date: "2026-05-18", height_mm: 111 },
+      { date: "2026-06-01", height_mm: 131 },
     ],
   }),
   normalizePlantRecord({
     id: "Jar-94",
     planting_date: "2025-12-29",
     location: "Rack T1",
-    cultivar: "Vanda (test D)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "VW + peptone",
     heights: [
       { date: "2026-01-29", height_mm: 22 },
@@ -1092,7 +2526,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-97",
     planting_date: "2026-01-01",
     location: "Rack T2",
-    cultivar: "Miltonia (test G)",
+    cultivar: "Dendrobium (test G)",
     nutrition: "VW + coconut water",
     heights: [
       { date: "2026-02-01", height_mm: 17 },
@@ -1111,7 +2545,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-98",
     planting_date: "2026-01-06",
     location: "Rack T3",
-    cultivar: "Brassia (test H)",
+    cultivar: "Oncidium (test H)",
     nutrition: "MS + casein hydrolysate",
     heights: [
       { date: "2026-02-06", height_mm: 14 },
@@ -1130,7 +2564,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-99",
     planting_date: "2026-01-08",
     location: "Rack T3",
-    cultivar: "Cymbidium (test I)",
+    cultivar: "Cattleya (test I)",
     nutrition: "Half-strength VW",
     heights: [
       { date: "2026-02-08", height_mm: 13 },
@@ -1168,7 +2602,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-101",
     planting_date: "2026-01-12",
     location: "Rack T4",
-    cultivar: "Ascocenda (test K)",
+    cultivar: "Vanda (test K)",
     nutrition: "VW + amino acids",
     heights: [
       { date: "2026-02-12", height_mm: 19 },
@@ -1187,7 +2621,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-102",
     planting_date: "2026-01-14",
     location: "Rack T4",
-    cultivar: "Rhynchostylis (test L)",
+    cultivar: "Paphiopedilum (test L)",
     nutrition: "MS + coconut water",
     heights: [
       { date: "2026-02-14", height_mm: 21 },
@@ -1206,7 +2640,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-103",
     planting_date: "2026-01-16",
     location: "Rack T1",
-    cultivar: "Spathoglottis (test M)",
+    cultivar: "Phalaenopsis (test A)",
     nutrition: "MS + myo-inositol",
     heights: [
       { date: "2026-02-16", height_mm: 24 },
@@ -1225,7 +2659,7 @@ const HISTORY_TEST_MOCK_PLANTS = [
     id: "Jar-104",
     planting_date: "2026-01-18",
     location: "Rack T4",
-    cultivar: "Phaius (test N)",
+    cultivar: "Cattleya (test N)",
     nutrition: "MS baseline",
     heights: [
       { date: "2026-02-18", height_mm: 28 },
@@ -1240,7 +2674,9 @@ const HISTORY_TEST_MOCK_PLANTS = [
       { date: "2026-06-24", height_mm: 28 },
     ],
   }),
-].filter(Boolean);
+]
+  .map(applyMockRackProtocolToPlant)
+  .filter(Boolean);
 const HISTORY_TEST_MOCK_ID_SET = new Set(
   HISTORY_TEST_MOCK_PLANTS.map((item) => normalizeId(item?.id)).filter(Boolean)
 );
@@ -1259,14 +2695,15 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-01-24", note: "Hormone: BA 1.0 mg/L + NAA 0.1 mg/L" },
       { date: "2026-02-21", note: "Special nutrition: coconut water 10%" },
+      { date: "2026-03-28", note: "Clear update: contamination check passed, medium refreshed, growth remained stable." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-28T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-92", {
     jarId: "Jar-92",
     cultureDate: "2025-12-30",
     rackNo: "T1",
-    orchidType: "Phalaenopsis (test B)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "VW medium",
     addHormone: true,
     hormoneDetail: "BA 0.5 mg/L",
@@ -1275,13 +2712,13 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-02-09", note: "Hormone reduced to BA 0.5 mg/L" },
       { date: "2026-03-23", note: "Observed slow growth; pH corrected to 5.6 and medium refreshed." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-23T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-93", {
     jarId: "Jar-93",
     cultureDate: "2025-12-26",
     rackNo: "T1",
-    orchidType: "Dendrobium (test C)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "MS + banana extract",
     addHormone: true,
     hormoneDetail: "Kinetin 0.8 mg/L",
@@ -1297,7 +2734,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-94",
     cultureDate: "2025-12-29",
     rackNo: "T1",
-    orchidType: "Vanda (test D)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "VW + peptone",
     addHormone: true,
     hormoneDetail: "BA 1.2 mg/L",
@@ -1341,7 +2778,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-97",
     cultureDate: "2026-01-01",
     rackNo: "T2",
-    orchidType: "Miltonia (test G)",
+    orchidType: "Dendrobium (test G)",
     nutrition: "VW + coconut water",
     addHormone: false,
     hormoneDetail: "",
@@ -1356,7 +2793,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-98",
     cultureDate: "2026-01-06",
     rackNo: "T3",
-    orchidType: "Brassia (test H)",
+    orchidType: "Oncidium (test H)",
     nutrition: "MS + casein hydrolysate",
     addHormone: true,
     hormoneDetail: "Kinetin 0.4 mg/L",
@@ -1370,7 +2807,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
     jarId: "Jar-99",
     cultureDate: "2026-01-08",
     rackNo: "T3",
-    orchidType: "Cymbidium (test I)",
+    orchidType: "Cattleya (test I)",
     nutrition: "Half-strength VW",
     addHormone: false,
     hormoneDetail: "",
@@ -1380,7 +2817,7 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-03-06", note: "Slow growth observed; seaweed extract added." },
       { date: "2026-04-17", note: "No contamination; maintain slow-growth protocol and monitor." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-04-17T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-100", {
     jarId: "Jar-100",
@@ -1395,13 +2832,13 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-03-10", note: "No visible growth after 60 days; sent for contamination test." },
       { date: "2026-04-21", note: "Still stagnant; planned reculture if unchanged in 14 days." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-04-21T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-101", {
     jarId: "Jar-101",
     cultureDate: "2026-01-12",
     rackNo: "T4",
-    orchidType: "Ascocenda (test K)",
+    orchidType: "Vanda (test K)",
     nutrition: "VW + amino acids",
     addHormone: true,
     hormoneDetail: "BA 1.1 mg/L",
@@ -1410,13 +2847,13 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-03-12", note: "Rapid growth confirmed; continue protocol and monitor spacing." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-12T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-102", {
     jarId: "Jar-102",
     cultureDate: "2026-01-14",
     rackNo: "T4",
-    orchidType: "Rhynchostylis (test L)",
+    orchidType: "Paphiopedilum (test L)",
     nutrition: "MS + coconut water",
     addHormone: true,
     hormoneDetail: "NAA 0.15 mg/L",
@@ -1425,13 +2862,13 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-03-14", note: "Growth steady; no intervention required." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-14T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-103", {
     jarId: "Jar-103",
     cultureDate: "2026-01-16",
     rackNo: "T1",
-    orchidType: "Spathoglottis (test M)",
+    orchidType: "Phalaenopsis (test A)",
     nutrition: "MS + myo-inositol",
     addHormone: false,
     hormoneDetail: "",
@@ -1440,13 +2877,13 @@ const HISTORY_TEST_MOCK_CULTURE = [
     recultures: [
       { date: "2026-03-30", note: "Stable normal growth; continue current medium." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-03-30T00:00:00.000Z",
   }),
   normalizeCultureRecord("Jar-104", {
     jarId: "Jar-104",
     cultureDate: "2026-01-18",
     rackNo: "T4",
-    orchidType: "Phaius (test N)",
+    orchidType: "Cattleya (test N)",
     nutrition: "MS baseline",
     addHormone: false,
     hormoneDetail: "",
@@ -1456,9 +2893,11 @@ const HISTORY_TEST_MOCK_CULTURE = [
       { date: "2026-04-29", note: "No growth trend after 100 days; contamination and pH review started." },
       { date: "2026-05-27", note: "Still stagnant; flagged for urgent reculture decision." },
     ],
-    updatedAt: "2026-03-10T00:00:00.000Z",
+    updatedAt: "2026-05-27T00:00:00.000Z",
   }),
-].filter(Boolean);
+]
+  .map(applyMockRackProtocolToCulture)
+  .filter(Boolean);
 
 export default function GrowthHistory() {
   const { theme } = useTheme();
@@ -1531,60 +2970,104 @@ export default function GrowthHistory() {
     });
     return map;
   }, [cultureEntries]);
+  const plantMap = useMemo(() => {
+    const map = new Map();
+    plants.forEach((plant) => {
+      const key = normalizeId(plant?.id);
+      if (key) map.set(key, plant);
+    });
+    return map;
+  }, [plants]);
+  const lineageIndex = useMemo(() => buildLineageIndex(cultureEntries), [cultureEntries]);
 
   const activeCanonicalId = useMemo(() => canonicalPlantId(jarId), [jarId]);
   const activeNormalizedId = useMemo(() => normalizeId(jarId || activeCanonicalId), [jarId, activeCanonicalId]);
+  const activeLineageIds = useMemo(
+    () => collectLineageIds(activeNormalizedId, lineageIndex),
+    [activeNormalizedId, lineageIndex]
+  );
+  const activeLineageCanonicalIds = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          activeLineageIds
+            .map((lineageId) => cultureMap.get(lineageId)?.jarId || plantMap.get(lineageId)?.id || lineageId)
+            .map((rawId) => canonicalPlantId(rawId))
+            .filter(Boolean)
+        )
+      ),
+    [activeLineageIds, cultureMap, plantMap]
+  );
 
   useEffect(() => {
-    if (!activeCanonicalId && !activeNormalizedId) {
+    if (!activeLineageCanonicalIds.length && !activeLineageIds.length) {
       setLiveHistoryRows([]);
       return undefined;
     }
 
-    const normalizeRows = (rawObj) =>
+    const activeLineageSet = new Set(activeLineageIds);
+    const normalizeRows = (rawObj, fallbackSourceId = "") =>
       Object.values(rawObj || {})
         .map((row) => normalizeHeightEntry(row))
         .filter(Boolean)
         .map((row) => {
           const ts = resolveHeightTimestamp(row);
           if (!Number.isFinite(ts)) return null;
-          return { ...row, ts };
+          const sourceAliases = [
+            row.jarId,
+            row.jar_id,
+            row.id,
+            row.jar,
+            row.jarKey,
+            row.plantId,
+            row.plant_id,
+          ]
+            .map((value) => normalizeId(value))
+            .filter(Boolean);
+          const sourceJarId =
+            sourceAliases.find((alias) => activeLineageSet.has(alias)) ||
+            sourceAliases[0] ||
+            normalizeId(fallbackSourceId) ||
+            "";
+          return { ...row, ts, sourceJarId };
         })
         .filter(Boolean);
 
-    let byJarRows = [];
+    const byJarRowsBySource = new Map();
     let globalRows = [];
 
     const mergeAndSet = () => {
-      const byTs = new Map();
-      byJarRows.forEach((row) => {
-        byTs.set(row.ts, row);
+      const deduped = new Map();
+      const byJarRows = Array.from(byJarRowsBySource.values()).flat();
+      [...byJarRows, ...globalRows].forEach((row) => {
+        if (!row || !Number.isFinite(row.ts)) return;
+        const sourceKey = normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id || row.plant_id);
+        const heightKey = Number(row.height_mm);
+        const entryKey = `${sourceKey || "na"}:${row.ts}:${Number.isFinite(heightKey) ? heightKey.toFixed(3) : "na"}`;
+        if (!deduped.has(entryKey)) deduped.set(entryKey, row);
       });
-      globalRows.forEach((row) => {
-        if (!byTs.has(row.ts)) byTs.set(row.ts, row);
-      });
-      setLiveHistoryRows(Array.from(byTs.values()).sort((a, b) => a.ts - b.ts));
+      setLiveHistoryRows(Array.from(deduped.values()).sort((a, b) => a.ts - b.ts));
     };
 
     const unsubs = [];
 
-    if (activeCanonicalId) {
-      const historyRef = fbQuery(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(300));
+    activeLineageCanonicalIds.forEach((canonicalId) => {
+      const historyRef = fbQuery(ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(canonicalId)}`), limitToLast(300));
       const offByJar = onValue(
         historyRef,
         (snap) => {
-          byJarRows = normalizeRows(snap.val());
+          byJarRowsBySource.set(canonicalId, normalizeRows(snap.val(), canonicalId));
           mergeAndSet();
         },
         () => {
-          byJarRows = [];
+          byJarRowsBySource.set(canonicalId, []);
           mergeAndSet();
         }
       );
       unsubs.push(offByJar);
-    }
+    });
 
-    if (activeNormalizedId) {
+    if (activeLineageSet.size) {
       const globalRef = fbQuery(ref(db, "growthLogs"), limitToLast(1200));
       const offGlobal = onValue(
         globalRef,
@@ -1602,7 +3085,7 @@ export default function GrowthHistory() {
             ]
               .map((value) => normalizeId(value))
               .filter(Boolean);
-            return aliases.includes(activeNormalizedId);
+            return aliases.some((alias) => activeLineageSet.has(alias));
           });
 
           globalRows = normalizeRows(matched);
@@ -1619,7 +3102,7 @@ export default function GrowthHistory() {
     return () => {
       unsubs.forEach((off) => off && off());
     };
-  }, [activeCanonicalId, activeNormalizedId]);
+  }, [activeLineageCanonicalIds, activeLineageIds]);
 
   const demoIds = useMemo(() => {
     const ids = new Set();
@@ -1647,7 +3130,8 @@ export default function GrowthHistory() {
       const nutrition = firstText(culture?.nutrition, plant.nutrition, plant.nutritionStatus);
       const nutritionStatus = firstText(culture?.nutritionStatus, nutrition);
       const recultures = culture?.recultures || [];
-      return { ...plant, location, planting_date, cultivar, nutrition, nutritionStatus, recultures };
+      const category = resolvePlantCategory({ category: plant.category, cultivar });
+      return { ...plant, location, planting_date, cultivar, nutrition, nutritionStatus, recultures, category };
     });
   }, [cultureMap, plants]);
 
@@ -1660,45 +3144,111 @@ export default function GrowthHistory() {
   const record = useMemo(() => {
     if (!jarId) return null;
     const id = normalizeId(jarId);
-    const heightsRecord = plants.find((p) => normalizeId(p.id) === id) || null;
-    const culture = cultureMap.get(id) || null;
-    if (!heightsRecord && !culture && !liveHistoryRows.length) return null;
+    const lineageIds = activeLineageIds.length ? activeLineageIds : (id ? [id] : []);
+    const lineageSet = new Set(lineageIds);
 
-    const baseId = culture?.jarId || heightsRecord?.id || jarId.trim();
-    const merged = {
+    const lineagePlants = plants.filter((plant) => lineageSet.has(normalizeId(plant?.id)));
+    const lineageCultures = lineageIds.map((lineageId) => cultureMap.get(lineageId)).filter(Boolean);
+
+    if (!lineagePlants.length && !lineageCultures.length && !liveHistoryRows.length) return null;
+
+    const directPlant = id ? plantMap.get(id) || null : null;
+    const directCulture = id ? cultureMap.get(id) || null : null;
+    const primaryPlant = directPlant || lineagePlants[0] || null;
+    const primaryCulture = directCulture || lineageCultures[0] || null;
+    const baseId = primaryCulture?.jarId || primaryPlant?.id || jarId.trim();
+
+    const plantingCandidates = [
+      directCulture?.cultureDate,
+      directPlant?.planting_date,
+      ...lineageCultures.map((entry) => entry?.cultureDate),
+      ...lineagePlants.map((plant) => plant?.planting_date),
+    ].filter(Boolean);
+    const plantingDate = plantingCandidates.length ? [...plantingCandidates].sort()[0] : "";
+
+    const rackLabels = Array.from(
+      new Set(
+        lineageCultures
+          .map((entry) => firstText(entry?.rackNo))
+          .filter(Boolean)
+          .map((rack) => `Rack ${rack}`)
+      )
+    );
+    const cultivarLabels = Array.from(
+      new Set(
+        lineageCultures
+          .map((entry) => firstText(entry?.orchidType))
+          .concat(lineagePlants.map((plant) => firstText(plant?.cultivar)))
+          .filter(Boolean)
+      )
+    );
+    const nutritionLabels = Array.from(
+      new Set(
+        lineageCultures
+          .map((entry) => firstText(entry?.nutritionStatus, entry?.nutrition))
+          .concat(lineagePlants.map((plant) => firstText(plant?.nutritionStatus, plant?.nutrition)))
+          .filter(Boolean)
+      )
+    );
+
+    const lineageDisplayIds = lineageIds.map(
+      (lineageId) => cultureMap.get(lineageId)?.jarId || plantMap.get(lineageId)?.id || lineageId
+    );
+
+    const mergedRecultures = lineageCultures
+      .flatMap((entry) =>
+        (Array.isArray(entry?.recultures) ? entry.recultures : []).map((row) => ({
+          ...row,
+          note: firstText(row?.note),
+          sourceJarId: entry?.jarId,
+        }))
+      )
+      .filter((row) => row?.date)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map((row) => ({
+        ...row,
+        note: row.note ? `${row.sourceJarId}: ${row.note}` : `${row.sourceJarId}: Re-culture logged`,
+      }));
+
+    return {
       id: baseId,
-      heights: heightsRecord?.heights || [],
-      planting_date: culture?.cultureDate || heightsRecord?.planting_date,
-      location: culture?.rackNo ? `Rack ${culture.rackNo}` : heightsRecord?.location,
-      cultivar: culture?.orchidType || heightsRecord?.cultivar,
-      nutrition: firstText(culture?.nutrition, heightsRecord?.nutrition, heightsRecord?.nutritionStatus),
-      nutritionStatus: firstText(
-        culture?.nutritionStatus,
-        culture?.nutrition,
-        heightsRecord?.nutritionStatus,
-        heightsRecord?.nutrition
+      heights: lineagePlants.flatMap((plant) =>
+        (plant?.heights || []).map((row) => ({ ...row, sourceJarId: plant?.id || "" }))
       ),
-      recultures: culture?.recultures || [],
+      planting_date: plantingDate || firstText(primaryCulture?.cultureDate, primaryPlant?.planting_date),
+      location: rackLabels.length ? rackLabels.join(", ") : primaryPlant?.location,
+      cultivar:
+        cultivarLabels.length > 1 ? `${cultivarLabels[0]} + ${cultivarLabels.length - 1} linked` : cultivarLabels[0],
+      nutrition: firstText(primaryCulture?.nutrition, primaryPlant?.nutrition, primaryPlant?.nutritionStatus),
+      nutritionStatus: nutritionLabels.length ? nutritionLabels.join(" | ") : "",
+      recultures: mergedRecultures,
+      lineageIds: lineageDisplayIds,
+      lineageCount: lineageDisplayIds.length,
     };
-    return merged;
-  }, [jarId, cultureMap, plants, liveHistoryRows]);
+  }, [jarId, activeLineageIds, cultureMap, plantMap, plants, liveHistoryRows]);
 
   const history = useMemo(() => {
     if (!record) return [];
     const baseRows = (record.heights || [])
       .map((h) => {
         const ts = resolveHeightTimestamp(h);
-        return { ...h, ts: Number.isFinite(ts) ? ts : null };
+        return { ...h, ts: Number.isFinite(ts) ? ts : null, sourceJarId: h?.sourceJarId || record.id };
       })
       .filter((h) => h.ts !== null);
 
     const byTs = new Map();
     baseRows.forEach((row) => {
-      byTs.set(row.ts, row);
+      const sourceKey = normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id);
+      const heightKey = Number(row.height_mm);
+      const key = `${sourceKey || "na"}:${row.ts}:${Number.isFinite(heightKey) ? heightKey.toFixed(3) : "na"}`;
+      byTs.set(key, row);
     });
     liveHistoryRows.forEach((row) => {
       if (row?.ts === null || row?.ts === undefined) return;
-      byTs.set(row.ts, row);
+      const sourceKey = normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id);
+      const heightKey = Number(row.height_mm);
+      const key = `${sourceKey || "na"}:${row.ts}:${Number.isFinite(heightKey) ? heightKey.toFixed(3) : "na"}`;
+      byTs.set(key, row);
     });
 
     return Array.from(byTs.values()).sort((a, b) => a.ts - b.ts);
@@ -1735,57 +3285,112 @@ export default function GrowthHistory() {
   const [includeCompareInsight, setIncludeCompareInsight] = useState(true);
   const [compareReportInsight, setCompareReportInsight] = useState("");
   const rackStats = useMemo(() => buildRackStats(rackPlants), [rackPlants]);
+  const rackCategoryStats = useMemo(() => buildRackCategoryStats(rackPlants), [rackPlants]);
   const rackInsight = useMemo(
-    () => buildRackInsight({ rackStats, rackQuery }),
-    [rackStats, rackQuery]
+    () => buildRackInsight({ rackStats, rackQuery, categoryStats: rackCategoryStats }),
+    [rackStats, rackQuery, rackCategoryStats]
   );
   const rackBrief = useMemo(
-    () => buildRackBrief({ rackStats, rackQuery }),
-    [rackStats, rackQuery]
+    () => buildRackBrief({ rackStats, rackQuery, categoryStats: rackCategoryStats }),
+    [rackStats, rackQuery, rackCategoryStats]
   );
+  const rackSnapshots = useMemo(() => {
+    const grouped = {};
+    (combinedRecords || []).forEach((plant) => {
+      const rackCode = extractRackCode(plant?.location);
+      if (!rackCode) return;
+      if (!grouped[rackCode]) grouped[rackCode] = [];
+      grouped[rackCode].push(plant);
+    });
+
+    const snapshotMap = {};
+    Object.entries(grouped).forEach(([rackCode, plantsInRack]) => {
+      snapshotMap[rackCode] = buildRackSnapshot({ rackCode, plants: plantsInRack });
+    });
+    return snapshotMap;
+  }, [combinedRecords]);
   const [includeRackInsight, setIncludeRackInsight] = useState(true);
   const [rackReportInsight, setRackReportInsight] = useState("");
-  const clusterSelectionIds = useMemo(() => {
+  const jarClusterSelectionIds = useMemo(() => {
+    const set = new Set();
+    const key = normalizeId(record?.id);
+    if (key) set.add(key);
+    return set;
+  }, [record?.id]);
+  const jarClusterResult = useMemo(() => {
+    if (!jarClusterSelectionIds.size) {
+      return {
+        ready: false,
+        reason: "Select a jar first to run clustering for this section.",
+        assignments: [],
+        counts: {},
+        mode: "kmeans",
+        note: "",
+        iterations: 0,
+        totalJars: 0,
+        sourceLabel: "jar history scope",
+      };
+    }
+    return buildGrowthClusterResult(combinedRecords, {
+      mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+      includeIdSet: jarClusterSelectionIds,
+    });
+  }, [combinedRecords, jarClusterSelectionIds]);
+  const rackClusterSelectionIds = useMemo(() => {
+    const set = new Set();
+    if (!(rackQuery || "").trim()) return set;
+    (rackPlants || []).forEach((plant) => {
+      const key = normalizeId(plant?.id);
+      if (key) set.add(key);
+    });
+    return set;
+  }, [rackQuery, rackPlants]);
+  const rackClusterResult = useMemo(() => {
+    if (!rackClusterSelectionIds.size) {
+      return {
+        ready: false,
+        reason: "Enter a rack ID first to run clustering for this section.",
+        assignments: [],
+        counts: {},
+        mode: "kmeans",
+        note: "",
+        iterations: 0,
+        totalJars: 0,
+        sourceLabel: "rack insights scope",
+      };
+    }
+    return buildGrowthClusterResult(combinedRecords, {
+      mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+      includeIdSet: rackClusterSelectionIds,
+    });
+  }, [combinedRecords, rackClusterSelectionIds]);
+  const compareClusterSelectionIds = useMemo(() => {
     const set = new Set();
     (compareIds || []).forEach((id) => {
       const key = normalizeId(id);
       if (key) set.add(key);
     });
-    if (record?.id) {
-      const key = normalizeId(record.id);
-      if (key) set.add(key);
-    }
-    if ((rackQuery || "").trim()) {
-      (rackPlants || []).forEach((plant) => {
-        const key = normalizeId(plant?.id);
-        if (key) set.add(key);
-      });
-    }
     return set;
-  }, [compareIds, record, rackQuery, rackPlants]);
-  const hasClusterScope = clusterSelectionIds.size > 0;
-  const clusterResult = useMemo(
-    () => {
-      if (!hasClusterScope) {
-        return {
-          ready: false,
-          reason: "Select a rack or jar to view growth clustering.",
-          assignments: [],
-          counts: {},
-          mode: "kmeans",
-          note: "",
-          iterations: 0,
-          totalJars: 0,
-          sourceLabel: "no active selection",
-        };
-      }
-      return buildGrowthClusterResult(combinedRecords, {
-        mockIdSet: HISTORY_TEST_MOCK_ID_SET,
-        includeIdSet: clusterSelectionIds,
-      });
-    },
-    [combinedRecords, clusterSelectionIds, hasClusterScope]
-  );
+  }, [compareIds]);
+  const compareClusterResult = useMemo(() => {
+    if (!compareClusterSelectionIds.size) {
+      return {
+        ready: false,
+        reason: "Select jar IDs in comparison first to run clustering for this section.",
+        assignments: [],
+        counts: {},
+        mode: "kmeans",
+        note: "",
+        iterations: 0,
+        totalJars: 0,
+        sourceLabel: "comparison scope",
+      };
+    }
+    return buildGrowthClusterResult(combinedRecords, {
+      mockIdSet: HISTORY_TEST_MOCK_ID_SET,
+      includeIdSet: compareClusterSelectionIds,
+    });
+  }, [combinedRecords, compareClusterSelectionIds]);
   const globalGrowthFeatures = useMemo(() => buildJarClusterFeatures(combinedRecords), [combinedRecords]);
   const heroWarnings = useMemo(() => {
     return buildGrowthAttentionWarnings(globalGrowthFeatures);
@@ -1802,129 +3407,305 @@ export default function GrowthHistory() {
   useEffect(() => {
     setRackReportInsight(rackBrief);
   }, [rackBrief]);
+  const [activeSectionId, setActiveSectionId] = useState("");
+  const activeSectionRef = useRef(null);
+
+  useEffect(() => {
+    if (!activeSectionId || !activeSectionRef.current) return;
+    activeSectionRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [activeSectionId]);
+
+  const sectionNavItems = useMemo(
+    () => [
+      {
+        id: "jar-history-section",
+        kicker: "Predictive",
+        title: "Jar History",
+        description: "Jar search, snapshot, growth chart, report/print/download, assistant, clustering, and measurement timeline.",
+        icon: "\u{1F4C8}",
+        status: record ? `${history.length} measurement${history.length === 1 ? "" : "s"} loaded` : "Select a jar to begin",
+        tone: "default",
+      },
+      {
+        id: "rack-insights-section",
+        kicker: "Analytics",
+        title: "Rack Insights",
+        description: "Rack-level analysis, rack trend charts, rack-pair comparison, and rack-focused guidance.",
+        icon: "\u{1F4CA}",
+        status: rackQuery ? `Active rack: ${rackQuery}` : "No rack selected",
+        tone: rackQuery ? "default" : "muted",
+      },
+      {
+        id: "jar-comparison-section",
+        kicker: "Comparison",
+        title: "Jar Comparison",
+        description: "Compare up to three jars, track trends, ask questions, and run clustering.",
+        icon: "\u2696\uFE0F",
+        status: compareIds.length ? `${compareIds.length} jar${compareIds.length > 1 ? "s" : ""} selected` : "No jars selected",
+        tone: compareIds.length ? "default" : "muted",
+      },
+    ],
+    [record, history.length, rackQuery, compareIds.length]
+  );
+
+  const openSection = (id) => {
+    if (!id) return;
+    setActiveSectionId((prev) => (prev === id ? "" : id));
+  };
 
   return (
     <div className="relative space-y-8">
       <Backdrop isLight={isLight} />
       <Hero warnings={heroWarnings} />
-      <LookupCard
-        jarId={jarId}
-        setJarId={setJarId}
-        record={record}
-        history={history}
-        query={query}
-        setQuery={setQuery}
-        status={status}
-        setStatus={setStatus}
-        demoIdHint={demoIdHint}
-        demoIds={demoIds}
-        plantsError={plantsError}
-        cultureError={cultureError}
-      />
+      <SectionModuleGrid items={sectionNavItems} onOpen={openSection} activeId={activeSectionId} />
 
-      <div className="relative space-y-6">
-        <SummaryCard record={record} history={history} />
-        <ChartCard
-          isLight={isLight}
-          record={record}
-          history={history}
-          reportInsightText={growthReportInsight || growthBrief}
-          includeInsight={includeInsightInReport}
-        />
-        <InsightAssistant
-          kicker="Chart assistant"
-          title="Growth conclusion"
-          insightText={growthBrief}
-          summaryText={growthInsight}
-          includeInsight={includeInsightInReport}
-          setIncludeInsight={setIncludeInsightInReport}
-          placeholder="Ask about rate, change, average, or latest..."
-          onReportTextChange={setGrowthReportInsight}
-          onAsk={(question) =>
-            answerGrowthQuestion({
-              question,
-              stats: historyStats,
-              history,
-              record,
-              insight: growthInsight,
-            })
-          }
-        />
-        <HistoryList history={history} />
-        <RackSearch
-          rackQuery={rackQuery}
-          setRackQuery={setRackQuery}
-          rackStatus={rackStatus}
-          setRackStatus={setRackStatus}
-          rackPlants={rackPlants}
-          rackHintString={rackHintString}
-        />
-        <RackChart
-          isLight={isLight}
-          rackQuery={rackQuery}
-          rackPlants={rackPlants}
-          rackHintString={rackHintString}
-          rackStats={rackStats}
-          reportInsightText={rackReportInsight || rackBrief}
-          includeInsight={includeRackInsight}
-        />
-        <InsightAssistant
-          kicker="Rack assistant"
-          title="Rack summary"
-          insightText={rackBrief}
-          summaryText={rackInsight}
-          includeInsight={includeRackInsight}
-          setIncludeInsight={setIncludeRackInsight}
-          placeholder="Ask about best, worst, or averages..."
-          onReportTextChange={setRackReportInsight}
-          onAsk={(question) =>
-            answerRackQuestion({
-              question,
-              rackStats,
-              rackQuery,
-              insight: rackInsight,
-            })
-          }
-        />
-        <ComparePanel
-          combinedRecords={combinedRecords}
-          compareIds={compareIds}
-          setCompareIds={setCompareIds}
-          compareWindow={compareWindow}
-          setCompareWindow={setCompareWindow}
-        />
-        <CompareChart
-          combinedRecords={combinedRecords}
-          compareIds={compareIds}
-          compareWindow={compareWindow}
-          isLight={isLight}
-          metrics={compareMetrics}
-          reportInsightText={compareReportInsight || compareBrief}
-          includeInsight={includeCompareInsight}
-        />
-        <InsightAssistant
-          kicker="Compare assistant"
-          title="Comparison summary"
-          insightText={compareBrief}
-          summaryText={compareInsight}
-          includeInsight={includeCompareInsight}
-          setIncludeInsight={setIncludeCompareInsight}
-          placeholder="Ask about best, worst, change, or average..."
-          onReportTextChange={setCompareReportInsight}
-          onAsk={(question) =>
-            answerCompareQuestion({
-              question,
-              metrics: compareMetrics,
-              compareWindow,
-              insight: compareInsight,
-            })
-          }
-        />
-        {hasClusterScope ? <GrowthClusterPanel clusterResult={clusterResult} /> : null}
+      <div ref={activeSectionRef} className="relative space-y-6">
+        {activeSectionId === "jar-history-section" ? (
+          <SectionCard
+          id="jar-history-section"
+          kicker="Section 1"
+          title="Jar History"
+          subtitle="Jar search, snapshot, growth chart, report actions, Assistant Q&A, clustering, and measurement log."
+          status={record ? `${history.length} measurement${history.length === 1 ? "" : "s"} loaded` : "Select a jar to begin"}
+          onClose={() => setActiveSectionId("")}
+        >
+          <LookupCard
+            jarId={jarId}
+            setJarId={setJarId}
+            record={record}
+            history={history}
+            query={query}
+            setQuery={setQuery}
+            status={status}
+            setStatus={setStatus}
+            demoIdHint={demoIdHint}
+            demoIds={demoIds}
+            plantsError={plantsError}
+            cultureError={cultureError}
+          />
+          <SummaryCard record={record} history={history} />
+          <ChartCard
+            isLight={isLight}
+            record={record}
+            history={history}
+            combinedRecords={combinedRecords}
+            reportInsightText={growthReportInsight || growthBrief}
+            includeInsight={includeInsightInReport}
+          />
+          <InsightAssistant
+            kicker="Chart assistant"
+            title="Growth conclusion"
+            insightText={growthBrief}
+            summaryText={growthInsight}
+            includeInsight={includeInsightInReport}
+            setIncludeInsight={setIncludeInsightInReport}
+            placeholder="Ask about growth history: yes/no quality, timeline, rate, change, average, latest..."
+            onReportTextChange={setGrowthReportInsight}
+            onAsk={(question) =>
+              answerGrowthQuestion({
+                question,
+                stats: historyStats,
+                history,
+                record,
+                insight: growthInsight,
+              })
+            }
+          />
+          <GrowthClusterPanel clusterResult={jarClusterResult} />
+          <HistoryList history={history} />
+          </SectionCard>
+        ) : null}
+
+        {activeSectionId === "rack-insights-section" ? (
+          <SectionCard
+          id="rack-insights-section"
+          kicker="Section 2"
+          title="Rack Performance & Zone Comparison"
+          subtitle="Analyze growth by rack, compare rack zones, and review rack-level recommendations."
+          status={rackQuery ? `Active rack: ${rackQuery}` : "Enter a rack label to analyze"}
+          onClose={() => setActiveSectionId("")}
+        >
+          <RackSearch
+            rackQuery={rackQuery}
+            setRackQuery={setRackQuery}
+            rackStatus={rackStatus}
+            setRackStatus={setRackStatus}
+            rackPlants={rackPlants}
+            rackHints={rackHints}
+            rackHintString={rackHintString}
+          />
+          <RackChart
+            isLight={isLight}
+            rackQuery={rackQuery}
+            rackPlants={rackPlants}
+            rackHintString={rackHintString}
+            rackStats={rackStats}
+            rackCategoryStats={rackCategoryStats}
+            reportInsightText={rackReportInsight || rackBrief}
+            includeInsight={includeRackInsight}
+          />
+          <InsightAssistant
+            kicker="Rack assistant"
+            title="Rack summary"
+            insightText={rackBrief}
+            summaryText={rackInsight}
+            includeInsight={includeRackInsight}
+            setIncludeInsight={setIncludeRackInsight}
+            placeholder="Ask rack history: yes/no growth quality, per-jar timeline, best/worst, categories, suggestions..."
+            onReportTextChange={setRackReportInsight}
+            onAsk={(question) =>
+              answerRackQuestion({
+                question,
+                rackStats,
+                rackQuery,
+                categoryStats: rackCategoryStats,
+                insight: rackInsight,
+                rackSnapshots,
+              })
+            }
+          />
+          <RackPairComparison combinedRecords={combinedRecords} />
+          <GrowthClusterPanel clusterResult={rackClusterResult} />
+          </SectionCard>
+        ) : null}
+
+        {activeSectionId === "jar-comparison-section" ? (
+          <SectionCard
+          id="jar-comparison-section"
+          kicker="Section 3"
+          title="Jar Comparison"
+          subtitle="Select up to three jars, compare growth lines, and ask comparison questions."
+          status={compareIds.length ? `${compareIds.length} jar${compareIds.length > 1 ? "s" : ""} selected` : "No jars selected"}
+          onClose={() => setActiveSectionId("")}
+        >
+          <ComparePanel
+            combinedRecords={combinedRecords}
+            compareIds={compareIds}
+            setCompareIds={setCompareIds}
+            compareWindow={compareWindow}
+            setCompareWindow={setCompareWindow}
+          />
+          <CompareChart
+            combinedRecords={combinedRecords}
+            compareIds={compareIds}
+            compareWindow={compareWindow}
+            isLight={isLight}
+            metrics={compareMetrics}
+            reportInsightText={compareReportInsight || compareBrief}
+            includeInsight={includeCompareInsight}
+          />
+          <InsightAssistant
+            kicker="Compare assistant"
+            title="Comparison summary"
+            insightText={compareBrief}
+            summaryText={compareInsight}
+            includeInsight={includeCompareInsight}
+            setIncludeInsight={setIncludeCompareInsight}
+            placeholder="Ask comparison history: yes/no quality, best/worst, per-jar trend, change, average..."
+            onReportTextChange={setCompareReportInsight}
+            onAsk={(question) =>
+              answerCompareQuestion({
+                question,
+                metrics: compareMetrics,
+                compareWindow,
+                insight: compareInsight,
+              })
+            }
+          />
+          <GrowthClusterPanel clusterResult={compareClusterResult} />
+          </SectionCard>
+        ) : null}
       </div>
     </div>
   );
 }
+
+function SectionModuleGrid({ items, onOpen, activeId }) {
+  if (!items?.length) return null;
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="space-y-3"
+    >
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="kicker">Sections</p>
+          <h3 className="text-lg font-semibold text-dark">Choose where to work</h3>
+        </div>
+        <span className="text-xs text-subtle">{items.length} modules</span>
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {items.map((item) => {
+          const isMuted = item.tone === "muted";
+          return (
+            <div
+              key={item.id}
+              className={`rounded-3xl border p-4 shadow-sm backdrop-blur-sm ${
+                isMuted
+                  ? "border-border/45 bg-paper/75"
+                  : "border-primary/20 bg-gradient-to-br from-paper/90 via-paper/80 to-primary/5"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-subtle">{item.kicker}</p>
+                <span className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-border/55 bg-paper/85 text-base">
+                  {item.icon || "*"}
+                </span>
+              </div>
+              <h4 className="mt-2 text-2xl font-semibold text-dark">{item.title}</h4>
+              <p className="mt-1 text-sm text-subtle min-h-[44px]">{item.description}</p>
+              <p className={`mt-2 text-xs ${isMuted ? "text-subtle" : "text-primary"}`}>{item.status}</p>
+              <button
+                type="button"
+                onClick={() => onOpen(item.id)}
+                className={`mt-3 text-xs font-semibold uppercase tracking-[0.16em] transition ${
+                  activeId === item.id ? "text-emerald-700" : "text-primary hover:text-primary/80"
+                }`}
+              >
+                {activeId === item.id ? "Hide section" : "Open section"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </motion.section>
+  );
+}
+
+function SectionCard({ id, kicker, title, subtitle, status, onClose, children }) {
+  return (
+    <motion.section
+      id={id}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35 }}
+      className="scroll-mt-24 rounded-2xl border border-primary/20 bg-paper/65 p-4 md:p-5 space-y-4 shadow-sm"
+    >
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/45 pb-3">
+        <div className="space-y-1">
+          <p className="kicker">{kicker}</p>
+          <h2 className="text-xl font-semibold text-dark">{title}</h2>
+          <p className="text-sm text-subtle">{subtitle}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="rounded-full border border-primary/25 bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
+            {status}
+          </span>
+          {onClose ? (
+            <button type="button" onClick={onClose} className="btn-soft px-3 py-1.5 text-xs">
+              Close
+            </button>
+          ) : null}
+        </div>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </motion.section>
+  );
+}
+
 // Lookup card with search input and status messages.
 function LookupCard({
   jarId,
@@ -1940,6 +3721,18 @@ function LookupCard({
   plantsError,
   cultureError,
 }) {
+  const [showJarSuggestions, setShowJarSuggestions] = useState(false);
+  const jarSuggestions = useMemo(() => getJarSuggestions(query, demoIds, 60), [query, demoIds]);
+
+  const selectJarSuggestion = (value) => {
+    const selected = String(value || "").trim();
+    if (!selected) return;
+    setQuery(selected);
+    setJarId(selected);
+    setStatus(`Loaded ${selected} from Firebase.`);
+    setShowJarSuggestions(false);
+  };
+
   const handleSearch = (e) => {
     e.preventDefault();
     const term = query.trim();
@@ -1987,12 +3780,22 @@ function LookupCard({
       <div className="grid md:grid-cols-[2fr_1fr] gap-4 items-end font-medium">
         <form onSubmit={handleSearch} className="space-y-2">
           <span className="text-xs uppercase tracking-[0.22em] text-subtle">Jar / Plant ID</span>
-          <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
+          <div className="relative">
+            <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
             <input
               value={query}
               onChange={(e) => {
                 setQuery(normalizeJarIdInput(e.target.value));
                 if (status) setStatus("");
+                setShowJarSuggestions(true);
+              }}
+              onFocus={() => setShowJarSuggestions(true)}
+              onBlur={() => {
+                if (typeof window !== "undefined") {
+                  window.setTimeout(() => setShowJarSuggestions(false), 120);
+                } else {
+                  setShowJarSuggestions(false);
+                }
               }}
               placeholder={`Search Jar ID (${demoIdHint || "known IDs"})`}
               className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
@@ -2000,12 +3803,13 @@ function LookupCard({
             {query && (
               <button
                 type="button"
-                onClick={() => {
-                  setQuery("");
-                  setStatus("");
-                }}
-                className="text-xs text-subtle hover:text-dark transition"
-              >
+              onClick={() => {
+                setQuery("");
+                setStatus("");
+                setShowJarSuggestions(false);
+              }}
+              className="text-xs text-subtle hover:text-dark transition"
+            >
                 Clear
               </button>
             )}
@@ -2015,13 +3819,32 @@ function LookupCard({
             >
               Search
             </button>
+            </div>
+            {showJarSuggestions && query.trim() && jarSuggestions.length ? (
+              <div className="absolute z-20 mt-2 w-full max-h-64 overflow-auto rounded-xl border border-border/60 bg-paper shadow-lg">
+                {jarSuggestions.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onMouseDown={(ev) => {
+                      ev.preventDefault();
+                      selectJarSuggestion(id);
+                    }}
+                    className="block w-full border-b border-border/35 px-3 py-2 text-left text-sm text-dark last:border-b-0 hover:bg-primary/5"
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+            ) : null}
           </div>
           <p className="text-[11px] text-subtle">Known IDs: {demoIdHint}</p>
         </form>
         <div className="rounded-2xl border border-border/40 bg-paper/70 px-4 py-3 text-sm text-dark shadow-inner">
           {record ? (
             <p>
-              Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar}
+              Loaded <span className="font-semibold">{record.id}</span> - {history.length} measurements - Cultivar {record.cultivar || "-"}
+              {record.lineageCount > 1 ? ` - Lineage jars: ${record.lineageCount}` : ""}
             </p>
           ) : status ? (
             <p className="text-amber-700 dark:text-amber-300">{status}</p>
@@ -2034,11 +3857,14 @@ function LookupCard({
   );
 }
 // Chart card
-function ChartCard({ record, history, isLight, reportInsightText, includeInsight }) {
+function ChartCard({ record, history, combinedRecords, isLight, reportInsightText, includeInsight }) {
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
   const pieCanvasRef = useRef(null);
   const pieChartRef = useRef(null);
+  const predictionCanvasRef = useRef(null);
+  const predictionChartRef = useRef(null);
+  const plantingTs = useMemo(() => toPlantingTimestamp(record?.planting_date), [record?.planting_date]);
   const cleanedPoints = useMemo(() => {
     const rawPoints = history
       .map((row) => toValidPoint(row.ts, row.height_mm))
@@ -2104,6 +3930,99 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
       return { x: point.x, y: Number(median.toFixed(2)) };
     });
   }, [cleanedPoints]);
+  const predictionBands = useMemo(
+    () => buildPredictedGrowthBands(combinedRecords, { bucketDays: 7, minSamplesPerBucket: 4, maxAgeDays: 365 }),
+    [combinedRecords]
+  );
+  const actualAgeSeries = useMemo(
+    () =>
+      cleanedPoints
+        .map((point) => {
+          const ageDays = computeAgeDaysAt(plantingTs, point.x);
+          if (!Number.isFinite(ageDays)) return null;
+          return { x: Number(ageDays.toFixed(2)), y: point.y, ts: point.x };
+        })
+        .filter(Boolean),
+    [cleanedPoints, plantingTs]
+  );
+  const predictionMaxY = useMemo(() => {
+    const bandHigh = predictionBands.points.length ? Math.max(...predictionBands.points.map((row) => row.q90)) : 0;
+    const actualHigh = actualAgeSeries.length ? Math.max(...actualAgeSeries.map((row) => row.y)) : 0;
+    const raw = Math.max(60, bandHigh + 15, actualHigh + 10);
+    return Math.ceil(raw / 20) * 20;
+  }, [predictionBands, actualAgeSeries]);
+  const latestPredictedLevel = useMemo(() => {
+    if (!actualAgeSeries.length) return { label: "Select a jar to compare", tone: "text-subtle" };
+    const latest = actualAgeSeries[actualAgeSeries.length - 1];
+    return classifyGrowthLevel(predictionBands.points, latest.x, latest.y);
+  }, [actualAgeSeries, predictionBands]);
+  const expectedVsActualComment = useMemo(() => {
+    if (!predictionBands.points.length) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Prediction bands are not ready yet. Add more dataset points to build expected levels.",
+        toneClass: "border-slate-300/40 bg-slate-500/10 text-slate-700 dark:text-slate-300",
+      };
+    }
+    if (!actualAgeSeries.length) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Expected chart is ready. Select a jar to overlay real growth and get an automatic comparison comment.",
+        toneClass: "border-sky-300/40 bg-sky-500/10 text-sky-700 dark:text-sky-300",
+      };
+    }
+
+    const latest = actualAgeSeries[actualAgeSeries.length - 1];
+    const q25 = interpolateBandAtAge(predictionBands.points, latest.x, "q25");
+    const q50 = interpolateBandAtAge(predictionBands.points, latest.x, "q50");
+    const q75 = interpolateBandAtAge(predictionBands.points, latest.x, "q75");
+    if (![q25, q50, q75].every(Number.isFinite)) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: "Real growth is available, but expected band interpolation is incomplete at the latest age.",
+        toneClass: "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
+
+    const deltaMm = latest.y - q50;
+    const latestLevel = classifyGrowthLevel(predictionBands.points, latest.x, latest.y).label;
+
+    const tail = actualAgeSeries.slice(-Math.min(6, actualAgeSeries.length));
+    let trendText = "Trend comparison is limited.";
+    if (tail.length >= 2) {
+      const first = tail[0];
+      const last = tail[tail.length - 1];
+      const days = Math.max(0.01, last.x - first.x);
+      const actualRate = (last.y - first.y) / days;
+      const expStart = interpolateBandAtAge(predictionBands.points, first.x, "q50");
+      const expEnd = interpolateBandAtAge(predictionBands.points, last.x, "q50");
+      if (Number.isFinite(expStart) && Number.isFinite(expEnd)) {
+        const expectedRate = (expEnd - expStart) / days;
+        const rateDelta = actualRate - expectedRate;
+        trendText = `Recent real trend is ${rateDelta >= 0 ? "faster" : "slower"} than expected by ${Math.abs(rateDelta).toFixed(2)} mm/day.`;
+      }
+    }
+
+    if (latest.y < q25) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: `Real growth is below expected at current age (${latestLevel}). It is ${Math.abs(deltaMm).toFixed(1)} mm under the expected median. ${trendText}`,
+        toneClass: "border-amber-300/40 bg-amber-500/10 text-amber-800 dark:text-amber-200",
+      };
+    }
+    if (latest.y > q75) {
+      return {
+        title: "Expected vs Actual Comment",
+        text: `Real growth is above expected at current age (${latestLevel}). It is +${Math.abs(deltaMm).toFixed(1)} mm over the expected median. ${trendText}`,
+        toneClass: "border-emerald-300/40 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+      };
+    }
+    return {
+      title: "Expected vs Actual Comment",
+      text: `Real growth is within the expected band (${latestLevel}) and is ${deltaMm >= 0 ? "+" : ""}${deltaMm.toFixed(1)} mm vs expected median. ${trendText}`,
+      toneClass: "border-sky-300/40 bg-sky-500/10 text-sky-800 dark:text-sky-200",
+    };
+  }, [actualAgeSeries, predictionBands]);
   const nutritionEvents = useMemo(() => {
     if (!record) return [];
 
@@ -2335,10 +4254,20 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     if (seriesStats.days !== null && seriesStats.days < 0.25) return "-";
     return `${seriesStats.rate.toFixed(2)} mm/day`;
   }, [seriesStats]);
+  const latestAgeText = useMemo(() => {
+    if (!cleanedPoints.length) return "-";
+    const latestPoint = cleanedPoints[cleanedPoints.length - 1];
+    const ageDays = computeAgeDaysAt(plantingTs, latestPoint?.x);
+    return ageDays === null ? "-" : formatAgeDays(ageDays);
+  }, [cleanedPoints, plantingTs]);
 
   const reportDateRows = useMemo(
-    () => cleanedPoints.map((point) => [formatDate(point.x), `${Number(point.y).toFixed(1)} mm`]),
-    [cleanedPoints]
+    () =>
+      cleanedPoints.map((point) => {
+        const ageDays = computeAgeDaysAt(plantingTs, point.x);
+        return [formatDate(point.x), `${Number(point.y).toFixed(1)} mm`, ageDays === null ? "n/a" : formatAgeDays(ageDays)];
+      }),
+    [cleanedPoints, plantingTs]
   );
   const reportNutritionRows = useMemo(
     () =>
@@ -2350,27 +4279,45 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         event.afterRate !== null ? `${event.afterRate.toFixed(2)} mm/day` : "n/a",
         event.afterDelta !== null ? `${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : "n/a",
         event.confidence,
-        event.outcome === "improved"
-          ? "Improved"
-          : event.outcome === "slowed"
-            ? "Slowed"
-            : event.outcome === "no_clear_change"
-              ? "No clear change"
-              : "Insufficient data",
+        formatNutritionOutcome(event.outcome),
       ]),
     [nutritionImpactRows]
   );
 
-  const handleReport = () => {
+  const handleReport = (mode = "preview") => {
     if (!cleanedPoints.length) return;
-    const chartImage = chartRef.current?.toBase64Image?.();
+    const predictionChartImage = predictionChartRef.current?.toBase64Image?.();
+    const lineChartImage = chartRef.current?.toBase64Image?.();
+    const interventionPieImage = pieChartRef.current?.toBase64Image?.();
+    const chartImages = [
+      predictionChartImage
+        ? {
+            src: predictionChartImage,
+            caption: "Predicted growth levels vs actual growth",
+          }
+        : null,
+      lineChartImage
+        ? {
+            src: lineChartImage,
+            caption: "Height over time line chart",
+          }
+        : null,
+      interventionPieImage
+        ? {
+            src: interventionPieImage,
+            caption: "Intervention outcomes pie chart",
+          }
+        : null,
+    ].filter(Boolean);
     const statsRows = [
       ["Jar ID", record?.id || "-"],
+      ["Lineage jars", record?.lineageCount ? String(record.lineageCount) : "1"],
       ["Planting date", record?.planting_date || "-"],
       ["Location", record?.location || "-"],
       ["Cultivar", record?.cultivar || "-"],
       ["Nutrition status", record?.nutritionStatus || record?.nutrition || "-"],
       ["Measurements", cleanedPoints.length ? `${cleanedPoints.length} entries` : "0"],
+      ["Current age", latestAgeText],
       ["Average height", seriesStats?.avg !== null ? `${seriesStats.avg.toFixed(1)} mm` : "-"],
       ["Change", seriesStats?.delta !== null ? `${seriesStats.delta >= 0 ? "+" : ""}${seriesStats.delta.toFixed(1)} mm` : "-"],
       ["Growth rate", growthRateText],
@@ -2378,7 +4325,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
 
     const sections = [
       { heading: "Summary", content: renderKeyValueTable(statsRows) },
-      { heading: "Measurements", content: renderDataTable(["Date", "Height"], reportDateRows) },
+      { heading: "Measurements", content: renderDataTable(["Date", "Height", "Age"], reportDateRows) },
     ];
     if (reportNutritionRows.length) {
       sections.splice(1, 0, {
@@ -2398,9 +4345,15 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
 
     openReportWindow({
       title: `Jar History Report - ${record?.id || "Unknown"}`,
-      subtitle: "Height over time",
-      chartImage,
+      subtitle:
+        chartImages.length > 2
+          ? "Predicted level, growth trend, and intervention outcome charts"
+          : chartImages.length > 1
+            ? "Height trend and intervention outcome charts"
+            : "Height over time chart",
+      chartImages,
       sections,
+      mode,
     });
   };
 
@@ -2509,7 +4462,7 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
             },
             grid: { color: theme.grid },
             ticks: { color: theme.ticks, maxTicksLimit: 9, maxRotation: 0 },
-            title: { display: true, text: "Time", color: theme.axis },
+            title: { display: true, text: "Time (age shown in tooltip)", color: theme.axis },
           },
           y: {
             beginAtZero: true,
@@ -2535,11 +4488,13 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
             mode: "nearest",
             callbacks: {
               label: (ctx) => {
+                const ageDays = computeAgeDaysAt(plantingTs, ctx.parsed?.x);
+                const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
                 if (ctx.dataset?.label === "Nutrition/culture changes") {
                   const label = firstText(ctx.raw?.label, "Change");
-                  return `${label}: ${Number(ctx.parsed.y).toFixed(1)} mm`;
+                  return `${label}: ${Number(ctx.parsed.y).toFixed(1)} mm${ageText}`;
                 }
-                return `${ctx.dataset.label}: ${ctx.parsed.y} mm`;
+                return `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)} mm${ageText}`;
               },
               afterLabel: (ctx) => {
                 if (ctx.dataset?.label === "Nutrition/culture changes") {
@@ -2557,7 +4512,181 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
     return () => {
       chartRef.current?.destroy();
     };
-  }, [chartPoints, segmentSeries, nutritionMarkers, record?.id, isLight]);
+  }, [chartPoints, segmentSeries, nutritionMarkers, plantingTs, record?.id, isLight]);
+  useEffect(() => {
+    if (predictionChartRef.current) {
+      predictionChartRef.current.destroy();
+      predictionChartRef.current = null;
+    }
+    if (!predictionCanvasRef.current || !predictionBands.points.length) return;
+
+    const theme = chartTheme(isLight);
+    const lowerBaseline = predictionBands.points.map((row) => ({ x: row.x, y: 0 }));
+    const q10Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q10 }));
+    const q25Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q25 }));
+    const q50Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q50 }));
+    const q75Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q75 }));
+    const q90Series = predictionBands.points.map((row) => ({ x: row.x, y: row.q90 }));
+    const topCapSeries = predictionBands.points.map((row) => ({ x: row.x, y: predictionMaxY }));
+    const maxAge = Math.max(
+      predictionBands.points[predictionBands.points.length - 1]?.x || 0,
+      actualAgeSeries[actualAgeSeries.length - 1]?.x || 0
+    );
+    const xMax = Math.max(35, Math.ceil((maxAge + 7) / 7) * 7);
+    const hasActualSeries = actualAgeSeries.length > 0;
+    const datasets = [
+      {
+        label: "Baseline",
+        data: lowerBaseline,
+        borderColor: "rgba(0,0,0,0)",
+        pointRadius: 0,
+        tension: 0.22,
+      },
+      {
+        label: "Critical low",
+        data: q10Series,
+        borderColor: "rgba(139,92,246,0.35)",
+        backgroundColor: "rgba(139,92,246,0.22)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Below expected",
+        data: q25Series,
+        borderColor: "rgba(245,158,11,0.4)",
+        backgroundColor: "rgba(245,158,11,0.2)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Expected range",
+        data: q75Series,
+        borderColor: "rgba(16,185,129,0.4)",
+        backgroundColor: "rgba(16,185,129,0.2)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Above expected",
+        data: q90Series,
+        borderColor: "rgba(249,115,22,0.45)",
+        backgroundColor: "rgba(249,115,22,0.2)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Very high",
+        data: topCapSeries,
+        borderColor: "rgba(239,68,68,0.36)",
+        backgroundColor: "rgba(239,68,68,0.16)",
+        borderWidth: 1,
+        pointRadius: 0,
+        tension: 0.22,
+        fill: "-1",
+      },
+      {
+        label: "Predicted median",
+        data: q50Series,
+        borderColor: isLight ? "#065f46" : "#6ee7b7",
+        borderWidth: 1.8,
+        borderDash: [6, 4],
+        pointRadius: 0,
+        tension: 0.24,
+        fill: false,
+      },
+    ];
+    if (hasActualSeries) {
+      datasets.push({
+        label: "Actual growth",
+        data: actualAgeSeries,
+        borderColor: isLight ? "#1d4ed8" : "#93c5fd",
+        backgroundColor: isLight ? "rgba(29,78,216,0.15)" : "rgba(147,197,253,0.2)",
+        borderWidth: 2.6,
+        pointRadius: actualAgeSeries.length > 80 ? 0 : 2.2,
+        pointHoverRadius: 4,
+        pointBackgroundColor: isLight ? "#1d4ed8" : "#bfdbfe",
+        pointBorderColor: isLight ? "#ffffff" : "#0f172a",
+        pointBorderWidth: 1,
+        tension: 0.24,
+        fill: false,
+      });
+    }
+
+    predictionChartRef.current = new Chart(predictionCanvasRef.current, {
+      type: "line",
+      data: {
+        datasets,
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        parsing: false,
+        interaction: { intersect: false, mode: "nearest" },
+        scales: {
+          x: {
+            type: "linear",
+            min: 0,
+            max: xMax,
+            grid: { color: theme.grid },
+            ticks: {
+              color: theme.ticks,
+              stepSize: xMax > 120 ? 14 : 7,
+              callback: (value) => `${value}d`,
+            },
+            title: { display: true, text: "Age since planting (days)", color: theme.axis },
+          },
+          y: {
+            min: 0,
+            max: predictionMaxY,
+            grid: { color: theme.grid },
+            ticks: { color: theme.ticks, maxTicksLimit: 8 },
+            title: { display: true, text: "Plant height (mm)", color: theme.axis },
+          },
+        },
+        plugins: {
+          legend: {
+            position: "bottom",
+            labels: {
+              color: theme.axis,
+              usePointStyle: true,
+              boxWidth: 14,
+            },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                if (ctx.dataset?.label !== "Actual growth") {
+                  return `${ctx.dataset.label}: ${Number(ctx.parsed.y).toFixed(1)} mm`;
+                }
+                const level = classifyGrowthLevel(predictionBands.points, ctx.parsed.x, ctx.parsed.y);
+                return `Actual: ${Number(ctx.parsed.y).toFixed(1)} mm | ${level.label}`;
+              },
+              afterLabel: (ctx) => {
+                if (ctx.dataset?.label !== "Actual growth") return "";
+                const age = Number(ctx.parsed?.x);
+                const q50 = interpolateBandAtAge(predictionBands.points, age, "q50");
+                if (!Number.isFinite(q50)) return "";
+                const delta = Number(ctx.parsed?.y) - q50;
+                return `vs median: ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} mm`;
+              },
+            },
+          },
+        },
+      },
+    });
+
+    return () => {
+      predictionChartRef.current?.destroy();
+    };
+  }, [predictionBands, actualAgeSeries, predictionMaxY, isLight]);
   useEffect(() => {
     if (pieChartRef.current) {
       pieChartRef.current.destroy();
@@ -2625,13 +4754,19 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">{cleanedPoints.length} points</span>
-          <button type="button" onClick={handleReport} className="btn-soft text-xs px-3 py-1.5">
+          <button type="button" onClick={() => handleReport("preview")} className="btn-soft text-xs px-3 py-1.5">
             Report
+          </button>
+          <button type="button" onClick={() => handleReport("print")} className="btn-soft text-xs px-3 py-1.5">
+            Print
+          </button>
+          <button type="button" onClick={() => handleReport("download")} className="btn-soft text-xs px-3 py-1.5">
+            Download
           </button>
         </div>
       </div>
       {seriesStats && (
-        <div className="grid sm:grid-cols-4 gap-2">
+        <div className="grid sm:grid-cols-5 gap-2">
           <div className="panel-muted px-3 py-2">
             <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Time span</p>
             <p className="text-sm font-semibold text-dark">
@@ -2656,6 +4791,12 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
               {growthRateText}
             </p>
           </div>
+          <div className="panel-muted px-3 py-2">
+            <p className="text-[11px] uppercase tracking-[0.18em] text-subtle">Current age</p>
+            <p className="text-sm font-semibold text-dark">
+              {latestAgeText}
+            </p>
+          </div>
         </div>
       )}
       {qualityWarnings.length ? (
@@ -2666,63 +4807,104 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
           ))}
         </div>
       ) : null}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Predicted growth levels</p>
+              <p className="text-sm font-semibold text-dark">Expected bands (from collected dataset)</p>
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] text-subtle">
+                Model: {predictionBands.sourceJarCount} jars, {predictionBands.totalPoints} points, {predictionBands.bucketDays}-day bins
+              </p>
+              <p className={`text-xs font-semibold ${latestPredictedLevel.tone}`}>Latest level: {latestPredictedLevel.label}</p>
+            </div>
+          </div>
+          <div className="h-72">
+            {predictionBands.points.length ? (
+              <canvas ref={predictionCanvasRef} />
+            ) : (
+              <EmptyState message="Prediction bands need more age-aligned points across jars." />
+            )}
+          </div>
+        </div>
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Actual growth curve</p>
+              <p className="text-sm font-semibold text-dark">Real jar growth over time</p>
+            </div>
+            <span className="text-[11px] text-subtle">{cleanedPoints.length} points</span>
+          </div>
+          <div className="h-72">
+            {cleanedPoints.length ? (
+              <canvas ref={canvasRef} />
+            ) : (
+              <EmptyState message="No measurements yet. Choose a Jar ID to see the real growth line." />
+            )}
+          </div>
+        </div>
+      </div>
+      <div className={`rounded-xl border px-4 py-3 text-sm ${expectedVsActualComment.toneClass}`}>
+        <p className="text-xs font-semibold uppercase tracking-[0.16em] mb-1">{expectedVsActualComment.title}</p>
+        <p>{expectedVsActualComment.text}</p>
+      </div>
       {nutritionImpactRows.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
-            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Nutrition change impact</p>
+            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Nutrition / culture changes</p>
             <span className="text-[11px] text-subtle">{nutritionImpactRows.length} event(s)</span>
           </div>
-          <div className="grid sm:grid-cols-2 gap-2 max-h-52 overflow-auto pr-1">
-            {nutritionImpactRows.map((event) => (
-              <div key={`${event.label}-${event.x}`} className="rounded-xl border border-border/40 bg-paper/80 px-3 py-2">
-                <p className="text-xs font-semibold text-dark">
-                  {event.label} - {formatDate(event.x)}
-                </p>
-                <p className="text-[11px] text-subtle">
-                  Nutrition: {event.nutritionText || "-"}
-                </p>
-                <p className="text-[11px] text-subtle">
-                  {event.effectText}
-                  {event.afterDelta !== null ? ` | 14-day height change: ${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : ""}
-                </p>
-                <p className="text-[11px] text-subtle">
-                  Confidence:{" "}
-                  <span
-                    className={`font-semibold ${
-                      event.confidence === "High"
-                        ? "text-emerald-700 dark:text-emerald-300"
-                        : event.confidence === "Medium"
-                          ? "text-sky-700 dark:text-sky-300"
-                          : "text-amber-700 dark:text-amber-300"
-                    }`}
-                  >
-                    {event.confidence}
-                  </span>
-                  {` (before ${event.beforeCount} pts, after ${event.afterCount} pts)`}
-                </p>
-              </div>
-            ))}
+          <div className="overflow-x-auto rounded-xl border border-border/45 bg-paper/80">
+            <table className="w-full text-xs min-w-[820px]">
+              <thead className="bg-paper/90">
+                <tr>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Event</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Date</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Nutrition</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Before rate</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">After rate</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">After 14d change</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Confidence</th>
+                  <th className="px-3 py-2 text-left uppercase tracking-[0.08em] text-subtle">Outcome</th>
+                </tr>
+              </thead>
+              <tbody>
+                {nutritionImpactRows.map((event) => (
+                  <tr key={`${event.label}-${event.x}`} className="border-t border-border/35">
+                    <td className="px-3 py-2 text-dark font-medium">{event.label}</td>
+                    <td className="px-3 py-2 text-subtle">{formatDate(event.x)}</td>
+                    <td className="px-3 py-2 text-subtle">{event.nutritionText || "-"}</td>
+                    <td className="px-3 py-2 text-subtle">
+                      {event.beforeRate !== null ? `${event.beforeRate.toFixed(2)} mm/day` : "n/a"}
+                    </td>
+                    <td className="px-3 py-2 text-subtle">
+                      {event.afterRate !== null ? `${event.afterRate.toFixed(2)} mm/day` : "n/a"}
+                    </td>
+                    <td className="px-3 py-2 text-subtle">
+                      {event.afterDelta !== null ? `${event.afterDelta >= 0 ? "+" : ""}${event.afterDelta.toFixed(1)} mm` : "n/a"}
+                    </td>
+                    <td className="px-3 py-2 text-subtle">{event.confidence}</td>
+                    <td className="px-3 py-2 text-subtle">{formatNutritionOutcome(event.outcome)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
       ) : null}
-      <div className={`grid gap-4 ${impactPieData ? "lg:grid-cols-[2fr_1fr]" : ""}`}>
-        <div className="h-80">
-          {cleanedPoints.length ? (
-            <canvas ref={canvasRef} />
-          ) : (
-            <EmptyState message="No measurements yet. Choose a Jar ID to see the line chart." />
-          )}
-        </div>
-        {impactPieData ? (
-          <div className="panel-muted px-4 py-3 space-y-3">
-            <div className="flex items-center justify-between">
-              <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
-              <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
-            </div>
+      {impactPieData ? (
+        <div className="panel-muted px-4 py-3 space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs uppercase tracking-[0.18em] text-subtle">Intervention outcomes</p>
+            <span className="text-[11px] text-subtle">{impactPieData.total} events</span>
+          </div>
+          <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
             <div className="h-56">
               <canvas ref={pieCanvasRef} />
             </div>
-            <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div className="grid grid-cols-2 gap-2 text-[11px] content-start">
               <div className="rounded-lg border border-border/35 bg-paper/80 px-2 py-1.5 text-subtle">
                 Improved: <span className="font-semibold text-emerald-700 dark:text-emerald-300">{impactPieData.values[0]}</span>
               </div>
@@ -2737,8 +4919,8 @@ function ChartCard({ record, history, isLight, reportInsightText, includeInsight
               </div>
             </div>
           </div>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </motion.div>
   );
 }
@@ -2754,11 +4936,11 @@ function InsightAssistant({
   onAsk,
   onReportTextChange,
 }) {
-  const [messages, setMessages] = useState(() => [{ role: "assistant", text: insightText }]);
+  const [messages, setMessages] = useState([]);
   const [input, setInput] = useState("");
 
   useEffect(() => {
-    setMessages([{ role: "assistant", text: insightText }]);
+    setMessages([]);
   }, [insightText, title]);
 
   const handleAsk = (e) => {
@@ -2801,7 +4983,7 @@ function InsightAssistant({
           <div>
             <p className="kicker">{kicker}</p>
             <h3 className="text-lg font-semibold text-dark">{title}</h3>
-            <p className="text-xs text-subtle">Mini scientist assistant</p>
+            <p className="text-xs text-subtle">Growth tracker & history assistant</p>
           </div>
         </div>
         <label className="flex items-center gap-2 text-xs text-subtle shrink-0">
@@ -2867,10 +5049,23 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
     { key: "all", label: "All" },
   ];
 
-  const sortedIds = useMemo(() => combinedRecords.map((p) => p.id).sort(), [combinedRecords]);
+  const sortedIds = useMemo(() => {
+    const byNormalized = new Map();
+    (combinedRecords || []).forEach((record) => {
+      const id = String(record?.id || "").trim();
+      const key = normalizeId(id);
+      if (!id || !key || byNormalized.has(key)) return;
+      byNormalized.set(key, id);
+    });
+    return Array.from(byNormalized.values()).sort((a, b) =>
+      String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" })
+    );
+  }, [combinedRecords]);
   const filtered = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    return sortedIds.filter((id) => !compareIds.includes(id) && (!term || id.toLowerCase().includes(term))).slice(0, 10);
+    const selected = new Set(compareIds.map((id) => normalizeId(id)).filter(Boolean));
+    const term = search.trim();
+    const base = term ? getJarSuggestions(term, sortedIds, 80) : sortedIds;
+    return base.filter((id) => !selected.has(normalizeId(id))).slice(0, 80);
   }, [sortedIds, compareIds, search]);
 
   const handleSubmit = (e) => {
@@ -2914,7 +5109,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
           <div className="flex-1 rounded-xl border border-border/45 bg-paper/70 px-3 py-2 flex items-center gap-2 shadow-sm">
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => setSearch(normalizeJarIdInput(e.target.value))}
               placeholder="Search Jar ID (type to filter)"
               className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
             />
@@ -2941,7 +5136,7 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
             >
               {id}
               <button onClick={() => toggleId(id)} className="text-xs text-primary/80 hover:text-primary">
-                ×
+                x
               </button>
             </span>
           ))}
@@ -2950,13 +5145,13 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
         <div className="rounded-xl border border-border/40 bg-paper/60 px-3 py-2">
           <p className="text-[11px] text-subtle">Matches</p>
           {filtered.length ? (
-            <div className="flex flex-wrap gap-2 mt-1">
+            <div className="mt-1 max-h-56 overflow-auto pr-1 space-y-1">
               {filtered.map((id) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => toggleId(id)}
-                  className="px-3 py-1.5 rounded-lg text-xs border border-border/45 bg-paper/80 text-subtle hover:border-primary/50 hover:text-primary transition"
+                  className="w-full px-3 py-1.5 rounded-lg text-xs text-left border border-border/45 bg-paper/80 text-subtle hover:border-primary/50 hover:text-primary transition"
                 >
                   {id}
                 </button>
@@ -2968,12 +5163,23 @@ function ComparePanel({ combinedRecords, compareIds, setCompareIds, compareWindo
         </div>
       </div>
 
-      <p className="text-[11px] text-subtle mt-2">Select 2–3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
+      <p className="text-[11px] text-subtle mt-2">Select 2-3 jars for best comparison; currently {compareIds.length || 0} selected.</p>
     </motion.div>
   );
 }
 
-function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPlants, rackHintString }) {
+function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPlants, rackHints, rackHintString }) {
+  const [showRackSuggestions, setShowRackSuggestions] = useState(false);
+  const rackSuggestions = useMemo(() => getRackSuggestions(rackQuery, rackHints), [rackQuery, rackHints]);
+
+  const selectRackSuggestion = (value) => {
+    const selected = String(value || "").trim();
+    if (!selected) return;
+    setRackQuery(selected);
+    setRackStatus("");
+    setShowRackSuggestions(false);
+  };
+
   const handleRackSearch = (e) => {
     e.preventDefault();
     const term = rackQuery.trim();
@@ -2994,24 +5200,34 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3 }}
-      className="panel space-y-4"
+      className="panel relative z-30 space-y-4"
     >
       <div className="flex items-start justify-between">
         <div>
-          <p className="kicker">Rack filter</p>
-          <h3 className="text-lg font-semibold text-dark">Plot all jars on a rack</h3>
-          <p className="text-sm text-subtle">Search by rack label to see every jar’s height line in one chart below.</p>
+          <p className="kicker">Rack analysis</p>
+          <h3 className="text-lg font-semibold text-dark">Analyze a rack</h3>
+          <p className="text-sm text-subtle">Search by rack label to load rack-specific growth trends and compare rack performance.</p>
         </div>
         <span className="text-xs text-subtle">{rackPlants.length ? `${rackPlants.length} loaded` : rackQuery ? "0 matches" : "Idle"}</span>
       </div>
 
       <form onSubmit={handleRackSearch} className="space-y-2">
-        <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
+        <div className="relative">
+          <div className="flex items-center gap-3 rounded-2xl border border-border/45 bg-paper/70 px-4 py-3 shadow-sm">
           <input
             value={rackQuery}
             onChange={(e) => {
               setRackQuery(e.target.value);
               if (rackStatus) setRackStatus("");
+              setShowRackSuggestions(true);
+            }}
+            onFocus={() => setShowRackSuggestions(true)}
+            onBlur={() => {
+              if (typeof window !== "undefined") {
+                window.setTimeout(() => setShowRackSuggestions(false), 120);
+              } else {
+                setShowRackSuggestions(false);
+              }
             }}
             placeholder="e.g. A1, B3, C2, A4"
             className="w-full bg-transparent text-sm text-dark placeholder:text-subtle/80 focus:outline-none"
@@ -3022,6 +5238,7 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
               onClick={() => {
                 setRackQuery("");
                 setRackStatus("");
+                setShowRackSuggestions(false);
               }}
               className="text-xs text-subtle hover:text-dark transition"
             >
@@ -3034,10 +5251,181 @@ function RackSearch({ rackQuery, setRackQuery, rackStatus, setRackStatus, rackPl
           >
             Search
           </button>
+          </div>
+          {showRackSuggestions && rackQuery.trim() && rackSuggestions.length ? (
+            <div className="absolute z-50 mt-2 w-full max-h-64 overflow-y-auto overscroll-contain rounded-xl border border-border/60 bg-paper shadow-lg">
+              {rackSuggestions.map((rack) => (
+                <button
+                  key={rack}
+                  type="button"
+                  onMouseDown={(ev) => {
+                    ev.preventDefault();
+                    selectRackSuggestion(rack);
+                  }}
+                  className="block w-full border-b border-border/35 px-3 py-2 text-left text-sm text-dark last:border-b-0 hover:bg-primary/5"
+                >
+                  {rack}
+                </button>
+              ))}
+            </div>
+          ) : null}
         </div>
         <p className="text-[11px] text-subtle">Known racks: {rackHintString || "n/a"}</p>
         {rackStatus && <p className="text-[12px] text-primary">{rackStatus}</p>}
       </form>
+    </motion.div>
+  );
+}
+
+function RackPairComparison({ combinedRecords }) {
+  const rackMap = useMemo(() => {
+    const map = new Map();
+    (combinedRecords || []).forEach((plant) => {
+      const rackCode = extractRackCode(plant?.location);
+      if (!rackCode) return;
+      if (!map.has(rackCode)) map.set(rackCode, []);
+      map.get(rackCode).push(plant);
+    });
+    return map;
+  }, [combinedRecords]);
+
+  const rackOptions = useMemo(() => Array.from(rackMap.keys()).sort(), [rackMap]);
+  const [leftRack, setLeftRack] = useState("");
+  const [rightRack, setRightRack] = useState("");
+  const [hideComparison, setHideComparison] = useState(false);
+
+  useEffect(() => {
+    if (!rackOptions.length) {
+      setLeftRack("");
+      setRightRack("");
+      return;
+    }
+    setLeftRack((prev) => (prev && rackOptions.includes(prev) ? prev : rackOptions[0]));
+    setRightRack((prev) => {
+      if (prev && rackOptions.includes(prev)) return prev;
+      return rackOptions[1] || rackOptions[0];
+    });
+  }, [rackOptions]);
+
+  const leftSummary = useMemo(
+    () => buildRackComparisonSummary(leftRack, rackMap.get(leftRack) || []),
+    [leftRack, rackMap]
+  );
+  const rightSummary = useMemo(
+    () => buildRackComparisonSummary(rightRack, rackMap.get(rightRack) || []),
+    [rightRack, rackMap]
+  );
+
+  const comparison = useMemo(() => {
+    if (!leftRack || !rightRack) return null;
+    if (leftRack === rightRack) {
+      return {
+        mode: "invalid",
+        headline: "Select two different racks",
+        detail: "Choose one source rack and one comparison rack.",
+        recommendation: "Recommended pairs for mock study: T1 vs T2, T1 vs T3, T3 vs T4, T2 vs T4.",
+      };
+    }
+    return buildRackPairComparison({ leftSummary, rightSummary });
+  }, [leftRack, rightRack, leftSummary, rightSummary]);
+
+  const formatRate = (value) => (Number.isFinite(value) ? `${value.toFixed(2)} mm/day` : "n/a");
+  const formatDelta = (value) => (Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(1)} mm` : "n/a");
+  const modeLabel = (mode) => (mode === "special" ? "Special" : mode === "normal" ? "Normal" : "Unknown");
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3 }}
+      className="panel space-y-4"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="kicker">Rack comparison</p>
+          <h3 className="text-lg font-semibold text-dark">Compare two racks</h3>
+          <p className="text-sm text-subtle">
+            Analyze normal vs special nutrition for the same orchid type, and type differences under the same nutrition mode.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <span className="text-xs text-subtle">{rackOptions.length ? `${rackOptions.length} racks available` : "No rack data"}</span>
+          <button
+            type="button"
+            onClick={() => setHideComparison((prev) => !prev)}
+            className="rounded-md border border-border/45 px-2 py-1 text-[11px] text-subtle transition hover:border-primary/50 hover:text-primary"
+          >
+            {hideComparison ? "Show" : "Hide"}
+          </button>
+        </div>
+      </div>
+
+      {!hideComparison && rackOptions.length ? (
+        <>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <label className="panel-muted px-3 py-2 text-xs text-subtle space-y-1">
+              <span className="uppercase tracking-[0.16em]">Rack A</span>
+              <select
+                value={leftRack}
+                onChange={(e) => setLeftRack(e.target.value)}
+                className="w-full rounded-lg border border-border/45 bg-paper/80 px-2 py-1.5 text-sm text-dark focus:outline-none"
+              >
+                {rackOptions.map((rack) => (
+                  <option key={`left-${rack}`} value={rack}>
+                    {rack}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="panel-muted px-3 py-2 text-xs text-subtle space-y-1">
+              <span className="uppercase tracking-[0.16em]">Rack B</span>
+              <select
+                value={rightRack}
+                onChange={(e) => setRightRack(e.target.value)}
+                className="w-full rounded-lg border border-border/45 bg-paper/80 px-2 py-1.5 text-sm text-dark focus:outline-none"
+              >
+                {rackOptions.map((rack) => (
+                  <option key={`right-${rack}`} value={rack}>
+                    {rack}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <p className="text-[11px] text-subtle">
+            Suggested scenario pairs: T1 vs T2 (same type, normal vs special), T1 vs T3 (different type, same normal),
+            T3 vs T4 (same type, normal vs special), T2 vs T4 (different type, same special).
+          </p>
+
+          <div className="grid sm:grid-cols-2 gap-3">
+            {[leftSummary, rightSummary].map((item, idx) => (
+              <div key={`${item.rackCode || "rack"}-${idx}`} className="panel-muted px-3 py-2 text-xs text-dark space-y-1.5">
+                <p className="font-semibold">Rack {item.rackCode || "-"}</p>
+                <p className="text-subtle">Type: {item.dominantType}</p>
+                <p className="text-subtle">Nutrition mode: {modeLabel(item.nutritionMode)}</p>
+                <p className="text-subtle">Nutrition: {item.dominantNutrition}</p>
+                <p className="text-subtle">Jars: {item.jarCount}</p>
+                <p className="text-subtle">Avg rate: {formatRate(item.avgRate)}</p>
+                <p className="text-subtle">Avg change: {formatDelta(item.avgDelta)}</p>
+                <p className="text-subtle">Avg age: {item.avgAgeDays !== null ? formatAgeDays(item.avgAgeDays) : "n/a"}</p>
+              </div>
+            ))}
+          </div>
+
+          {comparison ? (
+            <div className="rounded-xl border border-primary/35 bg-primary/10 px-4 py-3 space-y-1.5">
+              <p className="text-xs uppercase tracking-[0.16em] text-primary/90">Comparison Result</p>
+              <p className="text-sm font-semibold text-dark">{comparison.headline}</p>
+              <p className="text-sm text-dark/90">{comparison.detail}</p>
+              <p className="text-sm text-dark/90">{comparison.recommendation}</p>
+            </div>
+          ) : null}
+        </>
+      ) : !hideComparison ? (
+        <EmptyState message="Rack comparison will appear once rack records are available." />
+      ) : (
+        <p className="text-xs text-subtle">Comparison section is hidden.</p>
+      )}
     </motion.div>
   );
 }
@@ -3061,6 +5449,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
     compareIds.forEach((id, idx) => {
       const plant = combinedRecords.find((p) => p.id === id);
       if (!plant) return;
+      const plantingTs = toPlantingTimestamp(plant?.planting_date);
       const sorted = (plant.heights || [])
         .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
         .filter((p) => p !== null && (cutoffMs === null || p.x >= cutoffMs))
@@ -3079,6 +5468,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
         pointRadius: 4,
         pointBackgroundColor: color,
         fill: false,
+        sourceJarId: id,
+        sourcePlantingTs: plantingTs,
       });
 
       const trendPoints = buildTrendlinePoints(sorted);
@@ -3092,6 +5483,8 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
           pointRadius: 0,
           tension: 0,
           fill: false,
+          sourceJarId: id,
+          sourcePlantingTs: plantingTs,
         });
       }
     });
@@ -3109,6 +5502,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
       item.rate !== null ? `${item.rate.toFixed(2)} mm/day` : "n/a",
       Number.isFinite(item.delta) ? `${item.delta >= 0 ? "+" : ""}${item.delta.toFixed(1)} mm` : "n/a",
       Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a",
+      item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a",
       `${item.count} pts`,
     ]);
 
@@ -3116,7 +5510,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
       {
         heading: "Growth metrics",
         content: renderDataTable(
-          ["Jar ID", "Growth rate", "Change", "Avg height", "Points"],
+          ["Jar ID", "Growth rate", "Change", "Avg height", "Age", "Points"],
           metricRows
         ),
       },
@@ -3153,7 +5547,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
         responsive: true,
         maintainAspectRatio: false,
         parsing: false,
-        interaction: { mode: "index", intersect: false },
+        interaction: { mode: "nearest", intersect: false },
         layout: {
           padding: { right: 140 },
         },
@@ -3163,7 +5557,7 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
             grid: { color: theme.grid },
             ticks: { color: theme.ticks },
-            title: { display: true, text: "Measurement date", color: theme.axis },
+            title: { display: true, text: "Measurement date (age shown in tooltip)", color: theme.axis },
           },
           y: {
             beginAtZero: true,
@@ -3184,12 +5578,19 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
             },
           },
           tooltip: {
+            mode: "nearest",
+            intersect: false,
             callbacks: {
               title: (items) => {
                 const ts = items[0]?.parsed?.x;
                 return ts ? new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric" }).format(ts) : "";
               },
-              label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y} mm`,
+              label: (ctx) => {
+                const value = Number(ctx.parsed?.y);
+                const ageDays = computeAgeDaysAt(ctx.dataset?.sourcePlantingTs, ctx.parsed?.x);
+                const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
+                return `${ctx.dataset.label}: ${value.toFixed(1)} mm${ageText}`;
+              },
             },
           },
         },
@@ -3240,6 +5641,9 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
               <p className="text-xs text-subtle">
                 Avg height: {Number.isFinite(item.avg) ? `${item.avg.toFixed(1)} mm` : "n/a"}
               </p>
+              <p className="text-xs text-subtle">
+                Age: {item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a"}
+              </p>
             </div>
           ))}
         </div>
@@ -3255,9 +5659,44 @@ function CompareChart({ combinedRecords, compareIds, compareWindow, isLight, met
   );
 }
 
-function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, reportInsightText, includeInsight }) {
+function RackChart({
+  rackPlants,
+  rackQuery,
+  rackHintString,
+  isLight,
+  rackStats,
+  rackCategoryStats,
+  reportInsightText,
+  includeInsight,
+}) {
+  const ALL_RACK_JARS_ID = "__ALL_RACK_JARS__";
   const canvasRef = useRef(null);
   const chartRef = useRef(null);
+  const [selectedRackJarId, setSelectedRackJarId] = useState(ALL_RACK_JARS_ID);
+  const categoryScenarioPlan = useMemo(
+    () => buildRackCategoryScenarioPlan(rackPlants, rackCategoryStats),
+    [rackPlants, rackCategoryStats]
+  );
+
+  useEffect(() => {
+    if (!rackQuery || !rackStats?.length) {
+      setSelectedRackJarId(ALL_RACK_JARS_ID);
+      return;
+    }
+    if (selectedRackJarId === ALL_RACK_JARS_ID) return;
+    const normalizedSelected = normalizeId(selectedRackJarId);
+    const selectedStillExists = rackStats.some((item) => normalizeId(item?.id) === normalizedSelected);
+    if (selectedStillExists) return;
+
+    setSelectedRackJarId(ALL_RACK_JARS_ID);
+  }, [rackQuery, rackStats, selectedRackJarId, ALL_RACK_JARS_ID]);
+
+  const selectedRackPlant = useMemo(() => {
+    if (selectedRackJarId === ALL_RACK_JARS_ID) return null;
+    const target = normalizeId(selectedRackJarId);
+    if (!target) return null;
+    return rackPlants.find((plant) => normalizeId(plant?.id) === target) || null;
+  }, [rackPlants, selectedRackJarId, ALL_RACK_JARS_ID]);
 
   const handleReport = () => {
     if (!rackStats?.length || !rackQuery) return;
@@ -3265,6 +5704,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
     const rows = (rackStats || []).map((item) => [
       item.id,
       item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a",
+      item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a",
       `${item.count} pts`,
       item.rank || "-",
     ]);
@@ -3272,9 +5712,22 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
     const sections = [
       {
         heading: "Rack metrics",
-        content: renderDataTable(["Jar ID", "Avg height", "Points", "Rank"], rows),
+        content: renderDataTable(["Jar ID", "Avg height", "Age", "Points", "Rank"], rows),
       },
     ];
+    if (rackCategoryStats?.length) {
+      const categoryRows = rackCategoryStats.map((item) => [
+        item.category,
+        `${item.plantCount}`,
+        item.avgDelta !== null ? `${item.avgDelta.toFixed(1)} mm` : "n/a",
+        item.avgRate !== null ? `${item.avgRate.toFixed(2)} mm/day` : "n/a",
+        item.suggestion,
+      ]);
+      sections.push({
+        heading: "Category growth-change comparison",
+        content: renderDataTable(["Category", "Jars", "Avg change", "Avg rate", "Suggestion"], categoryRows),
+      });
+    }
     if (includeInsight && reportInsightText) {
       sections.unshift({
         heading: "Assistant conclusion",
@@ -3294,9 +5747,11 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
     const palette = ["#0f172a", "#dc2626", "#2563eb", "#16a34a", "#d97706", "#9333ea", "#0ea5e9", "#e11d48"];
     const dashPatterns = [[], [10, 6], [3, 5], [14, 4, 3, 4], [2, 4], [8, 4]];
     const pointStyles = ["circle", "rectRot", "triangle", "rectRounded", "crossRot", "star"];
+    const plantsForChart = selectedRackJarId === ALL_RACK_JARS_ID ? rackPlants : selectedRackPlant ? [selectedRackPlant] : [];
 
-    const mainSeries = rackPlants
+    const mainSeries = plantsForChart
       .map((plant, idx) => {
+        const plantingTs = toPlantingTimestamp(plant?.planting_date);
         const sorted = (plant.heights || [])
           .map((h) => toValidPoint(Date.parse(h.date), h.height_mm))
           .filter((p) => p !== null)
@@ -3322,70 +5777,16 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
           fill: false,
           yAxisID: "y",
           order: 2,
+          sourceJarId: plant.id,
+          sourcePlantingTs: plantingTs,
         };
       })
       .filter(Boolean);
 
-    if (mainSeries.length <= 1) return mainSeries;
+    return mainSeries;
+  }, [rackPlants, selectedRackPlant, selectedRackJarId, ALL_RACK_JARS_ID]);
 
-    const baseline = mainSeries[0];
-    const baselineMap = new Map(
-      (baseline.data || [])
-        .map((point) => [Number(point.x), Number(point.y)])
-        .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y))
-    );
-
-    const deltaSeries = mainSeries
-      .slice(1)
-      .map((series) => {
-        const deltaData = (series.data || [])
-          .map((point) => {
-            const x = Number(point.x);
-            const y = Number(point.y);
-            const baseY = baselineMap.get(x);
-            if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(baseY)) return null;
-            return { x, y: Number((y - baseY).toFixed(2)) };
-          })
-          .filter(Boolean);
-
-        if (deltaData.length < 2) return null;
-        return {
-          label: `Δ ${series.label} vs ${baseline.label}`,
-          data: deltaData,
-          borderColor: series.borderColor,
-          borderDash: [3, 6],
-          borderWidth: 1.8,
-          pointRadius: 0,
-          tension: 0.28,
-          cubicInterpolationMode: "monotone",
-          fill: false,
-          yAxisID: "yDelta",
-          order: 1,
-        };
-      })
-      .filter(Boolean);
-
-    return [...mainSeries, ...deltaSeries];
-  }, [rackPlants]);
-
-  const deltaMaxAbs = useMemo(() => {
-    const absValues = datasets
-      .filter((dataset) => dataset.yAxisID === "yDelta")
-      .flatMap((dataset) => (dataset.data || []).map((point) => Math.abs(Number(point.y))))
-      .filter((value) => Number.isFinite(value));
-    if (!absValues.length) return 5;
-    const maxVal = Math.max(...absValues, 1);
-    return Math.ceil((maxVal + 0.5) / 1) * 1;
-  }, [datasets]);
-  const jarLineCount = useMemo(
-    () => datasets.filter((dataset) => dataset.yAxisID !== "yDelta").length,
-    [datasets]
-  );
-  const deltaLineCount = useMemo(
-    () => datasets.filter((dataset) => dataset.yAxisID === "yDelta").length,
-    [datasets]
-  );
-  const hasDelta = useMemo(() => deltaLineCount > 0, [deltaLineCount]);
+  const jarLineCount = useMemo(() => datasets.length, [datasets]);
 
   useEffect(() => {
     if (chartRef.current) {
@@ -3409,7 +5810,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
             time: { unit: "day", tooltipFormat: "MMM d, yyyy" },
             grid: { color: theme.grid },
             ticks: { color: theme.ticks },
-            title: { display: true, text: "Measurement date", color: theme.axis },
+            title: { display: true, text: "Measurement date (age shown in tooltip)", color: theme.axis },
           },
           y: {
             beginAtZero: true,
@@ -3417,21 +5818,6 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
             ticks: { color: theme.ticks },
             title: { display: true, text: "Height (mm)", color: theme.axis },
           },
-          ...(hasDelta
-            ? {
-                yDelta: {
-                  position: "right",
-                  min: -deltaMaxAbs,
-                  max: deltaMaxAbs,
-                  grid: { drawOnChartArea: false, color: "rgba(148,163,184,0.15)" },
-                  ticks: {
-                    color: theme.ticks,
-                    callback: (value) => `${Number(value).toFixed(1)}`,
-                  },
-                  title: { display: true, text: "Delta vs baseline (mm)", color: theme.axis },
-                },
-              }
-            : {}),
         },
         plugins: {
           legend: {
@@ -3450,7 +5836,8 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
             haloColor: isLight ? "rgba(255,255,255,0.95)" : "rgba(15,23,42,0.85)",
           },
           tooltip: {
-            mode: "index",
+            mode: "nearest",
+            intersect: false,
             callbacks: {
               title: (items) => {
                 const ts = items[0]?.parsed?.x;
@@ -3458,10 +5845,9 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
               },
               label: (ctx) => {
                 const value = Number(ctx.parsed.y);
-                if (ctx.dataset.yAxisID === "yDelta") {
-                  return `${ctx.dataset.label}: ${value >= 0 ? "+" : ""}${value.toFixed(2)} mm`;
-                }
-                return `${ctx.dataset.label}: ${value.toFixed(1)} mm`;
+                const ageDays = computeAgeDaysAt(ctx.dataset?.sourcePlantingTs, ctx.parsed?.x);
+                const ageText = ageDays === null ? "" : ` | Age ${formatAgeDays(ageDays)}`;
+                return `${ctx.dataset.label}: ${value.toFixed(1)} mm${ageText}`;
               },
             },
           },
@@ -3472,7 +5858,7 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
     return () => {
       chartRef.current?.destroy();
     };
-  }, [datasets, isLight, deltaMaxAbs]);
+  }, [datasets, isLight]);
 
   return (
     <motion.div
@@ -3485,12 +5871,16 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
         <div>
           <p className="kicker">Rack summary</p>
           <h3 className="text-xl font-semibold text-dark">Growth by rack</h3>
-          <p className="text-sm text-subtle">Solid lines show jar heights. Dashed lines show differences vs the first jar.</p>
+          <p className="text-sm text-subtle">
+            Keep "All jars" selected to view every line, or pick one jar below to focus on only that jar.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-subtle">
             {jarLineCount
-              ? `${jarLineCount} jar${jarLineCount > 1 ? "s" : ""}${deltaLineCount ? ` + ${deltaLineCount} delta line${deltaLineCount > 1 ? "s" : ""}` : ""}`
+              ? selectedRackJarId === ALL_RACK_JARS_ID
+                ? `Showing all jars (${jarLineCount} lines)`
+                : `Showing ${selectedRackJarId || datasets[0]?.label || "1 jar"}`
               : rackQuery
                 ? "No matches"
                 : "Waiting"}
@@ -3500,15 +5890,98 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
           </button>
         </div>
       </div>
+      {rackQuery && rackCategoryStats?.length ? (
+        <div className="panel-muted px-4 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-subtle">Growth change by plant category</p>
+            <span className="text-[11px] text-subtle">{rackCategoryStats.length} categories</span>
+          </div>
+          <p className="text-[11px] text-subtle">
+            Baseline protocol: {categoryScenarioPlan.baselineNutrition}. {categoryScenarioPlan.baselineAgarRule}{" "}
+            {categoryScenarioPlan.labRuleWindow}
+          </p>
+          <div className="grid sm:grid-cols-2 gap-3 max-h-72 overflow-auto pr-1">
+            {(rackCategoryStats || []).map((item) => {
+              const scenario = categoryScenarioPlan.byCategory.get(item.category);
+              const badgeClass =
+                item.growthLabel === "fast"
+                  ? "border-emerald-300/70 bg-emerald-500/10 text-emerald-700"
+                  : item.growthLabel === "slow"
+                    ? "border-rose-300/70 bg-rose-500/10 text-rose-700"
+                    : item.growthLabel === "moderate"
+                      ? "border-amber-300/70 bg-amber-500/10 text-amber-700"
+                      : "border-slate-300/70 bg-slate-500/10 text-slate-700";
+              const suggestionClass =
+                item.growthLabel === "fast"
+                  ? "border-emerald-300/60 bg-emerald-500/12 text-emerald-900 dark:text-emerald-100"
+                  : item.growthLabel === "slow"
+                    ? "border-rose-300/60 bg-rose-500/12 text-rose-900 dark:text-rose-100"
+                    : item.growthLabel === "moderate"
+                      ? "border-amber-300/60 bg-amber-500/12 text-amber-900 dark:text-amber-100"
+                      : "border-slate-300/60 bg-slate-500/10 text-slate-900 dark:text-slate-100";
+
+              return (
+                <div key={item.category} className="rounded-xl border border-border/45 bg-paper/85 px-3.5 py-3 text-xs text-dark space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{item.category}</span>
+                    <span className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.18em] ${badgeClass}`}>
+                      {item.growthLabel}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-dark/80">
+                    {item.plantCount} jar(s) - Change: {item.avgDelta !== null ? `${item.avgDelta.toFixed(1)} mm` : "n/a"} - Rate:{" "}
+                    {item.avgRate !== null ? `${item.avgRate.toFixed(2)} mm/day` : "n/a"}
+                    {scenario?.avgAgeDays !== null && scenario?.avgAgeDays !== undefined
+                      ? ` - Avg age: ${formatAgeDays(scenario.avgAgeDays)}`
+                      : ""}
+                  </p>
+                  <div className={`rounded-lg border px-2.5 py-2 ${suggestionClass}`}>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em]">Default Protocol</p>
+                    <p className="mt-1 text-xs font-medium leading-5">{scenario?.defaultProtocol || item.suggestion}</p>
+                  </div>
+                  <div className="rounded-lg border border-sky-300/55 bg-sky-500/10 px-2.5 py-2 text-sky-900 dark:text-sky-100">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em]">Special-case Override</p>
+                    <p className="mt-1 text-xs font-medium leading-5">{scenario?.specialProtocol || "No override rule available."}</p>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       {rackQuery && rackStats?.length ? (
         <div className="panel-muted px-4 py-3 space-y-2">
           <div className="flex items-center justify-between">
             <p className="text-xs text-subtle">Average height per jar</p>
-            <span className="text-[11px] text-subtle">Best/Worst marked</span>
+            <span className="text-[11px] text-subtle">Choose All jars or click a jar to plot one line</span>
           </div>
           <div className="grid sm:grid-cols-2 gap-2 max-h-40 overflow-auto pr-1">
+            <button
+              type="button"
+              onClick={() => setSelectedRackJarId(ALL_RACK_JARS_ID)}
+              className={`w-full rounded-xl border px-3 py-2 text-left text-xs text-dark transition ${
+                selectedRackJarId === ALL_RACK_JARS_ID
+                  ? "border-primary/55 bg-primary/10 shadow-[0_0_0_1px_rgba(20,184,166,0.25)]"
+                  : "border-border/45 bg-paper/80 hover:border-primary/35"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">All jars</span>
+                <span className="text-[11px] text-subtle">{rackStats.length} lines</span>
+              </div>
+              <p className="text-[11px] text-subtle mt-1">Display all jars in this rack on the same chart.</p>
+            </button>
             {(rackStats || []).map((item) => (
-              <div key={item.id} className="rounded-xl border border-border/45 bg-paper/80 px-3 py-2 text-xs text-dark">
+              <button
+                type="button"
+                key={item.id}
+                onClick={() => setSelectedRackJarId(item.id)}
+                className={`w-full rounded-xl border px-3 py-2 text-left text-xs text-dark transition ${
+                  normalizeId(item.id) === normalizeId(selectedRackJarId)
+                    ? "border-primary/55 bg-primary/10 shadow-[0_0_0_1px_rgba(20,184,166,0.25)]"
+                    : "border-border/45 bg-paper/80 hover:border-primary/35"
+                }`}
+              >
                 <div className="flex items-center justify-between">
                   <span className="font-semibold">{item.id}</span>
                   {item.rank && (
@@ -3524,9 +5997,10 @@ function RackChart({ rackPlants, rackQuery, rackHintString, isLight, rackStats, 
                   )}
                 </div>
                 <p className="text-[11px] text-subtle mt-1">
-                  Avg: {item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a"} · {item.count} pts
+                  Avg: {item.avg !== null ? `${item.avg.toFixed(1)} mm` : "n/a"} | Age:{" "}
+                  {item.ageDays !== null ? formatAgeDays(item.ageDays) : "n/a"} | {item.count} pts
                 </p>
-              </div>
+              </button>
             ))}
           </div>
         </div>
@@ -3573,21 +6047,34 @@ function GrowthClusterPanel({ clusterResult }) {
     const maxX = Math.max(...xs);
     const minY = Math.min(...ys);
     const maxY = Math.max(...ys);
-    const safeMaxX = maxX === minX ? maxX + 1 : maxX;
+    const xSpread = maxX - minX;
+    const minXWindowDays = 0.5;
+    const safeMinX = xSpread < minXWindowDays ? (minX + maxX) / 2 - minXWindowDays / 2 : minX;
+    const safeMaxX = xSpread < minXWindowDays ? (minX + maxX) / 2 + minXWindowDays / 2 : maxX;
     const safeMaxY = maxY === minY ? maxY + 1 : maxY;
     const safeMinY = minY === safeMaxY ? minY - 1 : Math.max(0, minY - 0.1 * (safeMaxY - minY));
 
-    const scaleX = (value) => padding.left + ((value - minX) / (safeMaxX - minX)) * innerW;
+    const scaleX = (value) => padding.left + ((value - safeMinX) / (safeMaxX - safeMinX)) * innerW;
     const scaleY = (value) => padding.top + ((safeMaxY - value) / (safeMaxY - safeMinY)) * innerH;
 
-    const xTicks = Array.from({ length: 5 }, (_, idx) => minX + ((safeMaxX - minX) * idx) / 4);
+    const xTicks = Array.from({ length: 5 }, (_, idx) => safeMinX + ((safeMaxX - safeMinX) * idx) / 4);
     const yTicks = Array.from({ length: 5 }, (_, idx) => safeMinY + ((safeMaxY - safeMinY) * idx) / 4);
 
-    const points = clusterResult.assignments.map((row) => ({
-      ...row,
-      cx: scaleX(row.days_since_planting),
-      cy: scaleY(row.height_cm),
-    }));
+    const shouldJitterX = xSpread < 0.35 && clusterResult.assignments.length > 1;
+    const jitterStepPx = shouldJitterX ? Math.max(6, Math.min(14, innerW * 0.015)) : 0;
+    const minCx = padding.left + 6;
+    const maxCx = width - padding.right - 6;
+
+    const points = clusterResult.assignments.map((row, idx, arr) => {
+      const baseCx = scaleX(row.days_since_planting);
+      const offset = shouldJitterX ? (idx - (arr.length - 1) / 2) * jitterStepPx : 0;
+      const cx = Math.max(minCx, Math.min(maxCx, baseCx + offset));
+      return {
+        ...row,
+        cx,
+        cy: scaleY(row.height_cm),
+      };
+    });
 
     return { width, height, padding, xTicks, yTicks, points, scaleX, scaleY };
   }, [clusterResult]);
@@ -3765,6 +6252,14 @@ function GrowthClusterPanel({ clusterResult }) {
             ) : (
               <EmptyState message="Not enough cluster points to render scatter plot." />
             )}
+            {clusterHelp ? (
+              <p className="mt-2 px-1 text-[11px] leading-relaxed text-subtle">
+                Chart note: X-axis is days since planting (current spread: {clusterHelp.daySpread.toFixed(1)} days).{" "}
+                {clusterHelp.daySpread < 0.35
+                  ? "Points are slightly offset left/right for readability when day values are nearly identical."
+                  : "Point spacing on the X-axis reflects actual day differences between jars."}
+              </p>
+            ) : null}
           </div>
 
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
@@ -3795,6 +6290,9 @@ function GrowthClusterPanel({ clusterResult }) {
 
 function HistoryList({ history }) {
   const rows = [...history].reverse(); // newest first
+  const hasRows = rows.length > 0;
+  const [isExpanded, setIsExpanded] = useState(false);
+  const toggleLabel = isExpanded ? "Hide measurements" : "Show measurements";
 
   return (
     <motion.div
@@ -3808,25 +6306,64 @@ function HistoryList({ history }) {
           <p className="kicker">History</p>
           <h3 className="text-lg font-semibold text-dark">Logged measurements</h3>
         </div>
-        <span className="text-xs text-subtle">{rows.length ? "Latest first" : "Waiting for selection"}</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-subtle">{hasRows ? "Latest first" : "Waiting for selection"}</span>
+          {hasRows ? (
+            <button
+              type="button"
+              onClick={() => setIsExpanded((prev) => !prev)}
+              className="inline-flex items-center gap-1 rounded-md border border-border/60 px-2 py-1 text-xs text-subtle transition-colors hover:border-border hover:text-dark"
+              aria-label={toggleLabel}
+              aria-expanded={isExpanded}
+            >
+              {isExpanded ? (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+                  <path
+                    d="M3 3l18 18M10.58 10.58a2 2 0 0 0 2.84 2.84M9.88 5.09A9.77 9.77 0 0 1 12 4.8c5.5 0 9.57 4.23 10.8 7.2a11.8 11.8 0 0 1-4.21 5.39M6.51 6.51A12.27 12.27 0 0 0 1.2 12c1.23 2.97 5.3 7.2 10.8 7.2a9.8 9.8 0 0 0 5.12-1.42"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" className="h-4 w-4" aria-hidden="true">
+                  <path
+                    d="M1.2 12c1.23-2.97 5.3-7.2 10.8-7.2s9.57 4.23 10.8 7.2c-1.23 2.97-5.3 7.2-10.8 7.2S2.43 14.97 1.2 12Z"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                  <circle cx="12" cy="12" r="2.9" />
+                </svg>
+              )}
+              <span>{isExpanded ? "Hide" : "Show"}</span>
+            </button>
+          ) : null}
+        </div>
       </div>
 
-      {rows.length ? (
-        <div className="divide-y divide-border/30">
-          {rows.map((row, idx) => {
-            const prev = rows[idx + 1];
-            const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
-            return (
-              <div key={row.ts} className="grid grid-cols-3 gap-3 py-3 text-sm text-dark">
-                <span className="font-medium">{formatDate(row.ts)}</span>
-                <span>{Number(row.height_mm).toFixed(1)} mm</span>
-                <span className="text-subtle">
-                  {delta === null ? "-" : delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} mm vs prior`}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      {hasRows ? (
+        isExpanded ? (
+          <div className="max-h-[26rem] overflow-auto pr-1 divide-y divide-border/30">
+            {rows.map((row, idx) => {
+              const prev = rows[idx + 1];
+              const delta = prev ? Number(row.height_mm) - Number(prev.height_mm) : null;
+              return (
+                <div
+                  key={`${normalizeId(row.sourceJarId || row.jarId || row.jar_id || row.id || "na")}:${row.ts}`}
+                  className="grid grid-cols-4 gap-3 py-3 text-sm text-dark"
+                >
+                  <span className="font-medium">{formatDate(row.ts)}</span>
+                  <span>{Number(row.height_mm).toFixed(1)} mm</span>
+                  <span className="text-subtle">{row.sourceJarId || row.jarId || row.jar_id || row.id || "-"}</span>
+                  <span className="text-subtle">
+                    {delta === null ? "-" : delta === 0 ? "No change" : `${delta > 0 ? "+" : ""}${delta.toFixed(1)} mm vs prior`}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-border/50 px-3 py-2 text-xs text-subtle">Measurements hidden</div>
+        )
       ) : (
         <EmptyState message="Measurement list will appear once a Jar ID is loaded." />
       )}
@@ -3841,6 +6378,7 @@ function SummaryCard({ record, history }) {
   const delta = latest && first ? latest.height_mm - first.height_mm : null;
 
   const stats = [
+    { label: "Lineage jars", value: record?.lineageCount ? String(record.lineageCount) : "1" },
     { label: "Planting date", value: record?.planting_date || "-" },
     { label: "Location", value: record?.location || "-" },
     { label: "Nutrition status", value: record?.nutritionStatus || record?.nutrition || "-" },
@@ -3944,3 +6482,5 @@ function formatDate(ts) {
     return "-";
   }
 }
+
+

@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     growth_dataset_path: Optional[str] = Field(default=None, env="GROWTH_DATASET_PATH")
 
     disease_weights_path: Optional[str] = Field(default=None, env="DISEASE_WEIGHTS_PATH")
+    openai_api_key: Optional[str] = Field(default=None, env="OPENAI_API_KEY")
+    openai_quiz_model: str = Field(default="gpt-4o-mini", env="OPENAI_QUIZ_MODEL")
+    openai_chat_model: str = Field(default="gpt-4o-mini", env="OPENAI_CHAT_MODEL")
 
     class Config:
         env_file = ".env"

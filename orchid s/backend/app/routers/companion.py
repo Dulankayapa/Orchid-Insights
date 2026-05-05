@@ -1,30 +1,19 @@
 from fastapi import APIRouter, HTTPException
 
-from app.models.schemas import CompanionChatRequest, CompanionChatResponse, CompanionGuideResponse
-from app.services import companion
+from app.models.schemas import CompanionChatRequest, CompanionChatResponse
+from app.services import companion as companion_service
 
 router = APIRouter(prefix="/companion", tags=["companion"])
 
 
-@router.get("/care-guide", response_model=CompanionGuideResponse)
-async def care_guide():
-    try:
-        return companion.get_care_guide()
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
-@router.get("/quick-questions")
-async def quick_questions():
-    try:
-        return {"questions": companion.get_quick_questions()}
-    except Exception as exc:  # pragma: no cover
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
-
-
 @router.post("/chat", response_model=CompanionChatResponse)
-async def companion_chat(payload: CompanionChatRequest):
+async def chat(payload: CompanionChatRequest):
     try:
-        return companion.generate_chat_response(payload)
+        reply = await companion_service.generate_reply(payload.messages)
+        return CompanionChatResponse(reply=reply)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc

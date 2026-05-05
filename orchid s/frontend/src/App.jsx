@@ -10,21 +10,23 @@ import FirebaseTable from "./pages/FirebaseTable.jsx";
 import EnvMonitor from "./pages/EnvMonitor.jsx";
 import CultureDetails from "./pages/CultureDetails.jsx";
 import OrchidCompanion from "./pages/OrchidCompanion.jsx";
-import OrchidAIBot from "./components/monitor/OrchidAIBot.jsx";
+import OrchidClassifier from "./pages/OrchidClassifier.jsx";
 import SidebarOrchidBloom from "./components/SidebarOrchidBloom.jsx";
+import Footer from "./components/Footer.jsx";
 
 import { ThemeProvider } from "./context/ThemeContext";
 import ThemeToggle from "./components/ThemeToggle";
 
 const navItems = [
   { to: "/", label: "Dashboard", code: "\u{1F4CA}" },
+  { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
   { to: "/reculture", label: "Culture Details", code: "\u{1F9EA}" },
   { to: "/growth", label: "Growth Tracker", code: "\u{1F4C8}" },
   { to: "/history", label: "Growth History", code: "\u{1F552}" },
   { to: "/plants", label: "Plant Database", code: "\u{1F33F}" },
   { to: "/firebase", label: "Firebase Table", code: "\u{1F525}" },
-  { to: "/monitor", label: "Env Monitor", code: "\u{1F321}\uFE0F" },
-  { to: "/companion", label: "Orchid Companion", code: "\u{1F916}" },
+  { to: "/classifier", label: "Orchid Classifier", code: "\u{1F4F7}" },
+  { to: "/companion", label: "Orchid Care Companion", code: "\u{1FABC}" },
 ];
 
 const TIME_ZONE = "Asia/Colombo";
@@ -64,15 +66,14 @@ export default function App() {
     <ThemeProvider>
       <div className="relative min-h-screen overflow-hidden bg-background text-dark transition-colors duration-300 selection:bg-primary/20">
         <div className="pointer-events-none absolute inset-0 -z-10">
-          <div className="absolute -top-24 left-0 h-80 w-80 rounded-full bg-primary/10 blur-3xl" />
-          <div className="absolute right-0 top-10 h-72 w-72 rounded-full bg-secondary/10 blur-3xl" />
-          <div className="absolute bottom-0 left-1/3 h-72 w-72 rounded-full bg-accent/10 blur-3xl" />
-          <div className="absolute left-[24%] top-[34%] h-56 w-56 rounded-full bg-slate-200/45 blur-3xl dark:bg-indigo-400/10" />
-          <div className="absolute right-[20%] bottom-[14%] h-44 w-44 rounded-full bg-teal-200/35 blur-3xl dark:bg-teal-400/10" />
+          <div className="aurora-blob aurora-1" />
+          <div className="aurora-blob aurora-2 secondary" />
+          <div className="aurora-blob aurora-3 accent" />
+          <div className="grid-overlay" />
         </div>
 
         <div className="mx-auto flex min-h-screen max-w-[1600px]">
-          <aside className="hidden lg:flex lg:w-80 lg:flex-col px-6 py-7">
+          <aside className="hidden px-6 py-7 lg:flex lg:w-80 lg:flex-col">
             <div className="sidebar-spotlight space-y-5">
               <div className="flex items-center gap-3">
                 <div className="brand-orb">{"\u{1F338}"}</div>
@@ -136,10 +137,6 @@ export default function App() {
             </nav>
 
             <div className="mt-4">
-              <OrchidAIBot compact />
-            </div>
-
-            <div className="mt-4">
               <SidebarOrchidBloom />
             </div>
 
@@ -149,35 +146,57 @@ export default function App() {
             </div>
           </aside>
 
-          <div className="min-w-0 flex-1">
-            <header className="lg:hidden sticky top-0 z-20 border-b border-border/50 bg-gradient-to-r from-paper/95 via-paper/90 to-primary/10 px-4 py-4 backdrop-blur-xl">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="kicker">ORCHID INSIGHTS</p>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <header className="sticky top-0 z-20 px-3 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] lg:hidden">
+              <div className="rounded-[28px] border border-white/45 bg-gradient-to-br from-paper/95 via-paper/92 to-primary/10 px-4 py-4 shadow-[0_18px_46px_-28px_rgba(15,23,42,0.32)] backdrop-blur-2xl">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="kicker">ORCHID INSIGHTS</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <p className="text-lg font-semibold tracking-[-0.03em] text-dark">Smart Orchid Workspace</p>
+                      <span className="inline-flex rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[11px] font-semibold text-primary">
+                        {todayLabel}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-subtle">
+                      {timeLabel} | {LOCATION_LABEL}
+                    </p>
+                  </div>
+                  <div className="shrink-0 rounded-2xl border border-border/60 bg-paper/80 p-1.5 shadow-[0_10px_24px_-18px_rgba(15,23,42,0.28)]">
+                    <ThemeToggle />
+                  </div>
                 </div>
-                <ThemeToggle />
-              </div>
 
-              <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
-                {navItems.map((item) => (
-                  <NavLink
-                    key={item.to}
-                    to={item.to}
-                    className={({ isActive }) =>
-                      `whitespace-nowrap rounded-xl border px-3 py-1.5 text-sm font-medium transition-all duration-200 ${
-                        isActive
-                          ? "border-primary/35 bg-primary/10 text-primary"
-                          : "border-border/45 bg-paper/90 text-subtle hover:border-border/75 hover:text-dark"
-                      }`
-                    }
-                  >
-                    {item.label}
-                  </NavLink>
-                ))}
+                <div className="mt-4 -mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                  {navItems.map((item) => (
+                    <NavLink key={item.to} to={item.to} className="group block snap-start">
+                      {({ isActive }) => (
+                        <div
+                          className={`inline-flex min-w-fit items-center gap-2.5 rounded-[18px] border px-3.5 py-2 text-sm font-medium transition-all duration-200 ${
+                            isActive
+                              ? "border-primary/35 bg-primary/12 text-primary shadow-[0_14px_30px_-24px_rgba(139,92,246,0.65)]"
+                              : "border-border/50 bg-paper/88 text-subtle hover:border-primary/30 hover:text-dark"
+                          }`}
+                        >
+                          <span
+                            className={`inline-flex h-8 w-8 items-center justify-center rounded-2xl border text-[15px] leading-none transition-transform duration-200 ${
+                              isActive
+                                ? "border-primary/30 bg-primary/10 text-primary"
+                                : "border-border/45 bg-white/70 text-dark"
+                            }`}
+                          >
+                            {item.code}
+                          </span>
+                          <span className="whitespace-nowrap">{item.label}</span>
+                        </div>
+                      )}
+                    </NavLink>
+                  ))}
+                </div>
               </div>
             </header>
 
-            <main className="px-4 py-8 sm:px-8 lg:px-10">
+            <main className="flex-1 px-3 py-5 sm:px-8 sm:py-8 lg:px-10">
               <motion.div
                 initial={{ opacity: 0, y: 8 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -192,16 +211,17 @@ export default function App() {
                   <Route path="/history" element={<GrowthHistory />} />
                   <Route path="/plants" element={<PlantDatabase />} />
                   <Route path="/firebase" element={<FirebaseTable />} />
+                  <Route path="/classifier" element={<OrchidClassifier />} />
                   <Route path="/monitor" element={<EnvMonitor />} />
                   <Route path="/companion" element={<OrchidCompanion />} />
                 </Routes>
               </motion.div>
             </main>
+
+            <Footer />
           </div>
         </div>
       </div>
     </ThemeProvider>
   );
 }
-
-

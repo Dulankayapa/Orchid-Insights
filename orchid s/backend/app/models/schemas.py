@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, Tuple
 from pydantic import BaseModel, Field
 
 
+# ---------- Growth ----------
 class GrowthRequest(BaseModel):
     planting_date: str = Field(..., description="YYYY-MM-DD")
     current_height_mm: float = Field(..., description="Measured plant height in millimeters")
@@ -20,6 +21,7 @@ class GrowthResponse(BaseModel):
     plant_height_mm: Optional[float] = None
 
 
+# ---------- Health / system ----------
 class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
@@ -28,41 +30,24 @@ class HealthResponse(BaseModel):
     timestamp: datetime
 
 
-class CompanionProblem(BaseModel):
-    symptom: str
-    cause: str
-    fix: str
+# ---------- Device status ----------
+class DeviceStatus(BaseModel):
+    device_id: str
+    last_seen: datetime
+    payload: Dict[str, object] = Field(default_factory=dict)
 
 
-class CompanionSection(BaseModel):
-    id: int
-    title: str
-    icon: str
-    tips: List[str] = Field(default_factory=list)
-    warning: Optional[str] = None
-    problems: List[CompanionProblem] = Field(default_factory=list)
+class DeviceStatusResponse(BaseModel):
+    status: str
+    last_seen: Optional[datetime] = None
 
 
-class CompanionGuideResponse(BaseModel):
-    title: str
-    subtitle: str
-    sections: List[CompanionSection]
-
-
-class CompanionChatRequest(BaseModel):
+class OfflineResponse(BaseModel):
+    status: str
     message: str
-    temperature: Optional[float] = None
-    humidity: Optional[float] = None
-    lux: Optional[float] = None
-    mq135: Optional[float] = None
 
 
-class CompanionChatResponse(BaseModel):
-    response: str
-    confidence: float
-    suggestions: List[str]
-
-
+# ---------- Firebase ----------
 class FirebasePlant(BaseModel):
     id: str
     planting_date: Optional[str] = None
@@ -80,9 +65,60 @@ class FirebaseWriteRequest(BaseModel):
     updated_at: Optional[str] = None
 
 
+# ---------- Disease ----------
 class DiseasePrediction(BaseModel):
     status: str
     disease: str
     confidence: float
     confidence_percent: float
     class_index: int
+
+
+# ---------- Quiz ----------
+class QuizQuestion(BaseModel):
+    id: str
+    question: str
+    options: List[str] = Field(default_factory=list)
+    correct: int
+    explanation: Optional[str] = None
+
+
+class QuizSubmission(BaseModel):
+    score: int
+    total: int
+    answers: List[object] = Field(default_factory=list)
+
+
+class QuizAttempt(BaseModel):
+    id: str
+    score: int
+    total: int
+    completed_at: datetime
+
+
+# ---------- Companion chat ----------
+class CompanionChatMessage(BaseModel):
+    role: str
+    text: str
+
+
+class CompanionChatRequest(BaseModel):
+    messages: List[CompanionChatMessage] = Field(default_factory=list)
+
+
+class CompanionChatResponse(BaseModel):
+    reply: str
+
+
+# ---------- Reminders ----------
+class ReminderItem(BaseModel):
+    id: str
+    title: str
+    type: str
+    reminder_time: datetime
+
+
+class ReminderCreateRequest(BaseModel):
+    title: str
+    type: str
+    reminderTime: str

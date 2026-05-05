@@ -4,3 +4,9 @@ __pycache__/
 node_modules/
 dist/
 *.log
+
+# Generated / local classifier artifacts
+backend/models/_classifier_zip_extract/
+backend/models/classifier/*.onnx
+backend/models/classifier/ood_config*.json
+backend/models/classifier/*_config*.json

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Line } from "react-chartjs-2";
+import { useLocation, useNavigate } from "react-router-dom";
+import jsQR from "jsqr";//webcam live scan + upload scan with jsQR fallback
 import {
-  Chart as ChartJS,
+  Chart as ChartJS, //Chart as ChartJS
   LineElement,
   PointElement,
   LinearScale,
@@ -15,6 +17,7 @@ import {
 import "chartjs-adapter-date-fns";
 import { api } from "../lib/api";
 import { db } from "../lib/firebase";
+import { encodeFirebaseKeySegment } from "../lib/firebaseKeys";
 import { ref, onValue, query, limitToLast, limitToFirst, orderByChild, push, update } from "firebase/database";
 import { useTheme } from "../context/ThemeContext";
 
@@ -149,11 +152,9 @@ const canonicalJarKey = (value) => {
 };
 
 const canonicalPlantId = (value) => {
-  const norm = normalizeId(value);
-  if (!norm) return "";
-  const match = norm.match(/^jar(\d+)$/);
-  if (match) return `jar-${String(Number(match[1])).padStart(2, "0")}`;
-  return String(value || "").trim().toLowerCase();
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  return raw;
 };
 
 const splitJarInputs = (value) =>
@@ -323,33 +324,32 @@ const calculateAgeDaysFromIso = (isoDate) => {
   return Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
 };
 
-const latestHeightFromHistory = (rows) => {
-  if (!rows || !rows.length) return null;
-  const enriched = rows
-    .map((row) => {
-      const ts = coerceTimestamp(row.timestamp ?? row.ts) ?? (row.date ? Date.parse(row.date) : null);
-      return { row, ts: Number.isFinite(ts) ? ts : null };
-    })
-    .filter((item) => item.ts !== null);
-
-  if (enriched.length) {
-    enriched.sort((a, b) => b.ts - a.ts);
-    return sanitizeHeightMm(enriched[0]?.row?.height_mm ?? enriched[0]?.row?.height);
-  }
-
-  return sanitizeHeightMm(rows[0]?.height_mm ?? rows[0]?.height);
-};
-
-const resolveCurrentHeight = (plant) => {
-  const fromHistory = latestHeightFromHistory(plant?.heights || []);
-  if (fromHistory !== null) return fromHistory;
-  return sanitizeHeightMm(plant?.height_mm ?? plant?.height ?? plant?.current_height);
-};
-
 const normalizeJarIdInput = (value) => {
   const next = (value || "").trimStart();
   if (!next) return value || "";
-  return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
+  if (/^j(ar)?\d+/i.test(next)) {
+    return next[0].toLowerCase() === "j" ? `J${next.slice(1)}` : value;
+  }
+  return value;
+};
+
+const parseJarIdFromQrPayload = (value) => {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  if (/^jar:/i.test(raw)) {
+    return normalizeJarIdInput(raw.replace(/^jar:/i, "").trim());
+  }
+
+  try {
+    const parsed = new URL(raw);
+    const fromQuery = parsed.searchParams.get("jar") || parsed.searchParams.get("jarId") || parsed.searchParams.get("id");
+    if (fromQuery) return normalizeJarIdInput(fromQuery);
+  } catch {
+    // Keep raw value when it's not a URL.
+  }
+
+  return normalizeJarIdInput(raw);
 };
 
 const deriveIdAliases = (value) => {
@@ -380,6 +380,8 @@ const deriveIdAliases = (value) => {
 export default function GrowthTracker() {
   const { theme } = useTheme();
   const isLight = theme === "light";
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const today = useMemo(() => new Date().toISOString().split("T")[0], []);
   const [plantRecords, setPlantRecords] = useState([]);
@@ -405,6 +407,8 @@ export default function GrowthTracker() {
   const [heightLogError, setHeightLogError] = useState("");
   const [jarPersistStatus, setJarPersistStatus] = useState("");
   const [jarPersistError, setJarPersistError] = useState("");
+  const [analysisSaveStatus, setAnalysisSaveStatus] = useState("");
+  const [analysisSaveError, setAnalysisSaveError] = useState("");
   const [firstGrowthTimestamp, setFirstGrowthTimestamp] = useState(null);
   const [firstGlobalGrowthTimestamp, setFirstGlobalGrowthTimestamp] = useState(null);
   const [ageSourceLabel, setAgeSourceLabel] = useState("");
@@ -475,10 +479,31 @@ export default function GrowthTracker() {
     return null;
   }, [activeJarId, activeIdAliases, cultureMap]);
 
+  const routeJarId = useMemo(
+    () => canonicalJarKey(activeJarId) || activeCanonicalId || jarId || "",
+    [activeJarId, activeCanonicalId, jarId]
+  );
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search || "");
+    const incoming = params.get("jar") || params.get("jarId") || params.get("id");
+    if (!incoming) return;
+    const normalized = parseJarIdFromQrPayload(incoming);
+    setJarId((prev) => (prev ? prev : normalized));
+  }, [location.search]);
+
+  useEffect(() => {
+    if (!routeJarId) return;
+    const params = new URLSearchParams(location.search || "");//search
+    if (params.get("jar") === routeJarId) return;
+    params.set("jar", routeJarId);
+    navigate({ pathname: location.pathname, search: params.toString() }, { replace: true });
+  }, [routeJarId, location.pathname, location.search, navigate]);
+
   useEffect(() => {
     setPlantFetchError("");
 
-    const plantsRef = ref(db, "plants");
+    const plantsRef = ref(db, "plants");//plants
     const unsubscribe = onValue(
       plantsRef,
       (snap) => {
@@ -497,7 +522,7 @@ export default function GrowthTracker() {
   }, []);
 
   useEffect(() => {
-    const entriesRef = ref(db, "recultureEntries");
+    const entriesRef = ref(db, "recultureEntries");//recultureEntries
     const unsubscribe = onValue(
       entriesRef,
       (snap) => {
@@ -532,11 +557,10 @@ export default function GrowthTracker() {
       .map((raw) => {
         const normalized = normalizeId(raw);
         const canonicalId = canonicalPlantId(raw);
-        const jarMatch = normalized.match(/^jar(\d+)$/);
-        return { raw, normalized, canonicalId, isJar: Boolean(jarMatch) };
+        return { raw, normalized, canonicalId };
       })
-      .filter(({ normalized, canonicalId, isJar }) => {
-        if (!normalized || !canonicalId || !isJar) return false;
+      .filter(({ normalized, canonicalId }) => {
+        if (!normalized || !canonicalId) return false;
         if (knownIds.has(normalized)) return false;
         if (createdJarIdsRef.current.has(normalized)) return false;
         return true;
@@ -561,7 +585,7 @@ export default function GrowthTracker() {
 
         try {
           const resp = await api.put(`/env/plants/${encodeURIComponent(canonicalId)}`, baseRecord);
-          return { ok: true, canonicalId, record: normalizePlantRecord(resp?.data) || normalizePlantRecord(baseRecord), via: "api" };
+          return { ok: true, canonicalId, record: normalizePlantRecord(resp?.data) || normalizePlantRecord(baseRecord), via: "api" };//env/plants
         } catch (apiErr) {
           try {
             // Fallback to direct RTDB write when backend env is not configured.
@@ -601,7 +625,7 @@ export default function GrowthTracker() {
           }
 
           createdJarIdsRef.current.delete(normalized);
-          const message = result.value?.message || result.reason?.message || "Failed to save Jar ID";
+          const message = result.value?.message || result.reason?.message || "Failed to save Jar ID";//Failed to save Jar ID
           failed.push(`${canonicalId} (${message})`);
         });
 
@@ -643,12 +667,13 @@ export default function GrowthTracker() {
     setSensorHistory([]);
     const unsubs = [];
     const aliasSet = new Set(activeIdAliases);
-    let byJarRows = [];
+    const byJarRowsBySource = new Map();
     let globalRows = [];
     let orchidRows = [];
 
     const mergeAndSet = () => {
       const byTs = new Map();
+      const byJarRows = Array.from(byJarRowsBySource.values()).flat();
       [...orchidRows, ...globalRows, ...byJarRows].forEach((row) => {
         const ts = Number(row?.timestamp);
         if (!Number.isFinite(ts)) return;
@@ -660,16 +685,38 @@ export default function GrowthTracker() {
     };
 
     if (activeCanonicalId) {
-      const byJarRef = query(ref(db, `growthLogsByJar/${activeCanonicalId}`), limitToLast(150));
-      const offByJar = onValue(
-        byJarRef,
-        (snap) => {
-          byJarRows = Object.values(snap.val() || {}).map(normalizeSensor);
-          mergeAndSet();
-        },
-        (err) => setSensorError(err.message || `Failed to read ${activeCanonicalId} history`)
+      const byJarPathIds = Array.from(
+        new Set(
+          [activeCanonicalId, activeJarId, canonicalJarKey(activeJarId)]
+            .map((value) => String(value || "").trim())
+            .filter(Boolean)
+        )
       );
-      unsubs.push(offByJar);
+      byJarPathIds.forEach((pathId) => {
+        const byJarRef = query(
+          ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(pathId)}`),
+          limitToLast(150)
+        );
+        const offByJar = onValue(
+          byJarRef,
+          (snap) => {
+            const rows = Object.values(snap.val() || {}).map((row) =>
+              normalizeSensor({
+                ...(row || {}),
+                jarId: row?.jarId || row?.jar_id || pathId,
+              })
+            );
+            byJarRowsBySource.set(pathId, rows);
+            mergeAndSet();
+          },
+          (err) => {
+            byJarRowsBySource.set(pathId, []);
+            mergeAndSet();
+            setSensorError(err.message || `Failed to read ${pathId} history`);
+          }
+        );
+        unsubs.push(offByJar);
+      });
     }
 
     if (aliasSet.size) {
@@ -723,7 +770,11 @@ export default function GrowthTracker() {
       setFirstGrowthTimestamp(null);
       return undefined;
     }
-    const firstRef = query(ref(db, `growthLogsByJar/${activeCanonicalId}`), orderByChild("timestamp"), limitToFirst(1));
+    const firstRef = query(
+      ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(activeCanonicalId)}`),
+      orderByChild("timestamp"),
+      limitToFirst(1)
+    );
     const off = onValue(
       firstRef,
       (snap) => {
@@ -796,6 +847,7 @@ export default function GrowthTracker() {
     }
     const jarKey = canonicalJarKey(activeJarId);
     if (!jarKey) return undefined;
+    setJarLive(null);
 
     const jarRef = ref(db, jarKey);
     const off = onValue(
@@ -810,14 +862,6 @@ export default function GrowthTracker() {
     return () => off();
   }, [activeJarId]);
 
-  // Autofill the current height field from the latest live sensor reading when a Jar is selected.
-  useEffect(() => {
-    if (!activeJarId) return;
-    const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
-    if (liveHeight === null) return;
-    setCurrentHeight(String(liveHeight));
-  }, [activeJarId, sensorLatest, jarLive]);
-
   useEffect(() => {
     lastHeightLoggedRef.current = { ts: 0, height: null };
   }, [activeCanonicalId]);
@@ -825,13 +869,13 @@ export default function GrowthTracker() {
   // Mirror live height readings into Firebase (growthLogs) so they are captured as soon as the sensor reports them.
   useEffect(() => {
     setHeightLogError("");
-    const liveSource = jarLive || sensorLatest;
-    if (!liveSource) return;
+    const liveReading = jarLive ?? sensorLatest;
+    if (!liveReading) return;
 
-    const liveHeight = sanitizeHeightMm(liveSource.height_mm ?? liveSource.height);
+    const liveHeight = sanitizeHeightMm(liveReading.height_mm ?? liveReading.height);
     if (liveHeight === null) return;
 
-    const ts = Number(liveSource.timestamp) || Date.now();
+    const ts = Number(liveReading.timestamp) || Date.now();
 
     const last = lastHeightLoggedRef.current;
     const isDuplicate =
@@ -839,7 +883,7 @@ export default function GrowthTracker() {
     if (isDuplicate) return;
 
     const sourceJarId =
-      activeJarId || liveSource.jarId || liveSource.jar_id || liveSource.id || canonicalJarKey(activeJarId) || null;
+      activeJarId || liveReading.jarId || liveReading.jar_id || liveReading.id || canonicalJarKey(activeJarId) || null;
     const canonicalId = canonicalPlantId(sourceJarId);
     if (!canonicalId) return;
 
@@ -877,7 +921,7 @@ export default function GrowthTracker() {
 
     Promise.all([
       push(ref(db, "growthLogs"), payload),
-      push(ref(db, `growthLogsByJar/${canonicalId}`), payload),
+      push(ref(db, `growthLogsByJar/${encodeFirebaseKeySegment(canonicalId)}`), payload),
       update(ref(db, `plants/${canonicalId}`), plantUpdatePayload),
     ])
       .then(() => {
@@ -903,7 +947,6 @@ export default function GrowthTracker() {
     if (!timestamps.length) return null;
     return Math.min(...timestamps);
   }, [sensorHistory]);
-
   const resolvedPlantingInfo = useMemo(() => {
     if (!activeJarId) return { date: "", source: "" };
 
@@ -967,19 +1010,42 @@ export default function GrowthTracker() {
       setPlantingDate(normalizedPlanting);
     }
     setAgeSourceLabel(resolvedPlantingInfo.source || "");
-
-    const latestHeight = resolveCurrentHeight(plantRecord);
-    if (latestHeight !== undefined && latestHeight !== null) {
-      setCurrentHeight(String(latestHeight));
-    }
   }, [activeJarId, plantRecord, plantingDate, resolvedPlantingInfo]);
 
-  const submit = async (e) => {
-    e.preventDefault();
+  const clearAnalysisState = () => {
     setError("");
     setResult(null);
     setAnalyzedJarId("");
     setAnalyzedHeight(null);
+    setAnalysisSaveStatus("");
+    setAnalysisSaveError("");
+  };
+
+  const handleNewHeight = () => {
+    clearAnalysisState();
+    setCurrentHeight("");
+  };
+
+  useEffect(() => {
+    setCurrentHeight("");
+    setError("");
+    setResult(null);
+    setAnalyzedJarId("");
+    setAnalyzedHeight(null);
+    setAnalysisSaveStatus("");
+    setAnalysisSaveError("");
+  }, [activeJarId]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    clearAnalysisState();
+
+    const resolvedHeight = sanitizeHeightMm(currentHeight || fallbackHeight);
+
+    if (!activeCanonicalId) {
+      setError("Enter a Jar/Plant ID before analysis so the result can be saved to the plant database.");
+      return;
+    }
 
     const normalizedPlanting = toIsoDate(plantingDate) || resolvedPlantingInfo.date;
     if (!normalizedPlanting) {
@@ -987,14 +1053,14 @@ export default function GrowthTracker() {
       return;
     }
 
-    if (!currentHeight) {
-      setError("Current height must be auto-filled from the record; choose a Jar/Plant ID that has a height entry.");
+    if (resolvedHeight === null) {
+      setError("Current height must come from live sensor stream. Wait for a fresh reading for this Jar/Plant ID.");
       return;
     }
 
     const payload = {
       planting_date: normalizedPlanting,
-      current_height_mm: Number(currentHeight),
+      current_height_mm: resolvedHeight,
       age_days: derivedAgeDays ?? undefined,
     };
 
@@ -1002,8 +1068,45 @@ export default function GrowthTracker() {
     try {
       const resp = await api.post("/growth/analyze", payload);
       setResult(resp.data);
-      setAnalyzedHeight(Number(currentHeight));
-      setAnalyzedJarId(activeJarId || jarId);
+      setAnalyzedHeight(resolvedHeight);
+      setAnalyzedJarId(activeCanonicalId);
+
+      const heightMm = resolvedHeight;
+      const plantPayload = {
+        id: activeCanonicalId,
+        planting_date: normalizedPlanting,
+        height_mm: heightMm,
+        cultivar: plantRecord?.cultivar || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const mergeSavedRecord = (saved) => {
+        const normalizedSaved = normalizePlantRecord(saved);
+        if (!normalizedSaved) return;
+        setPlantRecords((prev) => {
+          const idx = prev.findIndex((row) => normalizeId(row?.id) === normalizeId(normalizedSaved.id));
+          if (idx === -1) return [...prev, normalizedSaved];
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...normalizedSaved };
+          return next;
+        });
+      };
+
+      try {
+        const saveResp = await api.put(`/env/plants/${encodeURIComponent(activeCanonicalId)}`, plantPayload);
+        mergeSavedRecord(saveResp?.data || plantPayload);
+        setAnalysisSaveStatus(`Saved to plant database as ${activeCanonicalId}.`);
+      } catch (apiErr) {
+        try {
+          await update(ref(db, `plants/${activeCanonicalId}`), plantPayload);
+          mergeSavedRecord(plantPayload);
+          setAnalysisSaveStatus(`Saved to plant database as ${activeCanonicalId} (Firebase fallback).`);
+        } catch (firebaseErr) {
+          const apiMessage = apiErr?.response?.data?.detail || apiErr?.message || "API save failed";
+          const firebaseMessage = firebaseErr?.message || "Firebase save failed";
+          setAnalysisSaveError(`${apiMessage}; ${firebaseMessage}`);
+        }
+      }
     } catch (err) {
       const message = err.response?.data?.detail || err.response?.data || err.message || "Request failed";
       setError(typeof message === "string" ? message : JSON.stringify(message));
@@ -1028,8 +1131,9 @@ export default function GrowthTracker() {
     return "border-border/45 bg-paper/70 text-subtle";
   }, [displayLabel]);
 
-  const liveHeight = sanitizeHeightMm(jarLive?.height_mm ?? jarLive?.height ?? sensorLatest?.height_mm ?? sensorLatest?.height);
-  const liveTimestamp = jarLive?.timestamp ?? sensorLatest?.timestamp ?? null;
+  const liveSource = useMemo(() => jarLive ?? sensorLatest, [jarLive, sensorLatest]);
+  const liveHeight = sanitizeHeightMm(liveSource?.height_mm ?? liveSource?.height);
+  const liveTimestamp = liveSource?.timestamp ?? liveSource?.ts ?? null;
 
   const heightPoints = useMemo(() => {
     const pts = [];
@@ -1045,7 +1149,7 @@ export default function GrowthTracker() {
       const h = sanitizeHeightMm(row.height_mm ?? row.height);
       if (Number.isFinite(ts) && h !== null) pts.push({ x: ts, y: h, source: "sensor" });
     });
-    const latestPoint = jarLive || sensorLatest;
+    const latestPoint = liveSource;
     if (latestPoint) {
       const ts = Number(latestPoint.timestamp);
       const h = sanitizeHeightMm(latestPoint.height_mm ?? latestPoint.height);
@@ -1053,7 +1157,12 @@ export default function GrowthTracker() {
     }
     pts.sort((a, b) => a.x - b.x);
     return pts.slice(-120); // keep last 120 points
-  }, [plantRecord, sensorHistory, sensorLatest, jarLive]);
+  }, [plantRecord, sensorHistory, liveSource]);
+
+  const fallbackHeight = useMemo(() => {
+    if (!heightPoints.length) return null;
+    return heightPoints[heightPoints.length - 1]?.y ?? null;
+  }, [heightPoints]);
 
   // Listen directly to Firebase plants/{id} for real-time planting date/height updates
   useEffect(() => {
@@ -1072,21 +1181,23 @@ export default function GrowthTracker() {
             ""
         );
         if (planted) setPlantingDate(planted);
-        const h = sanitizeHeightMm(val.height_mm ?? val.height ?? val.current_height);
-        if (h !== null && h !== undefined && (liveHeight === null || liveHeight === undefined)) {
-          setCurrentHeight(String(h));
-        }
       },
       (err) => setPlantFetchError(err?.message || "Failed to read plant record from Firebase")
     );
     return () => off();
-  }, [activeCanonicalId, liveHeight]);
+  }, [activeCanonicalId]);
 
   useEffect(() => {
     if (liveHeight !== null && liveHeight !== undefined) {
       setCurrentHeight(String(liveHeight));
     }
   }, [liveHeight]);
+
+  useEffect(() => {
+    if (!currentHeight && fallbackHeight !== null) {
+      setCurrentHeight(String(fallbackHeight));
+    }
+  }, [currentHeight, fallbackHeight]);
 
   return (
     <div className="space-y-8">
@@ -1095,6 +1206,7 @@ export default function GrowthTracker() {
         <div className="lg:col-span-2 space-y-4">
           <FormCard
             onSubmit={submit}
+            onNewHeight={handleNewHeight}
             jarId={jarId}
             activeJarId={activeJarId}
             enteredJarCount={enteredJarIds.length}
@@ -1117,6 +1229,8 @@ export default function GrowthTracker() {
             heightLogError={heightLogError}
             jarPersistStatus={jarPersistStatus}
             jarPersistError={jarPersistError}
+            analysisSaveStatus={analysisSaveStatus}
+            analysisSaveError={analysisSaveError}
             liveHeight={liveHeight}
             liveTimestamp={liveTimestamp}
           />
@@ -1180,8 +1294,10 @@ function Hero() {
   );
 }
 
+// FormCard component web camera scanner
 function FormCard({
   onSubmit,
+  onNewHeight,
   jarId,
   activeJarId,
   enteredJarCount,
@@ -1202,11 +1318,377 @@ function FormCard({
   plantFetchError,
   jarPersistStatus,
   jarPersistError,
+  analysisSaveStatus,
+  analysisSaveError,
   liveHeight,
   liveTimestamp,
   cultureError,
   heightLogError,
 }) {
+  const [cameraOpen, setCameraOpen] = useState(false); // true when webcam scanner UI is open
+  const [scanBusy, setScanBusy] = useState(false);
+  const [scanStatus, setScanStatus] = useState("");
+  const [cameraDevices, setCameraDevices] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
+  const cameraVideoRef = useRef(null);
+  const cameraStreamRef = useRef(null);
+  const cameraLoopTimeoutRef = useRef(null);
+  const decodeCanvasRef = useRef(null);
+  const barcodeDetectorRef = useRef(null);
+  const uploadInputRef = useRef(null);
+  const selectedCameraIdRef = useRef("");
+
+  useEffect(() => {
+    selectedCameraIdRef.current = selectedCameraId;
+  }, [selectedCameraId]);
+
+  const getCameraLabel = (device, index) => {
+    const label = String(device?.label || "").trim();
+    return label || `Camera ${index + 1}`;
+  };
+
+  const refreshCameraDevices = async (preferredDeviceId = "") => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return [];
+    try {
+      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = allDevices.filter((device) => device.kind === "videoinput");
+      setCameraDevices(videoInputs);
+
+      if (!videoInputs.length) {
+        setSelectedCameraId("");
+        return videoInputs;
+      }
+
+      const requestedDeviceId = preferredDeviceId || selectedCameraIdRef.current;
+      const hasRequestedDevice =
+        requestedDeviceId && videoInputs.some((device) => device.deviceId === requestedDeviceId);
+
+      if (hasRequestedDevice) {
+        if (selectedCameraIdRef.current !== requestedDeviceId) {
+          setSelectedCameraId(requestedDeviceId);
+        }
+      } else {
+        const rearCamera = videoInputs.find((device) => /back|rear|environment/i.test(device.label || ""));
+        const fallbackDeviceId = rearCamera?.deviceId || videoInputs[0]?.deviceId || "";
+        if (fallbackDeviceId && selectedCameraIdRef.current !== fallbackDeviceId) {
+          setSelectedCameraId(fallbackDeviceId);
+        }
+      }
+
+      return videoInputs;
+    } catch {
+      return [];
+    }
+  };
+
+  const stopCameraScan = () => {
+    if (cameraLoopTimeoutRef.current) {
+      clearTimeout(cameraLoopTimeoutRef.current);
+      cameraLoopTimeoutRef.current = null;
+    }
+    const stream = cameraStreamRef.current;
+    if (stream) {
+      stream.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (cameraVideoRef.current) {
+      cameraVideoRef.current.pause?.();
+      cameraVideoRef.current.srcObject = null;
+    }
+    setCameraOpen(false);
+  };
+
+  useEffect(() => () => stopCameraScan(), []);
+
+  useEffect(() => {
+    refreshCameraDevices();
+  }, []);
+
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.addEventListener) return undefined;
+    const handleDeviceChange = () => {
+      refreshCameraDevices();
+    };
+    navigator.mediaDevices.addEventListener("devicechange", handleDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", handleDeviceChange);
+  }, []);
+
+  useEffect(() => {
+    if (!cameraOpen || !cameraStreamRef.current || !cameraVideoRef.current) return; 
+    const videoEl = cameraVideoRef.current;
+    if (videoEl.srcObject !== cameraStreamRef.current) {
+      videoEl.srcObject = cameraStreamRef.current;
+    }
+    videoEl.play?.().catch(() => {});
+  }, [cameraOpen]);
+
+  const getBarcodeDetector = async () => {
+    if (barcodeDetectorRef.current) return barcodeDetectorRef.current;
+    if (typeof window === "undefined" || !window.BarcodeDetector) return null;
+    try {
+      let detector = null;
+      if (typeof window.BarcodeDetector.getSupportedFormats === "function") {
+        const formats = await window.BarcodeDetector.getSupportedFormats();
+        if (Array.isArray(formats) && formats.includes("qr_code")) {
+          detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        }
+      }
+      if (!detector) detector = new window.BarcodeDetector();
+      barcodeDetectorRef.current = detector;
+      return detector;
+    } catch {
+      return null;
+    }
+  };
+
+  // Fallback QR code detection using jsQR library when BarcodeDetector is unavailable or fails.
+  const detectWithJsQr = (source) => {
+    if (!source || typeof document === "undefined") return [];
+    const sourceWidth = Number(source.videoWidth || source.naturalWidth || source.width || 0);
+    const sourceHeight = Number(source.videoHeight || source.naturalHeight || source.height || 0);
+    if (!sourceWidth || !sourceHeight) return [];
+
+    const maxSide = 960;
+    const scale = Math.min(1, maxSide / Math.max(sourceWidth, sourceHeight));
+    const width = Math.max(1, Math.round(sourceWidth * scale));
+    const height = Math.max(1, Math.round(sourceHeight * scale));
+
+    if (!decodeCanvasRef.current) decodeCanvasRef.current = document.createElement("canvas");
+    const canvas = decodeCanvasRef.current;
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    if (!ctx) return [];
+
+    try {
+      ctx.drawImage(source, 0, 0, width, height);
+      const imageData = ctx.getImageData(0, 0, width, height);
+      const result = jsQR(imageData.data, width, height, { inversionAttempts: "attemptBoth" });
+      return result?.data ? [{ rawValue: result.data }] : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const detectQrFromSource = async (source) => {
+    const detector = await getBarcodeDetector();
+    if (detector) {
+      try {
+        const detections = await detector.detect(source);
+        if (detections?.length) return detections;
+      } catch {
+        // Fallback to jsQR.
+      }
+    }
+    return detectWithJsQr(source);
+  };
+
+  const applyScannedQrResult = (rawValue, sourceLabel = "QR") => {
+    const parsed = parseJarIdFromQrPayload(rawValue);
+    if (!parsed) {
+      setScanStatus(`${sourceLabel} scan did not return a readable Jar/Plant ID.`);
+      return false;
+    }
+    setJarId(parsed);
+    setScanStatus(`Scanned ${parsed}.`);
+    return true;
+  };
+
+  const runCameraDetectionLoop = async () => {
+    if (!cameraStreamRef.current) return;
+    try {
+      const videoEl = cameraVideoRef.current;
+      if (videoEl && videoEl.readyState >= 2 && videoEl.videoWidth > 0 && videoEl.videoHeight > 0) {
+        const detections = await detectQrFromSource(videoEl);
+        const rawValue = detections?.[0]?.rawValue;
+        if (rawValue) {
+          const parsed = applyScannedQrResult(rawValue, "Camera QR");
+          if (parsed) {
+            stopCameraScan();
+            return;
+          }
+        }
+      }
+    } catch {
+      // keep scanner loop alive
+    }
+    cameraLoopTimeoutRef.current = window.setTimeout(runCameraDetectionLoop, 250);
+  };
+
+  const startCameraScan = async (requestedDeviceId = "", forceRestart = false) => {
+    if (scanBusy) return;
+
+    if (cameraOpen && !forceRestart) {
+      stopCameraScan();
+      setScanStatus("Camera scan stopped.");
+      return;
+    }
+    if (cameraOpen && forceRestart) {
+      stopCameraScan();
+    }
+
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      setScanStatus("Camera is not available in this browser.");
+      return;
+    }
+    if (
+      typeof window !== "undefined" &&
+      !window.isSecureContext &&
+      !/^(localhost|127\.0\.0\.1)$/i.test(window.location.hostname || "")
+    ) {
+      setScanStatus("Camera access requires HTTPS (or localhost).");
+      return;
+    }
+
+    const waitForVideoFrame = async (videoEl, timeoutMs = 2200) => {
+      if (!videoEl) return false;
+      const hasFrame = () => videoEl.videoWidth > 0 && videoEl.videoHeight > 0;
+      if (hasFrame()) return true;
+      return new Promise((resolve) => {
+        const startedAt = Date.now();
+        const timer = window.setInterval(() => {
+          if (hasFrame()) {
+            clearInterval(timer);
+            resolve(true);
+            return;
+          }
+          if (Date.now() - startedAt > timeoutMs) {
+            clearInterval(timer);
+            resolve(false);
+          }
+        }, 100);
+      });
+    };
+// Try multiple constraint sets to maximize compatibility across different devices and browsers.
+    setScanBusy(true);
+    try {
+      const preferredDeviceId = requestedDeviceId || selectedCameraIdRef.current;
+      const attempts = preferredDeviceId
+        ? [
+            { video: { deviceId: { exact: preferredDeviceId } }, audio: false },
+            { video: { facingMode: { ideal: "environment" } }, audio: false },
+            { video: true, audio: false },
+          ]
+        : [
+            { video: { facingMode: { ideal: "environment" } }, audio: false },
+            { video: { facingMode: "user" }, audio: false },
+            { video: true, audio: false },
+          ];
+      let stream = null;
+      let usedDeviceId = "";
+      for (const constraints of attempts) {
+        try {
+          const candidate = await navigator.mediaDevices.getUserMedia(constraints);
+          if (!candidate) continue;
+          if (cameraVideoRef.current) {
+            cameraVideoRef.current.srcObject = candidate;
+            try {
+              await cameraVideoRef.current.play();
+            } catch {
+              // continue to frame check
+            }
+            const ready = await waitForVideoFrame(cameraVideoRef.current);
+            if (!ready) {
+              candidate.getTracks().forEach((track) => track.stop());
+              continue;
+            }
+          }
+          usedDeviceId = candidate.getVideoTracks?.()[0]?.getSettings?.().deviceId || "";
+          stream = candidate;
+          break;
+        } catch {
+          // try next
+        }
+      }
+      if (!stream) throw new Error("Unable to start camera stream.");
+
+      cameraStreamRef.current = stream;
+      if (usedDeviceId && usedDeviceId !== selectedCameraIdRef.current) {
+        setSelectedCameraId(usedDeviceId);
+      }
+      await refreshCameraDevices(usedDeviceId);
+      setCameraOpen(true);
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      if (cameraVideoRef.current) {
+        const videoEl = cameraVideoRef.current;
+        videoEl.srcObject = stream;
+        try {
+          await videoEl.play();
+        } catch {
+          // continue
+        }
+      }
+      setScanStatus("Camera started. Show QR to fill Jar/Plant ID.");
+      runCameraDetectionLoop();
+    } catch (err) {
+      stopCameraScan();
+      const message =
+        err?.name === "NotAllowedError"
+          ? "Camera permission denied. Allow camera access and retry."
+          : err?.name === "NotFoundError"
+            ? "No camera device found."
+            : err?.message || "Unable to start camera scan.";
+      setScanStatus(message);
+    } finally {
+      setScanBusy(false);
+    }
+  };
+
+  const handleCameraSelectionChange = async (e) => {
+    const nextDeviceId = e.target.value || "";
+    setSelectedCameraId(nextDeviceId);
+    if (!cameraOpen) return;
+    await startCameraScan(nextDeviceId, true);
+  };
+// Trigger file input click to select an image for QR scanning.
+  const triggerUploadScan = () => {
+    uploadInputRef.current?.click();
+  };
+
+  const handleUploadScan = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+
+    stopCameraScan();
+    setScanBusy(true);
+    try {
+      let detections = [];
+      if (typeof createImageBitmap === "function") {
+        const bitmap = await createImageBitmap(file);
+        try {
+          detections = await detectQrFromSource(bitmap);
+        } finally {
+          bitmap.close?.();
+        }
+      } else {
+        const imageUrl = URL.createObjectURL(file);
+        try {
+          const image = new Image();
+          await new Promise((resolve, reject) => {
+            image.onload = resolve;
+            image.onerror = reject;
+            image.src = imageUrl;
+          });
+          detections = await detectQrFromSource(image);
+        } finally {
+          URL.revokeObjectURL(imageUrl);
+        }
+      }
+
+      const rawValue = detections?.[0]?.rawValue;
+      if (!rawValue) {
+        setScanStatus("No QR code detected in uploaded image.");
+        return;
+      }
+      applyScannedQrResult(rawValue, "Uploaded QR");
+    } catch (err) {
+      setScanStatus(err?.message || "Failed to scan uploaded QR image.");
+    } finally {
+      setScanBusy(false);
+    }
+  };
+// Render
   return (
     <motion.form
       onSubmit={onSubmit}
@@ -1228,9 +1710,76 @@ function FormCard({
           <input
             value={jarId}
             onChange={(e) => setJarId(normalizeJarIdInput(e.target.value))}
+            onPaste={(e) => {
+              const pasted = e.clipboardData?.getData("text") || "";
+              const parsed = parseJarIdFromQrPayload(pasted);
+              if (!parsed) return;
+              e.preventDefault();
+              setJarId(parsed);
+            }}
             placeholder={demoIds.length ? `e.g. ${demoIds[0]}` : "Enter Jar ID"}
             className="input-shell"
           />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => startCameraScan()}
+              disabled={scanBusy}
+              className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              {cameraOpen ? "Stop camera" : "Scan QR (camera)"}
+            </button>
+            <button
+              type="button"
+              onClick={triggerUploadScan}
+              disabled={scanBusy}
+              className="btn-soft text-xs px-3 py-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              Scan QR (upload image)
+            </button>
+            <input
+              ref={uploadInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleUploadScan}
+              className="hidden"
+            />
+          </div>
+          {cameraDevices.length > 1 ? (
+            <div className="mt-2 flex items-center gap-2">
+              <label htmlFor="growth-tracker-camera-select" className="text-[11px] text-subtle whitespace-nowrap">
+                Camera
+              </label>
+              <select
+                id="growth-tracker-camera-select"
+                value={selectedCameraId}
+                onChange={handleCameraSelectionChange}
+                disabled={scanBusy}
+                className="input-shell py-1.5 text-xs"
+              >
+                {cameraDevices.map((device, index) => (
+                  <option key={device.deviceId || `camera-${index}`} value={device.deviceId}>
+                    {getCameraLabel(device, index)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : null}
+          {cameraOpen ? (
+            <div className="mt-2 rounded-xl border border-border/45 bg-paper/70 p-2">
+              <video
+                ref={cameraVideoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full rounded-lg border border-border/35 bg-slate-900/90 max-h-40 object-contain"
+              />
+            </div>
+          ) : null}
+          {scanStatus ? <p className="text-[11px] text-subtle mt-1">{scanStatus}</p> : null}
+          <p className="text-[11px] text-subtle mt-1">
+            QR scan/paste supported. Payload can be only Jar ID (recommended) or a tracker link.
+          </p>
         </Field>
         <Field label="Planting date (auto from Firebase)">
           <input
@@ -1250,7 +1799,11 @@ function FormCard({
               value={currentHeight}
               readOnly
               disabled
-              placeholder={liveHeight !== null && liveHeight !== undefined ? `Live: ${liveHeight} mm` : "Auto-filled from plant record"}
+              placeholder={
+                liveHeight !== null && liveHeight !== undefined
+                  ? `Live: ${liveHeight} mm`
+                  : "Waiting for live sensor reading"
+              }
               className="w-full rounded-xl border border-teal-100 bg-teal-50 px-3 py-2.5 text-sm text-slate-700 placeholder:text-slate-500"
             />
             <p className="text-xs text-emerald-700">
@@ -1291,7 +1844,7 @@ function FormCard({
       )}
       {!plantRecord && jarId && (
         <p className="text-xs text-amber-800 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2">
-          No record found for "{jarId}". Planting date, age, and current height are read-only and must come from the database. Try {demoIdHint || "a known ID"}.
+          No record found for "{jarId}". Planting date and age come from database factors, and height waits for a live sensor reading. Try {demoIdHint || "a known ID"}.
         </p>
       )}
       {cultureRecord && (
@@ -1329,10 +1882,21 @@ function FormCard({
           {jarPersistStatus}
         </p>
       )}
+      {analysisSaveError && (
+        <p className="text-xs text-rose-700 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2">
+          Analysis result save failed: {analysisSaveError}
+        </p>
+      )}
+      {analysisSaveStatus && (
+        <p className="text-xs text-emerald-800 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2">
+          {analysisSaveStatus}
+        </p>
+      )}
+
       <p className="text-xs text-slate-600">Today: {today}</p>
       {plantRecord && (
         <p className="text-xs text-teal-800 rounded-lg border border-teal-100 bg-teal-50 px-3 py-2">
-          Planting date, age, and latest height auto-filled from DB for {plantRecord.id}.
+          Planting date and age auto-filled from DB for {plantRecord.id}. Height comes from live sensor only.
         </p>
       )}
 
@@ -1342,19 +1906,29 @@ function FormCard({
         <p className="sm:col-span-2">Live height readings auto-fill when the sensor streams and are logged to Firebase instantly.</p>
       </div>
 
-      <button
-        type="submit"
-        disabled={loading}
-        className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed"
-      >
-        {loading ? (
-          <span className="flex items-center gap-2">
-            <Spinner /> Analyzing...
-          </span>
-        ) : (
-          "Analyze growth"
-        )}
-      </button>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <button
+          type="button"
+          onClick={onNewHeight}
+          disabled={loading}
+          className="btn-soft w-full disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          New height
+        </button>
+        <button
+          type="submit"
+          disabled={loading}
+          className="btn-primary w-full disabled:opacity-60 disabled:cursor-not-allowed"
+        >
+          {loading ? (
+            <span className="flex items-center gap-2">
+              <Spinner /> Analyzing...
+            </span>
+          ) : (
+            "Analyze growth"
+          )}
+        </button>
+      </div>
 
       <AnimatePresence>
         {error && (
