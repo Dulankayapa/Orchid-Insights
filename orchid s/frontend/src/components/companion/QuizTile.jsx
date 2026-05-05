@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import { auth } from "../../lib/firebase";
-
-const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:8000"
-).replace(/\/$/, "");
+import { buildApiUrl } from "../../lib/apiBase";
 const HISTORY_STORAGE_KEY = "orchid-care-quiz-history";
 const QUIZ_ROUND_SIZE = 5;
 
@@ -204,7 +199,7 @@ export default function QuizTile() {
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/quiz/questions`, {
+      const response = await fetch(buildApiUrl("/quiz/questions"), {
         headers: await buildAuthHeaders(),
       });
 
@@ -235,7 +230,7 @@ export default function QuizTile() {
 
   const fetchHistory = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/quiz/history`, {
+      const response = await fetch(buildApiUrl("/quiz/history"), {
         headers: await buildAuthHeaders(),
       });
 
@@ -267,7 +262,7 @@ export default function QuizTile() {
     setSubmitting(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/quiz/submit`, {
+      const response = await fetch(buildApiUrl("/quiz/submit"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

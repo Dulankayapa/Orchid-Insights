@@ -1,11 +1,6 @@
 import { useEffect, useState } from "react";
 import { auth } from "../../lib/firebase";
-
-const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:8000"
-).replace(/\/$/, "");
+import { buildApiUrl } from "../../lib/apiBase";
 const REMINDER_STORAGE_KEY = "orchid-care-reminders";
 
 const reminderTypes = [
@@ -72,7 +67,7 @@ export default function ReminderTile() {
 
   const fetchReminders = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/reminders`, {
+      const response = await fetch(buildApiUrl("/reminders"), {
         headers: await buildAuthHeaders(),
       });
 
@@ -111,7 +106,7 @@ export default function ReminderTile() {
     };
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/reminders`, {
+      const response = await fetch(buildApiUrl("/reminders"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -145,7 +140,7 @@ export default function ReminderTile() {
 
   const deleteReminder = async (id) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/reminders/${id}`, {
+      const response = await fetch(buildApiUrl(`/reminders/${id}`), {
         method: "DELETE",
         headers: await buildAuthHeaders(),
       });

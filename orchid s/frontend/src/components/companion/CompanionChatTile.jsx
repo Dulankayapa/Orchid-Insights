@@ -1,11 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { auth } from "../../lib/firebase";
-
-const API_BASE_URL = (
-  import.meta.env.VITE_API_BASE_URL ||
-  import.meta.env.VITE_API_URL ||
-  "http://localhost:8000"
-).replace(/\/$/, "");
+import { buildApiUrl } from "../../lib/apiBase";
 
 const quickPrompts = [
   "When should I water a phalaenopsis?",
@@ -86,7 +81,7 @@ export default function CompanionChatTile() {
     setIsTyping(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/companion/chat`, {
+      const response = await fetch(buildApiUrl("/companion/chat"), {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
