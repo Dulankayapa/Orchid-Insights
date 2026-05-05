@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useRef } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import DropZone from '../components/classifier/DropZone'
 import Loader from '../components/classifier/Loader'
 import ResultPanel from '../components/classifier/ResultPanel'
@@ -37,6 +37,54 @@ function normalizeResult(data) {
   }
 }
 
+function normalizeError(err) {
+  const rawMessage = err.response?.data?.detail ?? err.message ?? 'Unknown error'
+  const message = typeof rawMessage === 'string' ? rawMessage : JSON.stringify(rawMessage)
+  const normalized = message.toLowerCase()
+  const isOod =
+    err.response?.status === 422 &&
+    (
+      normalized.includes('out of distribution') ||
+      normalized.includes('trained orchid species') ||
+      normalized.includes('please upload a clear photo of one of those orchids')
+    )
+
+  return {
+    kind: isOod ? 'OOD' : 'ERROR',
+    message,
+  }
+}
+
+function ErrorBanner({ error }) {
+  return (
+    <div className="p-6 border glass rounded-2xl border-red-900/40 animate-fade-up">
+      <div className="flex items-start gap-3">
+        <span className="flex items-center justify-center w-5 h-5 mt-0.5 text-red-400">
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M6 18L18 6M6 6l12 12"
+            />
+          </svg>
+        </span>
+        <div>
+          <p className="text-sm font-medium text-red-300 font-body">
+            {error.kind === 'OOD' ? 'Out of distribution' : 'Prediction failed'}
+          </p>
+          <p className="mt-1 text-xs text-red-600 font-body">{error.message}</p>
+        </div>
+      </div>
+      <p className="mt-4 text-xs text-green-800 font-body">
+        {error.kind === 'OOD'
+          ? 'This image is outside the classifier training set. Upload a clear photo of cattleya, dendrobium, oncidium, phalaenopsis, or vanda.'
+          : 'Use a clear photo of a supported orchid species. Non-orchid flowers and unsupported plants are rejected.'}
+      </p>
+    </div>
+  )
+}
+
 export default function OrchidClassifier() {
   const [preview, setPreview] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -61,8 +109,7 @@ export default function OrchidClassifier() {
       })
       setResult(normalizeResult(data))
     } catch (err) {
-      const msg = err.response?.data?.detail ?? err.message ?? 'Unknown error'
-      setError(msg)
+      setError(normalizeError(err))
     } finally {
       setLoading(false)
     }
@@ -200,7 +247,7 @@ export default function OrchidClassifier() {
                     hover:text-green-400 hover:border-green-700 text-sm font-body
                     transition-all duration-200 glass"
                 >
-                  ↺ Try another image
+                  Try another image
                 </button>
               )}
             </div>
@@ -211,20 +258,7 @@ export default function OrchidClassifier() {
               </div>
             )}
 
-            {error && (
-              <div className="p-6 border glass rounded-2xl border-red-900/40 animate-fade-up">
-                <div className="flex items-start gap-3">
-                  <span className="text-xl text-red-400">✕</span>
-                  <div>
-                    <p className="text-sm font-medium text-red-300 font-body">Prediction failed</p>
-                    <p className="mt-1 text-xs text-red-600 font-body">{error}</p>
-                  </div>
-                </div>
-                <p className="mt-4 text-xs text-green-800 font-body">
-                  Use a clear photo of a supported orchid species. Non-orchid flowers and unsupported plants are rejected.
-                </p>
-              </div>
-            )}
+            {error && <ErrorBanner error={error} />}
 
             {result && !loading && (
               <div ref={resultPanelRef}>
@@ -236,19 +270,19 @@ export default function OrchidClassifier() {
           <div className="grid max-w-xl grid-cols-3 gap-4 mx-auto mt-10">
             {[
               {
-                icon: '📤',
+                icon: 'Upload',
                 title: 'Upload',
                 body: 'Drag & drop or click to browse your orchid photo',
                 onClick: handleUploadCardClick,
               },
               {
-                icon: '🔬',
+                icon: 'Analyze',
                 title: 'Analyse',
                 body: 'EfficientNetB0 extracts deep features for classification',
                 onClick: handleAnalyseCardClick,
               },
               {
-                icon: '🌸',
+                icon: 'Identify',
                 title: 'Identify',
                 body: 'Get species name, confidence, and OOD detection result',
                 onClick: handleIdentifyCardClick,
@@ -261,7 +295,7 @@ export default function OrchidClassifier() {
                 disabled={loading}
                 className="p-4 text-center rounded-xl glass-dark transition-all duration-200 hover:scale-[1.02] hover:border-green-700/40 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <div className="mb-2 text-2xl">{icon}</div>
+                <div className="mb-2 text-sm uppercase tracking-[0.24em] text-green-500">{icon}</div>
                 <p className="text-sm font-light text-green-300 font-display">{title}</p>
                 <p className="mt-1 text-xs leading-relaxed text-green-700 font-body">{body}</p>
               </button>
