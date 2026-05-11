@@ -198,6 +198,7 @@ def predict_image(img_bytes: bytes) -> dict:
     closest_label = predicted_label
     ood_reasons = []
 
+#out of distribution
     if state["ood_enabled"]:
         features = state["extractor"].run(None, {state["ext_input"]: tensor})[0]
         distance, closest_idx = _mahalanobis(features, state["class_stats"])
